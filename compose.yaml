@@ -1,0 +1,13 @@
+services:
+  jiaojianbox:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "${JJB_PORT:-8765}:8765"
+    environment:
+      JJB_ALLOW_REGISTRATION: ${JJB_ALLOW_REGISTRATION:-true}
+      JJB_MAX_UPLOAD_MB: ${JJB_MAX_UPLOAD_MB:-50}
+    volumes:
+      - jiaojianbox-data:/data
+volumes:
+  jiaojianbox-data:

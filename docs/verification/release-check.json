@@ -1,0 +1,16 @@
+{
+  "backend_tests": {
+    "passed": 16,
+    "failed": 0
+  },
+  "wechat_actual_read": {
+    "discovery_passed": true,
+    "conversation_count": 290,
+    "uploaded_chat_contents": false
+  },
+  "qq_actual_instance_verified": false,
+  "real_llm_provider_verified": false,
+  "docker_build_verified": false,
+  "deployment": "local source and Windows package; not deployed to production",
+  "electron_archive_sha256": "489cd061908e697394b004298bf5ffd345c935d10e8ca197ba819f019ab2dec0"
+}

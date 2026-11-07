@@ -1,0 +1,22 @@
+const { contextBridge, ipcRenderer } = require('electron');
+contextBridge.exposeInMainWorld('desktop', {
+  get: key => ipcRenderer.invoke('local-get', key),
+  set: (key, value) => ipcRenderer.invoke('local-set', key, value),
+  remove: key => ipcRenderer.invoke('local-remove', key),
+  platform: () => ipcRenderer.invoke('platform'),
+  getAppearance: () => ipcRenderer.invoke('appearance-get'),
+  setAppearance: value => ipcRenderer.invoke('appearance-set', value),
+  onAppearance: callback => { const handler = (_event, value) => callback(value); ipcRenderer.on('appearance-updated', handler); return () => ipcRenderer.removeListener('appearance-updated', handler); },
+  discoverQQ: home => ipcRenderer.invoke('qq-discover',home),
+  connectQQ: value => ipcRenderer.invoke('qq-connect',value),
+  sourceDiagnostics: () => ipcRenderer.invoke('source-diagnostics'),
+  debugQQ: value => ipcRenderer.invoke('qq-debug',value),
+  selectRuntime: () => ipcRenderer.invoke('select-runtime'),
+  external: url => ipcRenderer.invoke('open-external', url),
+  listConversations: (type, config) => ipcRenderer.invoke('collector-list', type, config),
+  startCollector: config => ipcRenderer.invoke('collector-start', config),
+  stopCollector: () => ipcRenderer.invoke('collector-stop'),
+  collectorState: () => ipcRenderer.invoke('collector-state'),
+  onCollector: callback => { const handler = (_event, value) => callback(value); ipcRenderer.on('collector-state', handler); return () => ipcRenderer.removeListener('collector-state', handler); },
+  download: (route, name) => ipcRenderer.invoke('download-file', { route, name }),
+});

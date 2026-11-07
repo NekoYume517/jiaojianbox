@@ -1,0 +1,14 @@
+**/__pycache__/
+.pytest_cache/
+.venv/
+**/bin/
+**/obj/
+.env
+data/
+artifacts/
+node_modules/
+dist/
+*.user
+*.log
+verification-artifacts/
+.DS_Store

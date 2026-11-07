@@ -1,0 +1,30 @@
+{
+  "at": "2026-11-07T09:37:40.711Z",
+  "runtime": "Electron 45.2.3",
+  "packaged": true,
+  "data": "synthetic-only",
+  "passed": [
+    "browser-login",
+    "llm-config-model-test",
+    "selected-context-llm-call",
+    "task-from-message",
+    "multi-file-upload-and-validation",
+    "file-rename-recheck",
+    "desktop-to-mobile-websocket-sync",
+    "mobile-390px-no-overflow",
+    "optimistic-version-conflict",
+    "offline-task-replay",
+    "no-renderer-errors",
+    "electron-sandbox-context-isolation",
+    "encrypted-session-storage",
+    "offline-reload-preserves-outbox",
+    "streamed-package-download",
+    "desktop-source-settings"
+  ],
+  "screenshots": [
+    "settings-desktop.png",
+    "inbox-desktop.png",
+    "task-desktop.png",
+    "task-mobile.png"
+  ]
+}
