@@ -88,8 +88,8 @@ class Queue:
 
 def wechat_database(config):
     # 导入 db 模块，不初始化 WeChatGUI/UIA，不改变微信窗口和登录状态。
-    from wechatauto.db import WeChatDB
-    return WeChatDB(account=config.get("wechat_account") or None, db_dir=config.get("wechat_db_dir") or None)
+    from .wechat_reader import open_database
+    return open_database(config)
 
 
 def list_wechat(config):
@@ -124,12 +124,16 @@ def wechat_loop(config, queue, stop):
     if not config.get("wechat_chats"):
         return
     while not stop.is_set():
+        db=None
+        stage="open-database"
         try:
+            emit(source="wechat",state="starting",message="正在打开微信数据库，初始化独立读取缓存")
             with contextlib.redirect_stdout(sys.stderr):
                 db = wechat_database(config)
             if config.get("wechat_account") and db.account != config["wechat_account"]:
                 raise ValueError("微信登录账号发生变化")
             names = {}
+            stage="initialize-conversations"
             for chat in config["wechat_chats"]:
                 names[chat] = db.get_nickname(chat) or chat
                 key = "wechat:" + db.account + ":" + chat
@@ -140,7 +144,9 @@ def wechat_loop(config, queue, stop):
                         if int(row["sort_seq"]) == start:
                             queue.seed(wechat(row, db.account, chat, names[chat]))
                     queue.cursor(key, start)
-            emit(source="wechat", state="connected", account=db.account)
+            emit(source="wechat", state="connected", account=db.account,message="微信会话已连接，正在监听新消息")
+            stage="poll-messages"
+            heartbeat=0
             while not stop.is_set():
                 for chat in config["wechat_chats"]:
                     key = "wechat:" + db.account + ":" + chat
@@ -156,9 +162,19 @@ def wechat_loop(config, queue, stop):
                             queue.advance(key, int(row["sort_seq"]))
                         else:
                             queue.add(payload, (key, int(row["sort_seq"])))
+                if time.monotonic()-heartbeat>=10:
+                    emit(source="wechat",state="connected",message="正在监听所选微信会话",chat_count=len(config["wechat_chats"]),last_scan_at=time.time())
+                    heartbeat=time.monotonic()
                 stop.wait(1)
         except Exception as exc:
-            emit(source="wechat", state="error", message=f"微信读取暂不可用（{type(exc).__name__}），10 秒后重试")
+            from .wechat_reader import record_error
+            diagnostic=record_error(config,exc,stage)
+            if db and hasattr(db,"close"):db.close()
+            import gc
+            gc.collect()
+            detail="解密缓存被占用或无写入权限" if isinstance(exc,PermissionError) and diagnostic.get("file") and "wechat-cache" in diagnostic["file"] else "微信读取权限不足" if isinstance(exc,PermissionError) else "微信读取暂不可用"
+            code="WinError "+str(diagnostic["winerror"]) if diagnostic.get("winerror") else type(exc).__name__
+            emit(source="wechat", state="error", message=f"{detail}（{code}），读取位置已保留，10 秒后重试",diagnostic=diagnostic)
             stop.wait(10)
 
 
@@ -300,6 +316,8 @@ def main():
     parser.add_argument("--state-dir", default="data/collector")
     args = parser.parse_args()
     config = json.loads(sys.stdin.readline())
+    config["_wechat_cache_root"]=str(Path(args.state_dir).resolve()/"wechat-cache")
+    config["_wechat_purpose"]="live" if args.command=="run" else "list"
     try:
         if args.command == "list-wechat":
             list_wechat(config)
@@ -308,6 +326,9 @@ def main():
         else:
             asyncio.run(run(config, args.state_dir))
     except Exception as exc:
+        if args.command=="list-wechat":
+            from .wechat_reader import record_error
+            record_error(config,exc,"list-conversations")
         emit(state="error", message=f"采集进程出错（{type(exc).__name__}），请检查 Python 依赖、登录状态与连接配置")
         raise SystemExit(1)
 

@@ -1,47 +1,75 @@
 'use strict';
 (() => {
   const drawer=$('#file-shelf');const backdrop=$('#shelf-backdrop');
-  const uploadingFiles=new Map();const analyzing=new Set();let open=false,lastFocus,dragTimer;
+  const drafts=new Map();const uploadingFiles=new Map();const analyzing=new Set();let open=false,lastFocus,dragTimer;
   const categories={inbox:'待整理',reference:'参考资料',receipt:'提交回执',other:'其他文件',material:'交件材料'};
   function files(){return state.snapshot.shelf||[];}
   function show(){
     if(!state.session){toast('登录后即可收纳文件');return;}
-    if(!open)lastFocus=document.activeElement;open=true;drawer.hidden=false;backdrop.hidden=false;requestAnimationFrame(()=>{drawer.classList.add('show');backdrop.classList.add('show');});document.body.classList.add('shelf-open');renderShelf();
+    if(open)return;
+    lastFocus=document.activeElement;open=true;drawer.hidden=false;backdrop.hidden=false;requestAnimationFrame(()=>{drawer.classList.add('show');backdrop.classList.add('show');});document.body.classList.add('shelf-open');renderShelf();
   }
   function hide(){open=false;drawer.classList.remove('show');backdrop.classList.remove('show');setTimeout(()=>{if(!open){drawer.hidden=true;backdrop.hidden=true;}},220);document.body.classList.remove('shelf-open');lastFocus?.focus?.();}
   function updateFile(file){const current=files().filter(x=>x.id!==file.id);state.snapshot.shelf=[file,...current].sort((a,b)=>b.created_at.localeCompare(a.created_at));cacheSoon();renderShelf();}
+  function controls(file){
+    const draft=drafts.get(file.id);const taskId=draft?.taskId??file.task_id??'';
+    const kind=draft?.kind??(file.task_id?file.kind:file.category);
+    const tasks=state.snapshot.tasks.filter(t=>t.status!=='archived'||t.id===file.task_id);
+    const options=[['','暂不关联待办'],...tasks.map(t=>[t.id,t.title+(t.status==='archived'?'（已归档）':t.status==='submitted'?'（已提交）':'')])];
+    if(taskId&&!tasks.some(t=>t.id===taskId))options.push([taskId,'当前关联待办（未加载）']);
+    const kinds=taskId?[['material','任务材料'],['receipt','提交回执']]:[['inbox','待整理'],['reference','参考资料'],['receipt','未关联回执'],['other','其他文件']];
+    return `<div class="shelf-placement"><label class="shelf-select-label">归属待办<select data-shelf-task="${file.id}" aria-label="${esc(file.name)}的归属待办">${options.map(([id,title])=>`<option value="${esc(id)}" ${id===taskId?'selected':''}>${esc(title)}</option>`).join('')}</select></label><label class="shelf-select-label">文件用途<select data-shelf-kind="${file.id}" aria-label="${esc(file.name)}的文件用途">${kinds.map(([id,title])=>`<option value="${id}" ${id===kind?'selected':''}>${title}</option>`).join('')}</select></label></div>${draft?'<p class="helper shelf-draft-note">选择尚未应用，点击“应用”后才会改变实际归属。</p>':''}`;
+  }
   function renderShelf(){
     $('#shelf-count').textContent=files().filter(f=>!f.task_id&&f.category==='inbox').length;
     if(!open)return;
     const pending=[...uploadingFiles.values()].map(f=>`<article class="shelf-file"><strong>${esc(f.name)}</strong><p class="helper">${esc(f.status)}</p></article>`).join('');
     $('#shelf-files').innerHTML=pending+files().map(file=>{
       const task=state.snapshot.tasks.find(t=>t.id===file.task_id);const suggestion=file.suggestion;
-      const target=file.task_id||'category:'+(['reference','receipt','other'].includes(file.category)?file.category:'inbox');
-      return `<article class="shelf-file"><div class="shelf-file-title"><span class="file-icon" data-ext="${esc(file.name.split('.').pop().toLowerCase().slice(0,5))}">${esc(file.name.split('.').pop().slice(0,5))}</span><div><strong>${esc(file.name)}</strong><small>${bytes(file.size)} · ${task?'已归档到待办':esc(categories[file.category]||'待整理')}</small></div><button class="icon-button" data-shelf-download="${file.id}" aria-label="下载 ${esc(file.name)}">↓</button></div>${task?`<div class="shelf-task-label">${icon('check')}<span>${esc(task.title)}</span></div>`:''}${analyzing.has(file.id)?'<p class="helper"><span class="thinking"><i></i><i></i><i></i></span>&nbsp;AI 正在读取文件并匹配待办…</p>':suggestion?`<p class="shelf-reason">${esc(suggestion.reason)}</p>${suggestion.task_id?`<button class="shelf-badge" data-shelf-why="${file.id}">${icon('search')}依据原文 · 点击展开</button><div class="shelf-evidence" data-evidence="${file.id}">${esc(suggestion.extraction||'（未提取到正文摘录）')}</div><p class="helper">${suggestion.extracted_characters} 字 · 置信度 ${Math.round((suggestion.confidence||0)*100)}%</p>`:`<p class="helper">${esc(suggestion.extraction)} · ${suggestion.extracted_characters} 字</p>`}`:'<p class="helper">可以交给 AI 判断，也可以直接选择归属。</p>'}<label class="shelf-select-label">归到哪里<select data-shelf-target="${file.id}" aria-label="${esc(file.name)}的分类"><optgroup label="分类">${Object.entries(categories).filter(([key])=>key!=='material').map(([key,label])=>`<option value="category:${key}" ${target==='category:'+key?'selected':''}>${label}</option>`).join('')}</optgroup><optgroup label="我的待办">${state.snapshot.tasks.filter(t=>!['archived','submitted'].includes(t.status)).map(t=>`<option value="${t.id}" ${target===t.id?'selected':''}>${esc(t.title)}</option>`).join('')}</optgroup></select></label><div class="detail-actions"><button class="secondary" data-shelf-assign="${file.id}">应用分类</button><button class="plain-button" data-shelf-analyze="${file.id}" ${analyzing.has(file.id)?'disabled':''}>${suggestion?'重新判断':'AI 整理'}</button>${file.task_id?`<button class="plain-button" data-shelf-undo="${file.id}">撤销归档</button>`:''}<button class="plain-button" data-shelf-delete="${file.id}">删除</button></div></article>`;
+      const draft=drafts.get(file.id);
+      return `<article class="shelf-file"><div class="shelf-file-title"><span class="file-icon" data-ext="${esc(file.name.split('.').pop().toLowerCase().slice(0,5))}">${esc(file.name.split('.').pop().slice(0,5))}</span><div><strong>${esc(file.name)}</strong><small>${bytes(file.size)} · ${task?'已放入待办':esc(categories[file.category]||'待整理')}</small></div><button class="icon-button" data-shelf-download="${file.id}" aria-label="下载 ${esc(file.name)}">↓</button></div>${task?`<div class="shelf-task-label">${icon('check')}<span>${esc(task.title)} · ${file.kind==='receipt'?'提交回执':'任务材料'}</span></div>`:''}${analyzing.has(file.id)?window.liveAnalysis?.markup('file:'+file.id)||'<p class="helper">AI 正在匹配待办…</p>':suggestion?`<p class="shelf-reason">${esc(suggestion.reason)}</p>${window.liveAnalysis?.performance(suggestion)||''}${suggestion.task_id||suggestion.evidence?`<button class="shelf-badge" data-shelf-why="${file.id}">${icon('search')}依据原文 · 点击展开</button><div class="shelf-evidence" data-evidence="${file.id}">${esc(suggestion.evidence||'模型未返回原文依据')}</div><p class="helper">${suggestion.image_analyzed?'图片内容参与分析':suggestion.extracted_characters+' 字'} · 置信度 ${Math.round((suggestion.confidence||0)*100)}%</p>`:`<p class="helper">${esc(suggestion.extraction)}${suggestion.image_analyzed?'':' · '+suggestion.extracted_characters+' 字'}</p>`}`:'<p class="helper">可以交给 AI 判断，也可以直接选择归属。</p>'}${controls(file)}<div class="detail-actions"><button class="secondary" data-shelf-assign="${file.id}" ${draft?'':'disabled'}>应用</button><button class="plain-button" data-shelf-analyze="${file.id}" ${analyzing.has(file.id)||draft?'disabled':''}>${suggestion?'重新判断':'AI 整理'}</button>${draft?`<button class="plain-button" data-shelf-cancel="${file.id}">取消修改</button>`:''}${file.task_id?`<button class="plain-button" data-shelf-undo="${file.id}">取消关联</button>`:''}<button class="plain-button" data-shelf-delete="${file.id}">删除</button></div></article>`;
     }).join('')+(!files().length&&!uploadingFiles.size?`<div class="empty">${icon('file')}<strong>把文件放在这里</strong><div>不用先想分类。AI 会结合你的待办，寻找合适的归属。</div></div>`:'');
   }
   async function analyzeFile(id){
+    const generation=state.generation;const previousTask=files().find(f=>f.id===id)?.task_id;
     analyzing.add(id);renderShelf();
-    try{const file=await api('/api/shelf/'+id+'/suggest','POST',{auto_assign:$('#shelf-auto-assign').checked});updateFile(file);await refresh({renderPage:false});toast(file.task_id?'已自动归档到对应待办':'已给出分类建议，可以手动调整');}
+    try{const file=await liveAnalysis.run('/api/shelf/'+id+'/suggest',{auto_assign:$('#shelf-auto-assign').checked},'file:'+id);if(generation!==state.generation)return;updateFile(file);await refresh({renderPage:false});toast(previousTask?'已更新分析建议，现有归属保持不变':file.task_id?'已自动放入对应待办':'已给出分类建议，可以手动调整');}
     catch(error){toast(error.message);}finally{analyzing.delete(id);renderShelf();}
   }
   async function addFiles(incoming){
-    show();if(!state.session)return;
+    show();if(!state.session)return;const generation=state.generation;
     for(const file of incoming){
-      const key=crypto.randomUUID();uploadingFiles.set(key,{name:file.name,status:'正在放入收纳框…'});renderShelf();
-      try{const form=new FormData();form.append('file',file);const saved=await api('/api/shelf','POST',form);uploadingFiles.delete(key);updateFile(saved);analyzeFile(saved.id);}
+      if(generation!==state.generation)return;const key=crypto.randomUUID();uploadingFiles.set(key,{name:file.name,status:'正在放入收纳框…'});renderShelf();
+      try{const form=new FormData();form.append('file',file);const saved=await api('/api/shelf','POST',form);if(generation!==state.generation)return;uploadingFiles.delete(key);updateFile(saved);analyzeFile(saved.id);}
       catch(error){uploadingFiles.set(key,{name:file.name,status:error.message+'，请重新拖入。'});renderShelf();}
     }
   }
   $('#shelf-handle').addEventListener('click',show);$('#close-shelf').addEventListener('click',hide);backdrop.addEventListener('click',hide);
   $('#shelf-file-input').addEventListener('change',event=>{const list=[...event.target.files];event.target.value='';addFiles(list);});
-  document.addEventListener('dragenter',event=>{if([...event.dataTransfer?.types||[]].includes('Files')){clearTimeout(dragTimer);document.body.classList.add('dragging-files');show();}});
-  document.addEventListener('dragover',event=>{if([...event.dataTransfer?.types||[]].includes('Files')&&!event.target.closest('.drop-zone')){event.preventDefault();event.dataTransfer.dropEffect='copy';}});
-  document.addEventListener('drop',event=>{
-    if(!event.dataTransfer?.files.length||event.target.closest('.drop-zone'))return;
-    event.preventDefault();clearTimeout(dragTimer);document.body.classList.remove('dragging-files');addFiles([...event.dataTransfer.files]);
+  const isFileDrag=event=>[...event.dataTransfer?.types||[]].includes('Files');
+  const explicitTarget=target=>target instanceof Element?target.closest('.drop-zone,input[type="file"],.shelf-drop,[data-task]'):null;
+  function clearDrag(){clearTimeout(dragTimer);document.body.classList.remove('dragging-files');document.querySelectorAll('.drag-target').forEach(el=>el.classList.remove('drag-target'));}
+  function markTarget(target){document.querySelectorAll('.drag-target').forEach(el=>{if(el!==target)el.classList.remove('drag-target');});target?.classList.add('drag-target');}
+  document.addEventListener('dragenter',event=>{if(isFileDrag(event)){clearTimeout(dragTimer);markTarget(event.target instanceof Element?event.target.closest('.drop-zone,[data-task]'):null);}});
+  document.addEventListener('dragover',event=>{if(!isFileDrag(event))return;event.preventDefault();event.dataTransfer.dropEffect='copy';markTarget(event.target instanceof Element?event.target.closest('.drop-zone,[data-task]'):null);});
+  document.addEventListener('drop',async event=>{
+    if(!event.dataTransfer?.files.length)return;
+    const incoming=[...event.dataTransfer.files];const target=explicitTarget(event.target);clearDrag();
+    if(target){
+      if(target.dataset.task){event.preventDefault();event.stopPropagation();if(uploading){toast('正在上传，请稍候再放入文件');return;}try{await uploadFiles({files:incoming,value:''},'material',target.dataset.task);}catch(error){toast(error.message);}return;}
+      const input=target.matches('input[type="file"]')?target:target.querySelector('input[type="file"]');
+      if(!input||input.id==='shelf-file-input')return; // Explicit shelf picker uses its own input change handler.
+      if(!['material-upload','receipt-upload'].includes(input.id))return;
+      event.preventDefault();event.stopPropagation();
+      if(input.disabled||uploading){toast(input.disabled?'请先同步任务后添加文件':'正在上传，请稍候再放入文件');return;}
+      try{await uploadFiles({files:incoming,value:''},input.id==='receipt-upload'?'receipt':'material');}catch(error){toast(error.message);}return;
+    }
+    event.preventDefault();
+    const blank=event.target instanceof Element&&event.target.closest('#workspace .main')&&!event.target.closest('button,a,input,textarea,select,[contenteditable],dialog');
+    if(blank)addFiles(incoming);
   });
-  document.addEventListener('dragleave',event=>{if(!event.relatedTarget){document.body.classList.remove('dragging-files');if(!files().length&&!uploadingFiles.size)dragTimer=setTimeout(hide,500);}});
+  document.addEventListener('dragleave',event=>{if(!event.relatedTarget)dragTimer=setTimeout(clearDrag,60);});
+  document.addEventListener('dragend',clearDrag);
   document.addEventListener('keydown',event=>{
     if(!open)return;
     if(event.key==='Escape'){event.preventDefault();hide();}
@@ -52,23 +80,34 @@
       else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();first?.focus();}
     }
   });
+  drawer.addEventListener('change',event=>{
+    const id=event.target.dataset.shelfTask||event.target.dataset.shelfKind;if(!id)return;
+    const file=files().find(f=>f.id===id);if(!file)return;
+    const taskId=drawer.querySelector('[data-shelf-task="'+id+'"]').value;
+    let kind=drawer.querySelector('[data-shelf-kind="'+id+'"]').value;
+    if(taskId&&!['material','receipt'].includes(kind))kind='material';if(!taskId&&kind==='material')kind='inbox';
+    drafts.set(id,{taskId,kind,version:drafts.get(id)?.version??file.version});
+    if(analyzing.has(id))window.liveAnalysis?.cancel('file:'+id);
+    renderShelf();drawer.querySelector('[data-shelf-'+(event.target.dataset.shelfTask?'task':'kind')+'="'+id+'"]').focus();
+  });
   drawer.addEventListener('click',async event=>{
     const badge=event.target.closest('[data-shelf-why]');
     if(badge){const panel=drawer.querySelector(`[data-evidence="${badge.dataset.shelfWhy}"]`);if(panel)panel.classList.toggle('open');return;}
     const button=event.target.closest('button');if(!button)return;
+    if(button.dataset.shelfCancel){drafts.delete(button.dataset.shelfCancel);renderShelf();return;}
     const id=button.dataset.shelfAssign||button.dataset.shelfUndo||button.dataset.shelfAnalyze||button.dataset.shelfDelete||button.dataset.shelfDownload;
     const file=files().find(x=>x.id===id);if(!file)return;
     try{
       if(button.dataset.shelfAnalyze)return analyzeFile(id);
       if(button.dataset.shelfDownload)return saveDownload('/api/files/'+id,file.name);
-      if(button.dataset.shelfDelete){await api('/api/shelf/'+id+'?version='+file.version,'DELETE');state.snapshot.shelf=files().filter(f=>f.id!==id);cacheSoon();renderShelf();await refresh({renderPage:false});toast('已删除 '+file.name,{label:'撤销',run:async()=>{const form=new FormData();try{const saved=await fetch(apiUrl('/api/shelf/restore'),{method:'POST',headers:{Authorization:'Bearer '+state.session.token,'Content-Type':'application/json'},body:JSON.stringify({name:file.name,version:1})});}catch{}toast('如需恢复，请重新拖入原文件');}});return;}
-      const target=button.dataset.shelfUndo?'category:inbox':drawer.querySelector(`[data-shelf-target="${id}"]`).value;
-      const category=target.startsWith('category:')?target.slice(9):'material';
-      const result=await api('/api/shelf/'+id,'PUT',{task_id:target.startsWith('category:')?null:target,category,version:file.version});updateFile(result);await refresh({renderPage:false});toast('分类已更新');
-    }catch(error){toast(error.message);}
+      if(button.dataset.shelfDelete){if(!confirm('删除云端这份文件？本机原文件会保留，删除后需要重新拖入才能恢复。'))return;await api('/api/shelf/'+id+'?version='+file.version,'DELETE');state.snapshot.shelf=files().filter(f=>f.id!==id);cacheSoon();renderShelf();await refresh({renderPage:false});toast('已删除，原文件仍保留在电脑中');return;}
+      const draft=drafts.get(id);
+      if(!button.dataset.shelfUndo&&!draft)return;
+      const result=await api('/api/shelf/'+id,'PUT',{task_id:button.dataset.shelfUndo?null:draft.taskId||null,category:button.dataset.shelfUndo?'inbox':draft.kind,version:button.dataset.shelfUndo?file.version:draft.version});drafts.delete(id);updateFile(result);await refresh({renderPage:false});toast(result.task_id?'已更新待办归属和文件用途':'已更新文件用途，当前未关联待办');
+    }catch(error){if(error.status===409){await refresh({renderPage:false});const current=files().find(f=>f.id===id);if(current&&drafts.has(id))drafts.get(id).version=current.version;else drafts.delete(id);renderShelf();toast('实际归属已更新，请核对后再次应用你的选择');}else toast(error.message);}
   });
   window.addEventListener('snapshot-updated',()=>{document.body.classList.remove('dragging-files');renderShelf();});
-  window.shelf={show,hide,addFiles,refresh:renderShelf};
+  window.shelf={show,hide,addFiles,refresh:renderShelf,reset:()=>{drafts.clear();uploadingFiles.clear();analyzing.clear();hide();}};
   window.desktop?.onEdgeFiles?.(async items=>{
     show();if(!state.session)return;
     try{const saved=await desktop.importEdgeFiles(items);for(const file of saved){updateFile(file);analyzeFile(file.id);}}catch(error){toast(error.message);}

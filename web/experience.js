@@ -7,11 +7,11 @@
     if(page==='settings'&&!$('#appearance-panel-marker')){
       const marker=document.createElement('div');marker.id='appearance-panel-marker';marker.innerHTML=appearancePanel();$('#view .page-heading').after(marker);appearance.refresh();
     }
-    if(state.session)$('#shelf-handle').hidden=false;
+    if(state.session)$('#shelf-handle').hidden=!!window.desktop;
   }
   function chatList(type){
     const list=(state.sources.conversations||[]).filter(c=>c.source===type);
-    return `<div class="chat-toolbar"><input data-chat-search="${type}" placeholder="搜索联系人或群聊" aria-label="搜索${type==='qq'?'QQ':'微信'}会话"><span class="helper">已选 ${(state.sources[type+'_chats']||[]).length} 个</span></div><div class="conversation-list">${list.length?list.map(c=>`<label class="conversation-row" data-chat-label="${type}" data-search="${esc(c.name+' '+c.id)}"><input type="checkbox" data-subscribe="${type}" value="${esc(c.id)}" ${(state.sources[type+'_chats']||[]).includes(c.id)?'checked':''}><span><strong>${esc(c.name)}</strong><small>${c.id.startsWith('group:')||c.id.endsWith('@chatroom')?'群聊':'联系人'}</small></span></label>`).join(''):`<div class="empty"><strong>${type==='qq'?'选择一个 QQ 实例':'正在等待微信登录'}</strong><div>连接后，在这里勾选需要关注的聊天。</div></div>`}</div>`;
+    return `<div class="chat-toolbar"><input data-chat-search="${type}" placeholder="搜索联系人或群聊" aria-label="搜索${type==='qq'?'QQ':'微信'}会话"><span class="helper" data-chat-count="${type}" aria-live="polite">已选 ${(state.sources[type+'_chats']||[]).length} 个</span></div><div class="conversation-list">${list.length?list.map(c=>`<label class="conversation-row" data-chat-label="${type}" data-search="${esc(c.name+' '+c.id)}"><input type="checkbox" data-subscribe="${type}" value="${esc(c.id)}" ${(state.sources[type+'_chats']||[]).includes(c.id)?'checked':''}><span><strong>${esc(c.name)}</strong><small>${c.id.startsWith('group:')||c.id.endsWith('@chatroom')?'群聊':'联系人'}</small></span></label>`).join(''):`<div class="empty"><strong>${type==='qq'?'选择一个 QQ 实例':'正在等待微信登录'}</strong><div>连接后，在这里勾选需要关注的聊天。</div></div>`}</div>`;
   }
   function sourcesView(){
     if(!window.desktop)return heading('消息来源','电脑自动读取，网页管理自己的内容。')+`<section class="panel">${empty('在桌面客户端选择聊天','连接后，通知、待办和材料会同步到这里。')}</section>`;
@@ -99,7 +99,7 @@
   async function onSession(){
     if(lastSessionGeneration===state.generation)return;lastSessionGeneration=state.generation;
     if(location.pathname==='/authorize')return showConsent();
-    $('#browser-consent').hidden=true;$('#shelf-handle').hidden=false;
+    $('#browser-consent').hidden=true;$('#shelf-handle').hidden=!!window.desktop;
     if(window.desktop)detect(true);
   }
   document.addEventListener('click',async event=>{
@@ -126,7 +126,7 @@
   });
   document.addEventListener('change',event=>{
     if(event.target.matches('[data-subscribe],#sources-auto,#qq-enabled,#wechat-enabled')){
-      configFromForm();clearTimeout(resumeTimer);resumeTimer=setTimeout(async()=>{try{await persist();if(state.sources.auto_start===false)await desktop.stopCollector();else await resume();}catch(error){toast(error.message);}},800);
+      configFromForm();for(const type of ['qq','wechat']){const count=document.querySelector('[data-chat-count="'+type+'"]');if(count)count.textContent='已选 '+(state.sources[type+'_chats']||[]).length+' 个';}clearTimeout(resumeTimer);resumeTimer=setTimeout(async()=>{try{await persist();if(state.sources.auto_start===false)await desktop.stopCollector();else await resume();}catch(error){toast(error.message);}},800);
     }
   });
   document.addEventListener('input',event=>{if(event.target.dataset.chatSearch){const type=event.target.dataset.chatSearch;const query=event.target.value.toLowerCase();$$(`[data-chat-label="${type}"]`).forEach(row=>{row.hidden=!row.dataset.search.toLowerCase().includes(query);});}});
@@ -136,7 +136,7 @@
     try{await api('/api/auth/device/approve','POST',{user_code:authorizationCode(),approve:allowed});$('#consent-status').textContent=allowed?'授权完成，可以返回桌面客户端。':'已取消此次授权。';}
     catch(error){$('#consent-status').textContent=error.message;$('#approve-device').disabled=false;$('#deny-device').disabled=false;}
   }
-  $('#consent-workspace').addEventListener('click',()=>{history.replaceState(null,'','/');$('#browser-consent').hidden=true;$('#workspace').hidden=false;$('#shelf-handle').hidden=false;render();});
+  $('#consent-workspace').addEventListener('click',()=>{history.replaceState(null,'','/');$('#browser-consent').hidden=true;$('#workspace').hidden=false;$('#shelf-handle').hidden=!!window.desktop;render();});
   window.addEventListener('appearance-error',()=>toast('外观已应用，但本机偏好未能保存'));
   window.experience={sourcesView,decorate,detect,onSession,prepareLogin,browserLogin};
   if(window.desktop){prepareLogin();desktop.onAppearance(value=>appearance.restore(value));}

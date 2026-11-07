@@ -1,0 +1,16 @@
+{
+  "version": "0.3.0",
+  "backend_tests": "23 passed",
+  "packaged_automation": "see report.json",
+  "isolated_python_reader": true,
+  "wechat_private_cache_sessions": 290,
+  "wechat_chat_contents_read_by_probe": false,
+  "continuous_wechat_listening": "user acceptance pending",
+  "real_desktop_drag_hook": "WinEvent/SysDragImage implemented; user acceptance pending",
+  "vision": "synthetic PNG request and original-file-preservation test passed",
+  "production_data": {
+    "row_counts_preserved": true,
+    "master_key_unchanged": true
+  },
+  "ui_control": "no desktop interaction after user requested self-acceptance"
+}

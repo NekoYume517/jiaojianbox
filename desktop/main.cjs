@@ -7,17 +7,21 @@ const crypto = require('node:crypto');
 const { Readable } = require('node:stream');
 const { pipeline } = require('node:stream/promises');
 const { createWriteStream } = require('node:fs');
+const {EdgeWindow}=require('./edge-window.cjs');
 const {QQManager,READ_ACTIONS}=require('./qq-manager.cjs');
 
 protocol.registerSchemesAsPrivileged([{ scheme: 'app', privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true } }]);
 if (process.env.JJB_USER_DATA) app.setPath('userData', process.env.JJB_USER_DATA);
+const single=app.requestSingleInstanceLock();if(!single)app.quit();
+app.on('second-instance',()=>{window?.show();window?.focus();});
 let window, collector, collectorState = { state: 'stopped' };
 const storageWrites = new Map();
 const sourceRoot = path.resolve(__dirname, '..');
 const collectorRoot = app.isPackaged ? path.join(process.resourcesPath, 'python') : sourceRoot;
-const allowedAssets = new Set(['index.html', 'app.css', 'app.js', 'theme.js', 'experience.js', 'shelf.js', 'icon.svg']);
+const allowedAssets = new Set(['index.html', 'app.css', 'app.js', 'analysis.js', 'statistics.js', 'vendor/echarts.min.js', 'theme.js', 'experience.js', 'shelf.js', 'icon.svg', 'edge.html', 'edge.css', 'edge.js']);
 let appearance = { theme: 'system', density: 'comfortable', textSize: 'normal' };
-let qqManager;
+let qqManager,edgeWindow;
+const bridgeRoot=app.isPackaged?path.join(process.resourcesPath,"bridge"):path.join(sourceRoot,"desktop");
 function normalizeAppearance(value) {
   return {theme:['system','light','dark'].includes(value?.theme)?value.theme:'system', density:['comfortable','compact'].includes(value?.density)?value.density:'comfortable',textSize:['normal','large'].includes(value?.textSize)?value.textSize:'normal'};
 }
@@ -25,7 +29,7 @@ function updateNativeAppearance() {
   const dark=nativeTheme.shouldUseDarkColors;
   window?.setBackgroundColor(dark?'#101914':'#f5f7f3');
   if(process.platform==='win32' && window)window.setTitleBarOverlay({color:dark?'#141f19':'#eff3ed',symbolColor:dark?'#dce9df':'#34483a',height:40});
-  window?.webContents.send('appearance-updated',appearance);
+  if(window&&!window.isDestroyed())window.webContents.send('appearance-updated',appearance);
 }
 
 function validateSender(event) {
@@ -34,7 +38,7 @@ function validateSender(event) {
 function publishState(value) {
   const sources = value.source ? { ...(collectorState.sources || {}), [value.source]: value } : {};
   collectorState = { ...collectorState, ...value, sources, at: new Date().toISOString() };
-  window?.webContents.send('collector-state', collectorState);
+  if(window&&!window.isDestroyed()&&!window.webContents.isDestroyed())window.webContents.send('collector-state', collectorState);
 }
 async function storageFile(key) {
   if (!/^[a-zA-Z0-9_-]{1,100}$/.test(key)) throw new Error('存储键无效');
@@ -75,7 +79,7 @@ async function stopCollector() {
   publishState({ state: 'stopped', message: '采集已停止' });
 }
 function runPython(command, config, onEvent) {
-  const python = config.python_path || (process.platform === 'win32' ? 'python' : 'python3');
+  const python = config.python_path || (app.isPackaged?path.join(process.resourcesPath,'runtime','python','python.exe'):null) || (process.platform === 'win32' ? 'python' : 'python3');
   const child = spawn(python, ['-u', '-m', 'collector.agent', command, '--state-dir', path.join(app.getPath('userData'), 'collector')], {
     cwd: collectorRoot, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'], env: { ...process.env, PYTHONIOENCODING: 'utf-8' },
   });
@@ -99,8 +103,8 @@ function runPython(command, config, onEvent) {
 function installHandlers() {
   const handle = (name, fn) => ipcMain.handle(name, (event, ...args) => { validateSender(event); return fn(...args); });
   handle('local-get', get);
-  handle('local-set', put);
-  handle('local-remove', async key => fs.rm(await storageFile(key), { force: true }));
+  handle('local-set',async(key,value)=>{await put(key,value);if(key==='session')edgeWindow?.resetSession();});
+  handle('local-remove',async key=>{await fs.rm(await storageFile(key),{force:true});if(key==='session')edgeWindow?.resetSession();});
   handle('platform', () => ({ platform: process.platform, version: app.getVersion(), nativeTitlebar:process.platform==='win32' }));
   handle('appearance-get',()=>appearance);
   handle('appearance-set',async value=>{
@@ -119,7 +123,7 @@ function installHandlers() {
   handle('collector-state', () => collectorState);
   handle('qq-discover',preferred=>qqManager.discover(preferred));
   handle('qq-connect',async ({pid,home})=>{const account=await qqManager.attach(pid,home);return{...account,...await qqManager.contacts(account.uin)};});
-  handle('source-diagnostics',()=>({...qqManager.diagnostics(),collector:collectorState}));
+  handle('source-diagnostics',async()=>{let wechat=[];try{wechat=(await fs.readFile(path.join(app.getPath('userData'),'collector','wechat-diagnostics.jsonl'),'utf8')).trim().split('\n').slice(-10).map(line=>JSON.parse(line));}catch{}return {...qqManager.diagnostics(),collector:collectorState,wechat_errors:wechat};});
   handle('qq-debug',async({uin,action,params})=>{
     if(!READ_ACTIONS.has(action))throw new Error('仅支持读取类调试动作');
     return qqManager.call('action',{uin,action,params});
@@ -175,18 +179,22 @@ app.whenReady().then(async () => {
   Menu.setApplicationMenu(null);
   const area=screen.getPrimaryDisplay().workAreaSize;
   window = new BrowserWindow({ width:Math.max(360,Math.min(1360,area.width-48)), height:Math.max(520,Math.min(900,area.height-48)), minWidth:360, minHeight:520,
+    ...(process.env.JJB_TEST_OFFSCREEN==='1'?{x:-10000,y:-10000}:{}),
     title: '交件箱', backgroundColor:nativeTheme.shouldUseDarkColors?'#101914':'#f5f7f3', autoHideMenuBar: true, show: false,
     ...(process.platform==='win32'?{titleBarStyle:'hidden',titleBarOverlay:{color:nativeTheme.shouldUseDarkColors?'#141f19':'#eff3ed',symbolColor:nativeTheme.shouldUseDarkColors?'#dce9df':'#34483a',height:40}}:{}),
     webPreferences: { preload: path.join(__dirname, 'preload.cjs'), contextIsolation: true, sandbox: true, nodeIntegration: false },
   });
-  window.once('ready-to-show', () => window.show());
+  window.once('ready-to-show', () => process.env.JJB_TEST_OFFSCREEN==='1'?window.showInactive():window.show());
   window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   window.webContents.on('will-navigate', event => event.preventDefault());
   window.webContents.session.setPermissionRequestHandler((_web, _permission, callback) => callback(false));
   installHandlers();
-  qqManager=new QQManager({userData:app.getPath('userData'),sourceRoot,onStatus:publishState});
+  qqManager=new QQManager({userData:app.getPath('userData'),sourceRoot,bridgeRoot,runtimeRoot:app.isPackaged?path.join(process.resourcesPath,'runtime','snowluma'):null,onStatus:publishState,acceptConsent:async runtime=>{
+    while(true){const r=await dialog.showMessageBox(window,{type:'question',title:'QQ 读取组件首次启用',message:'启用内置 SnowLuma 读取组件',detail:'使用前请阅读组件的用户协议和隐私政策。点击同意表示接受这两份协议。',buttons:['查看用户协议','查看隐私政策','同意并继续','取消'],defaultId:3,cancelId:3});if(r.response===3)return false;if(r.response===2)return true;await shell.openPath(path.join(runtime,r.response===0?'EULA.md':'PRIVACY.md'));}
+  }});
   nativeTheme.on('updated',updateNativeAppearance);
   await window.loadURL('app://jiaojianbox/index.html');
+  edgeWindow=new EdgeWindow({root:sourceRoot,main:window,get,resources:bridgeRoot});await edgeWindow.start();
 });
-app.on('before-quit', () => { collector?.kill(); qqManager?.stop(); });
-app.on('window-all-closed', () => app.quit());
+app.on('before-quit', () => { edgeWindow?.stop(); collector?.kill(); qqManager?.stop(); });
+app.on('window-all-closed', () => {if(!edgeWindow)app.quit();});

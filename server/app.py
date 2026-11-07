@@ -16,7 +16,7 @@ import zipfile
 import tempfile
 from collections import defaultdict, deque
 from contextlib import contextmanager, asynccontextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Literal
 
@@ -28,9 +28,11 @@ from starlette.background import BackgroundTask
 from starlette.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
+from .stats import summarize
 from .extract import extract
 from .llm import LlmConfig, analyze, endpoint, suggest_file
 from .file_content import read_text
+from .vision import IMAGE_EXTENSIONS,prepare_image
 from cryptography.fernet import Fernet
 import httpx
 
@@ -128,6 +130,11 @@ class TriageInput(BaseModel):
     state: Literal["unread", "ignored", "saved"]
 
 
+class FileKindInput(BaseModel):
+    kind: Literal["material","receipt"]
+    version: int = Field(ge=1)
+
+
 class RenameInput(BaseModel):
     name: str = Field(min_length=1, max_length=180)
     version: int = Field(ge=1)
@@ -205,10 +212,14 @@ def create_app(data_dir: str | Path | None = None) -> FastAPI:
         CREATE INDEX IF NOT EXISTS ix_tasks_owner ON tasks(user_id);
         CREATE INDEX IF NOT EXISTS ix_files_task ON attachments(user_id,task_id);
         CREATE TABLE IF NOT EXISTS llm_settings(user_id TEXT PRIMARY KEY REFERENCES users(id), payload TEXT, secret TEXT);
+        CREATE TABLE IF NOT EXISTS llm_calls(id TEXT PRIMARY KEY,user_id TEXT REFERENCES users(id),kind TEXT,model TEXT,status TEXT,started_at TEXT,duration_ms REAL,first_token_ms REAL,prompt_tokens INTEGER,completion_tokens INTEGER,total_tokens INTEGER,http_status INTEGER,usage_reported INTEGER,streamed INTEGER);
+        CREATE INDEX IF NOT EXISTS llm_calls_owner_time ON llm_calls(user_id,started_at);
         CREATE TABLE IF NOT EXISTS analysis_jobs(id INTEGER PRIMARY KEY AUTOINCREMENT, user_id TEXT, message_id TEXT UNIQUE, state TEXT DEFAULT 'queued', attempts INTEGER DEFAULT 0, next_at REAL DEFAULT 0, error TEXT DEFAULT '');
         CREATE TABLE IF NOT EXISTS device_auth(device_hash TEXT PRIMARY KEY, user_code TEXT UNIQUE, expires REAL, state TEXT DEFAULT 'pending', user_id TEXT, token TEXT);
         CREATE TABLE IF NOT EXISTS shelf_meta(file_id TEXT PRIMARY KEY REFERENCES attachments(id) ON DELETE CASCADE, user_id TEXT REFERENCES users(id), category TEXT, suggestion TEXT, created_at TEXT, version INTEGER DEFAULT 1);
         """)
+        if 'streamed' not in {r[1] for r in conn.execute('PRAGMA table_info(llm_calls)')}:
+            conn.execute('ALTER TABLE llm_calls ADD COLUMN streamed INTEGER');conn.commit()
         if 'version' not in {r[1] for r in conn.execute('PRAGMA table_info(shelf_meta)')}:
             conn.execute('ALTER TABLE shelf_meta ADD COLUMN version INTEGER DEFAULT 1')
             conn.commit()
@@ -222,7 +233,7 @@ def create_app(data_dir: str | Path | None = None) -> FastAPI:
         worker.cancel()
         await asyncio.gather(worker, return_exceptions=True)
 
-    app = FastAPI(title="交件箱 API", version="0.1.0", docs_url="/docs", lifespan=lifespan)
+    app = FastAPI(title="交件箱 API", version="0.3.0", docs_url="/docs", lifespan=lifespan)
     app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["GET", "POST", "PUT", "DELETE"], allow_headers=["Authorization", "Content-Type"])
     app.state.database = database
     attempts = defaultdict(deque)
@@ -274,7 +285,20 @@ def create_app(data_dir: str | Path | None = None) -> FastAPI:
             return LlmConfig().model_dump(exclude={"api_key"}), ""
         return json.loads(row["payload"]), cipher.decrypt(row["secret"].encode()).decode() if row["secret"] else ""
 
-    async def run_analysis(user, body):
+    def record_llm(user,kind,config,started,result=None,error=None,metrics_override=None):
+        metrics=metrics_override if metrics_override is not None else (result or {}).get('performance',{}) if error is None else getattr(error,'metrics',{})
+        code=metrics.get('http_status')
+        status='success' if error is None else 'http_error' if code and code>=400 else 'timeout' if isinstance(error,(httpx.TimeoutException,TimeoutError)) else 'cancelled' if isinstance(error,asyncio.CancelledError) else 'invalid_output' if isinstance(error,ValueError) else 'connection_error'
+        with db(True) as conn:
+            conn.execute('INSERT INTO llm_calls(id,user_id,kind,model,status,started_at,duration_ms,first_token_ms,prompt_tokens,completion_tokens,total_tokens,http_status,usage_reported,streamed) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)',(str(uuid.uuid4()),user,kind,config['model'],status,started[0],metrics.get('elapsed_ms',round((time.monotonic()-started[1])*1000)),metrics.get('first_token_ms'),metrics.get('prompt_tokens'),metrics.get('completion_tokens'),metrics.get('total_tokens'),code,int(bool(metrics.get('usage_reported'))),int(metrics['streamed']) if 'streamed' in metrics else None))
+
+    @app.get('/api/statistics')
+    def statistics(days:int=Query(default=30,ge=1,le=365),user=Depends(owner)):
+        local=timezone(timedelta(hours=8));start=(datetime.now(local).date()-timedelta(days=days-1));cutoff=datetime.combine(start,datetime.min.time(),tzinfo=local).astimezone(timezone.utc).isoformat()
+        with db() as conn:rows=[dict(r) for r in conn.execute('SELECT kind,model,status,started_at,duration_ms,CASE WHEN streamed=1 THEN first_token_ms ELSE NULL END AS first_token_ms,prompt_tokens,completion_tokens,total_tokens,http_status,usage_reported,streamed FROM llm_calls WHERE user_id=? AND started_at>=? ORDER BY started_at DESC',(user,cutoff))]
+        return summarize(rows,days)
+
+    async def run_analysis(user, body, progress=None):
         config, key = settings_for(user)
         if not config["base_url"] or not config["model"]:
             raise HTTPException(400, "请先在设置中填写 LLM API 地址和模型")
@@ -301,14 +325,20 @@ def create_app(data_dir: str | Path | None = None) -> FastAPI:
                     ORDER BY julianday(json_extract(payload,'$.sent_at')) DESC,rowid DESC LIMIT ?""",
                     (user, body.message_id, target["source"], target["account_id"], target["conversation_id"], target["sent_at"], count))]
                 contexts.reverse()
+        started_llm=(now(),time.monotonic());result=None
         try:
-            result = await analyze(config, [target], contexts, key)
+            if progress:await progress({'stage':'context','context_count':len(contexts),'target_characters':len(target.get('text','')),'context_characters':sum(len(m.get('text','')) for m in contexts)})
+            result = await analyze(config, [target], contexts, key, **({'progress':progress} if progress else {}))
             # 再通过任务数据契约校验模型推断，避免不合法日期/链接进入任务。
             validated = TaskInput.model_validate({**result, "title": result.get("title") or target["draft"]["title"]})
             for k in ("due_at", "requirements", "max_total_bytes", "naming_hint", "submit_url"):
                 result[k] = validated.model_dump()[k]
-        except (ValueError, httpx.HTTPError):
+        except asyncio.CancelledError as exc:
+            record_llm(user,"notification",config,started_llm,error=exc);raise
+        except (ValueError, httpx.HTTPError) as exc:
+            record_llm(user,"notification",config,started_llm,error=exc,metrics_override=result.get("performance",{}) if result else None)
             raise HTTPException(502, "LLM 分析失败：请检查接口、模型及输出格式后重试")
+        record_llm(user,"notification",config,started_llm,result=result)
         result |= {"at": now(), "context_ids": [m["id"] for m in contexts], "model": config["model"]}
         with db(True) as conn:
             current = conn.execute("SELECT payload FROM messages WHERE id=? AND user_id=?", (body.message_id, user)).fetchone()
@@ -378,8 +408,32 @@ def create_app(data_dir: str | Path | None = None) -> FastAPI:
         except (httpx.HTTPError, ValueError, KeyError):
             raise HTTPException(502, "无法读取模型列表，请检查 API 地址和 Key")
 
+    def analysis_stream(operation):
+        async def events():
+            queue=asyncio.Queue(maxsize=64)
+            async def progress(value):await queue.put(('progress',value))
+            async def work():
+                try:
+                    async with asyncio.timeout(180):result=await operation(progress)
+                    await queue.put(('result',result))
+                except HTTPException as exc:await queue.put(('error',{'message':exc.detail,'status':exc.status_code}))
+                except (ValueError,httpx.HTTPError,TimeoutError):await queue.put(('error',{'message':'分析未完成，请检查模型连接或减少上下文后重试','status':502}))
+                except Exception:await queue.put(('error',{'message':'分析暂不可用，请重试','status':500}))
+            task=asyncio.create_task(work())
+            try:
+                while True:
+                    try:kind,data=await asyncio.wait_for(queue.get(),12)
+                    except asyncio.TimeoutError:kind,data='progress',{'stage':'waiting'}
+                    yield 'event: '+kind+'\ndata: '+json.dumps(data,ensure_ascii=False)+'\n\n'
+                    if kind in ('result','error'):break
+            finally:
+                task.cancel()
+                await asyncio.gather(task,return_exceptions=True)
+        return StreamingResponse(events(),media_type='text/event-stream',headers={'Cache-Control':'no-cache','X-Accel-Buffering':'no'})
+
     @app.post("/api/analyze")
-    async def analyze_message(body: AnalyzeInput, user=Depends(owner)):
+    async def analyze_message(body: AnalyzeInput, stream: bool=False, user=Depends(owner)):
+        if stream:return analysis_stream(lambda progress:run_analysis(user,body,progress))
         return await run_analysis(user, body)
 
     @app.middleware("http")
@@ -391,7 +445,7 @@ def create_app(data_dir: str | Path | None = None) -> FastAPI:
 
     @app.get("/health")
     def health():
-        return {"status": "ok", "version": "0.1.0"}
+        return {"status": "ok", "version": "0.3.0"}
 
     @app.post("/api/auth/register", status_code=201)
     def register(body: Credentials, request: Request):
@@ -663,10 +717,11 @@ def create_app(data_dir: str | Path | None = None) -> FastAPI:
 
     def assign_shelf(conn,user,file_id,task_id,category):
         original=shelf_row(conn,user,file_id)
+        if task_id and category not in ('material','receipt'):raise HTTPException(422,'待办内文件用途请选择任务材料或提交回执')
         if task_id:
             target=task_row(conn,user,task_id)
             payload=json.loads(target['payload'])
-            if payload['status']=='archived':raise HTTPException(400,'归档任务不能接收新文件')
+            if payload['status']=='archived' and original['task_id']!=task_id:raise HTTPException(400,'归档任务不能接收新文件')
             totals=conn.execute('SELECT COUNT(*),COALESCE(SUM(size),0) FROM attachments WHERE task_id=? AND id<>?',(task_id,file_id)).fetchone()
             if totals[0]>=50 or totals[1]+original['size']>200*1024**2:raise HTTPException(413,'任务的材料数量或大小已达到上限')
         conn.execute('UPDATE attachments SET task_id=?,kind=? WHERE id=?',(task_id,'receipt' if category=='receipt' else 'material',file_id))
@@ -705,16 +760,33 @@ def create_app(data_dir: str | Path | None = None) -> FastAPI:
             return assign_shelf(conn,user,file_id,body.task_id,body.category)
 
     @app.post('/api/shelf/{file_id}/suggest')
-    async def shelf_suggest(file_id:str,body:ShelfAnalysis,user=Depends(owner)):
+    async def shelf_suggest(file_id:str,body:ShelfAnalysis,stream:bool=False,user=Depends(owner)):
+        if stream:return analysis_stream(lambda progress:run_shelf_suggest(file_id,body,user,progress))
+        return await run_shelf_suggest(file_id,body,user)
+
+    async def run_shelf_suggest(file_id,body,user,progress=None):
         config,key=settings_for(user)
         if not config['base_url'] or not config['model']:raise HTTPException(400,'请先配置 LLM，或直接手动选择分类')
         with db() as conn:
             file=shelf_row(conn,user,file_id)
             candidates=[json.loads(r[0]) for r in conn.execute('SELECT payload FROM tasks WHERE user_id=? ORDER BY rowid DESC LIMIT 50',(user,))]
         candidates=[t for t in candidates if t['status'] not in ('submitted','archived')]
+        if progress:await progress({'stage':'extracting','task_count':len(candidates)})
         content,extraction=await asyncio.to_thread(read_text,blobs/file_id,file['name'])
-        try:result=await suggest_file(config,key,{'name':file['name'],'size':file['size']},content,candidates)
-        except (ValueError,httpx.HTTPError):raise HTTPException(502,'AI 归类暂不可用，文件已保留，可手动分类或重试')
+        image=None;image_info={}
+        if config.get('vision_enabled') and Path(file['name']).suffix.lower() in IMAGE_EXTENSIONS:
+            try:image,image_info=await asyncio.to_thread(prepare_image,blobs/file_id)
+            except ValueError as exc:raise HTTPException(400,str(exc))
+            extraction='已读取图片内容（'+str(image_info['image_width'])+'×'+str(image_info['image_height'])+'）'
+        if progress:await progress({'stage':'file-context','task_count':len(candidates),'extracted_characters':len(content),'extraction':extraction,'image_count':1 if image else 0})
+        started_llm=(now(),time.monotonic())
+        try:result=await suggest_file(config,key,{'name':file['name'],'size':file['size']},content,candidates,**({'progress':progress} if progress else {}),**({'image':image} if image else {}))
+        except asyncio.CancelledError as exc:
+            record_llm(user,'file',config,started_llm,error=exc);raise
+        except (ValueError,httpx.HTTPError) as exc:
+            record_llm(user,'file',config,started_llm,error=exc);raise HTTPException(502,'AI 归类暂不可用，文件已保留，可手动分类或重试')
+        record_llm(user,'file',config,started_llm,result=result)
+        result|=image_info
         result|={'extraction':extraction,'extracted_characters':len(content),'at':now(),'model':config['model']}
         with db(True) as conn:
             current=shelf_row(conn,user,file_id)
@@ -753,6 +825,19 @@ def create_app(data_dir: str | Path | None = None) -> FastAPI:
             update_payload(conn, user, task_id, obj)
         (blobs / file_id).unlink(missing_ok=True)
         return {"ok": True}
+
+    @app.put('/api/tasks/{task_id}/files/{file_id}/kind')
+    def change_file_kind(task_id:str,file_id:str,body:FileKindInput,user=Depends(owner)):
+        with db(True) as conn:
+            row=task_row(conn,user,task_id)
+            if row['version']!=body.version:raise HTTPException(409,'任务已有更新，请刷新后再移动文件')
+            if not conn.execute('SELECT 1 FROM attachments WHERE id=? AND user_id=? AND task_id=?',(file_id,user,task_id)).fetchone():raise HTTPException(404,'文件不存在')
+            conn.execute('UPDATE attachments SET kind=? WHERE id=?',(body.kind,file_id))
+            if conn.execute('SELECT 1 FROM shelf_meta WHERE file_id=?',(file_id,)).fetchone():
+                conn.execute('UPDATE shelf_meta SET category=?,version=version+1 WHERE file_id=?',(body.kind,file_id))
+                event(conn,user,'shelf.upsert',file_id)
+            payload=json.loads(row['payload']);payload['version']+=1;update_payload(conn,user,task_id,payload)
+            return task_object(conn,task_row(conn,user,task_id))
 
     @app.put("/api/tasks/{task_id}/files/{file_id}")
     def rename_file(task_id: str, file_id: str, body: RenameInput, user=Depends(owner)):

@@ -12,3 +12,6 @@ dist/
 *.log
 verification-artifacts/
 .DS_Store
+
+work/
+artifacts*/

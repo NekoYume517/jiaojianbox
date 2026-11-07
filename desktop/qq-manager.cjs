@@ -8,10 +8,10 @@ const {WebSocketServer}=require('ws');
 const READ_ACTIONS=new Set(['get_login_info','get_group_list','get_friend_list','get_group_msg_history','get_friend_msg_history','get_msg','get_status','get_version_info']);
 
 class QQManager{
-  constructor({userData,sourceRoot,onStatus}){this.userData=userData;this.sourceRoot=sourceRoot;this.onStatus=onStatus;this.pending=new Map();this.gateways=new Map();this.logs=[];}
+  constructor({userData,sourceRoot,onStatus,bridgeRoot,runtimeRoot,acceptConsent}){this.bridgeRoot=bridgeRoot||path.join(sourceRoot,'desktop');this.runtimeRoot=runtimeRoot;this.acceptConsent=acceptConsent;this.userData=userData;this.sourceRoot=sourceRoot;this.onStatus=onStatus;this.pending=new Map();this.gateways=new Map();this.logs=[];}
   record(state,message){const item={at:new Date().toISOString(),state,message};this.logs.push(item);this.logs=this.logs.slice(-80);this.onStatus?.({source:'qq',...item});}
   async locate(preferred){
-    const roots=[preferred,process.env.JJB_SNOWLUMA_HOME, 'D:\\software\\SnowLuma',path.join(process.env.LOCALAPPDATA||'','SnowLuma'),path.join(process.env.USERPROFILE||'','Desktop','SnowLuma')].filter(Boolean);
+    const roots=[preferred,this.runtimeRoot,process.env.JJB_SNOWLUMA_HOME, 'D:\\software\\SnowLuma',path.join(process.env.LOCALAPPDATA||'','SnowLuma'),path.join(process.env.USERPROFILE||'','Desktop','SnowLuma')].filter(Boolean);
     for(const root of roots){try{const pkg=JSON.parse(await fs.readFile(path.join(root,'package.json'),'utf8'));await fs.access(path.join(root,'index.mjs'));if(pkg.name==='@snowluma/runtime')return{root,version:pkg.version};}catch{}}
     throw new Error('尚未找到 SnowLuma 运行时，请在高级设置中选择已安装目录');
   }
@@ -24,10 +24,13 @@ class QQManager{
     const runtime=await this.locate(preferred);this.runtime=runtime;
     const working=path.join(this.userData,'qq-runtime');await fs.mkdir(path.join(working,'config'),{recursive:true});
     await fs.writeFile(path.join(working,'config','runtime.json'),JSON.stringify({hookAutoLoad:false,webuiHost:'127.0.0.1'}));
-    try{await fs.copyFile(path.join(runtime.root,'config','consent.json'),path.join(working,'config','consent.json'));}catch{}
+    const hash=crypto.createHash('sha256');for(const [id,file] of [['eula','EULA.md'],['privacy','PRIVACY.md']]){hash.update(id+'\0');hash.update(await fs.readFile(path.join(runtime.root,file)));hash.update('\0');}const version=hash.digest('hex').slice(0,16);
+    let accepted=false;for(const file of [path.join(working,'config','consent.json'),path.join(runtime.root,'config','consent.json'),path.join('D:\\software\\SnowLuma','config','consent.json')]){try{const v=JSON.parse(await fs.readFile(file,'utf8'));if(v.version===version){accepted=true;break;}}catch{}}
+    if(!accepted){if(!await this.acceptConsent?.(runtime.root))throw new Error('请先同意 QQ 读取组件的用户协议和隐私政策');}
+    await fs.writeFile(path.join(working,'config','consent.json'),JSON.stringify({version,acceptedAt:new Date().toISOString()}));
     const executable=process.platform==='win32'?path.join(runtime.root,'node.exe'):'node';
-    const env={...process.env,JJB_MANAGED_SNOW:'1',JJB_SNOW_ENTRY:path.join(runtime.root,'index.mjs'),JJB_SNOW_BRIDGE:pathToFileURL(path.join(this.sourceRoot,'desktop','snow-bridge.mjs')).href,SNOWLUMA_UPDATE_ROOT:runtime.root};delete env.ELECTRON_RUN_AS_NODE;
-    const child=spawn(executable,['--experimental-loader',pathToFileURL(path.join(this.sourceRoot,'desktop','snow-loader.mjs')).href,path.join(runtime.root,'index.mjs')],{cwd:working,windowsHide:true,env,stdio:['ignore','pipe','pipe','ipc']});this.child=child;
+    const env={...process.env,JJB_MANAGED_SNOW:'1',JJB_SNOW_ENTRY:path.join(runtime.root,'index.mjs'),JJB_SNOW_BRIDGE:pathToFileURL(path.join(this.bridgeRoot,'snow-bridge.mjs')).href,SNOWLUMA_UPDATE_ROOT:runtime.root};delete env.ELECTRON_RUN_AS_NODE;
+    const child=spawn(executable,['--experimental-loader',pathToFileURL(path.join(this.bridgeRoot,'snow-loader.mjs')).href,path.join(runtime.root,'index.mjs')],{cwd:working,windowsHide:true,env,stdio:['ignore','pipe','pipe','ipc']});this.child=child;
     child.stdout.on('data',()=>{});child.stderr.on('data',()=>{});
     child.on('message',message=>{
       if(message.kind==='ready'){this.ready=true;this.record('connected','QQ 读取引擎已就绪');}
@@ -83,6 +86,6 @@ class QQManager{
     return{account:String(uin),conversations:[...(groups.data||[]).map(g=>({id:'group:'+g.group_id,name:g.group_name||String(g.group_id),source:'qq'})),...(friends.data||[]).map(f=>({id:'private:'+f.user_id,name:f.remark||f.nickname||String(f.user_id),source:'qq'}))]};
   }
   diagnostics(){return{ready:!!this.ready,runtime:this.runtime?{root:this.runtime.root,version:this.runtime.version}:null,connected_accounts:[...this.gateways.keys()],logs:this.logs};}
-  stop(){for(const g of this.gateways.values()){for(const s of g.wss.clients)s.terminate();g.wss.close();g.server.close();}this.gateways.clear();this.child?.kill();}
+  stop(){this.onStatus=undefined;for(const g of this.gateways.values()){for(const s of g.wss.clients)s.terminate();g.wss.close();g.server.close();}this.gateways.clear();this.child?.kill();}
 }
 module.exports={QQManager,READ_ACTIONS};

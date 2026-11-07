@@ -306,3 +306,141 @@ def test_each_material_is_counted_once_for_overlapping_requirements(app):
         assert not client.get(url+'/check',headers=owner).json()['ready']
         client.post(url+f"/files?version={current['version']}",headers=owner,files={'file':('补充.docx',b'docx')})
         assert client.get(url+'/check',headers=owner).json()['ready']
+
+
+def test_llm_stream_fragments_and_nonstream_fallback():
+    result={'classification':'actionable','confidence':.9,'reason':'请提交报告','title':'测试报告','requirements':[]}
+    encoded=json.dumps(result,ensure_ascii=False)
+    packets=[{'choices':[{'delta':{'reasoning_content':'private-hidden-reasoning'}}]}]+[{'choices':[{'delta':{'content':encoded[i:i+11]}}]} for i in range(0,len(encoded),11)]
+    stream=''.join('data: '+json.dumps(p,ensure_ascii=False)+'\n\n' for p in packets)+'data: [DONE]\n\n'
+    captured=[]
+    async def progress(value):captured.append(value)
+    def upstream(req):
+        assert json.loads(req.content)['stream'] is True
+        return httpx.Response(200,headers={'content-type':'text/event-stream'},text=stream)
+    config={'base_url':'https://fixture.test/v1','model':'fixture'}
+    output=asyncio.run(analyze(config,[{'text':'交报告'}],[],'test-key',httpx.MockTransport(upstream),progress))
+    assert output['reason']=='请提交报告'
+    assert output['performance']['first_token_ms'] is not None
+    assert len([x for x in captured if x['stage']=='receiving'])>1
+    assert 'private-hidden-reasoning' not in json.dumps(captured)
+    captured.clear()
+    fallback=httpx.MockTransport(lambda req:httpx.Response(200,json={'choices':[{'message':{'content':encoded}}]}))
+    assert asyncio.run(analyze(config,[],[],'test-key',fallback,progress))['title']=='测试报告'
+
+
+def test_stream_analysis_auth_errors_and_final_commit(app,monkeypatch):
+    async def fake(config,targets,context,key,progress=None):
+        await progress({'stage':'receiving','delta':'{"reason":"逐步返回的说明"'})
+        if config['model']=='broken':raise ValueError('invalid json')
+        return {'classification':'actionable','confidence':.9,'reason':'需要提交','title':'测试报告','requirements':[]}
+    monkeypatch.setattr('server.app.analyze',fake)
+    with TestClient(app) as client:
+        owner,_=auth(client);other,_=auth(client,'stream_other')
+        client.put('/api/settings/llm',headers=owner,json={'base_url':'https://fixture.test/v1','model':'broken'})
+        target=client.post('/api/messages',headers=owner,json=message()).json()
+        response=client.post('/api/analyze?stream=true',headers=owner,json={'message_id':target['id']})
+        assert 'event: progress' in response.text and 'event: error' in response.text
+        assert not client.get('/api/snapshot',headers=owner).json()['messages'][0].get('analysis')
+        client.put('/api/settings/llm',headers=owner,json={'base_url':'https://fixture.test/v1','model':'fixture'})
+        response=client.post('/api/analyze?stream=true',headers=owner,json={'message_id':target['id']})
+        assert 'event: result' in response.text
+        assert client.get('/api/snapshot',headers=owner).json()['messages'][0]['analysis']['title']=='测试报告'
+        denied=client.post('/api/analyze?stream=true',headers=other,json={'message_id':target['id']})
+        assert 'event: error' in denied.text and target['text'] not in denied.text
+        assert client.post('/api/analyze?stream=true',json={'message_id':target['id']}).status_code==401
+
+
+def test_statistics_usage_response_owner_and_date(app,monkeypatch):
+    from server.llm import LlmFailure
+    async def fake(config,targets,context,key):
+        if config['model']=='invalid':raise LlmFailure('invalid output',{'http_status':200,'elapsed_ms':50,'prompt_tokens':10,'completion_tokens':3,'total_tokens':13,'usage_reported':True})
+        result={'classification':'actionable','confidence':.9,'reason':'测试','title':'统计测试','requirements':[]}
+        if config['model']=='known':result['performance']={'streamed':True,'http_status':200,'elapsed_ms':1200,'first_token_ms':200,'prompt_tokens':100,'completion_tokens':20,'total_tokens':120,'usage_reported':True}
+        return result
+    monkeypatch.setattr('server.app.analyze',fake)
+    with TestClient(app) as client:
+        owner,_=auth(client);other,_=auth(client,'stats_other')
+        target=client.post('/api/messages',headers=owner,json=message()).json()
+        for model in ('known','unknown','invalid'):
+            client.put('/api/settings/llm',headers=owner,json={'base_url':'https://fixture.test/v1','model':model})
+            client.post('/api/analyze',headers=owner,json={'message_id':target['id']})
+        stats=client.get('/api/statistics?days=1',headers=owner).json()
+        assert stats['total']['calls']==3 and stats['total']['success']==2
+        assert stats['total']['total_tokens']==133 and stats['total']['unreported']==1
+        assert stats['total']['failed']==1
+        assert stats['daily'][0]['first_token_ms']==200
+        assert stats['timezone']=='Asia/Shanghai'
+        assert client.get('/api/statistics',headers=other).json()['total']['calls']==0
+        assert client.get('/api/statistics').status_code==401
+        assert target['text'] not in json.dumps(stats,ensure_ascii=False)
+        assert not any('user_id' in row for row in stats['recent'])
+
+
+def test_file_vision_uses_pixels_and_preserves_original(app,monkeypatch):
+    from PIL import Image
+    captured=[];target_task={}
+    async def fake(config,key,file,content,tasks,progress=None,image=None):
+        captured.append(image)
+        return {'task_id':target_task['id'],'category':'material','confidence':.98,'reason':'报名成功截图是任务要求的材料','evidence':'报名成功'}
+    monkeypatch.setattr('server.app.suggest_file',fake)
+    out=io.BytesIO();Image.new('RGB',(40,30),'white').save(out,format='PNG');original=out.getvalue()
+    with TestClient(app) as client:
+        owner,_=auth(client);target_task.update(client.post('/api/tasks',headers=owner,json=task(title='收集报名成功截图')).json())
+        for enabled in (True,False):
+            client.put('/api/settings/llm',headers=owner,json={'base_url':'https://fixture.test/v1','model':'vision','vision_enabled':enabled})
+            file=client.post('/api/shelf',headers=owner,files={'file':('signup.png',original,'image/png')}).json()
+            result=client.post('/api/shelf/'+file['id']+'/suggest',headers=owner,json={'auto_assign':True}).json()
+            assert result['task_id']==target_task['id'] and result['kind']=='material'
+            assert result['suggestion'].get('image_analyzed',False)==enabled
+            assert client.get('/api/files/'+file['id'],headers=owner).content==original
+        assert captured[0]['image_url']['url'].startswith('data:image/png;base64,')
+        assert captured[1] is None
+
+
+def test_stream_usage_option_fallback_and_usage_capture():
+    calls=[]
+    output=json.dumps({'classification':'chatting','confidence':.9,'reason':'问候'})
+    async def progress(value):pass
+    def upstream(req):
+        body=json.loads(req.content);calls.append(body)
+        if 'stream_options' in body:return httpx.Response(400,text='unsupported stream_options')
+        stream='data: '+json.dumps({'choices':[{'delta':{'content':output}}]})+'\n\ndata: '+json.dumps({'choices':[],'usage':{'prompt_tokens':31,'completion_tokens':9,'total_tokens':40}})+'\n\ndata: [DONE]\n\n'
+        return httpx.Response(200,headers={'content-type':'text/event-stream'},text=stream)
+    result=asyncio.run(analyze({'base_url':'https://fixture.test/v1','model':'fixture'},[],[],'key',httpx.MockTransport(upstream),progress))
+    assert len(calls)==2 and calls[0]['stream_options']['include_usage']
+    assert 'stream_options' not in calls[1]
+    assert result['performance']['total_tokens']==40
+    assert result['performance']['usage_reported'] is True
+
+
+def test_vision_request_contains_image_and_real_usage(monkeypatch):
+    from server.llm import suggest_file
+    original_client=httpx.AsyncClient
+    image={'type':'image_url','image_url':{'url':'data:image/png;base64,'+'A'*5000,'detail':'auto'}}
+    def upstream(request):
+        payload=json.loads(request.content);parts=payload['messages'][1]['content']
+        assert parts[0]['type']=='text' and parts[1]==image
+        assert 'material' in payload['messages'][0]['content']
+        output={'task_id':'fixture-task','category':'material','confidence':.98,'reason':'图片是待办要求的材料','evidence':'报名成功'}
+        return httpx.Response(200,json={'choices':[{'message':{'content':json.dumps(output,ensure_ascii=False)}}],'usage':{'prompt_tokens':900,'completion_tokens':30,'total_tokens':930}})
+    monkeypatch.setattr('server.llm.httpx.AsyncClient',lambda **kw:original_client(**{**kw,'transport':httpx.MockTransport(upstream)}))
+    result=asyncio.run(suggest_file({'base_url':'https://fixture.test/v1','model':'vision'},'fixture-key',{'name':'screenshot.png','size':50},'',[{'id':'fixture-task','title':'提交报名成功截图'}],image=image))
+    assert result['category']=='material'
+    assert result['performance']['image_count']==1 and result['performance']['total_tokens']==930
+    assert result['performance']['input_chars']<5000
+
+
+def test_receipt_can_be_moved_to_material_with_owner_and_version_checks(app):
+    with TestClient(app) as client:
+        owner,_=auth(client);other,_=auth(client,'file_kind_other')
+        item=client.post('/api/tasks',headers=owner,json={'title':'提交报名成功截图','requirements':[{'label':'报名成功截图','extensions':['png'],'min_count':1}]}).json()
+        item=client.post('/api/tasks/'+item['id']+'/files?version=1&kind=receipt',headers=owner,files={'file':('signup.png',b'original-fixture','image/png')}).json()
+        file_id=item['attachments'][0]['id'];url='/api/tasks/'+item['id']+'/files/'+file_id+'/kind'
+        assert client.get('/api/tasks/'+item['id']+'/check',headers=owner).json()['ready'] is False
+        assert client.put(url,headers=other,json={'kind':'material','version':item['version']}).status_code==404
+        changed=client.put(url,headers=owner,json={'kind':'material','version':item['version']}).json()
+        assert changed['attachments'][0]['kind']=='material'
+        assert client.get('/api/tasks/'+item['id']+'/check',headers=owner).json()['ready'] is True
+        assert client.get('/api/files/'+file_id,headers=owner).content==b'original-fixture'
+        assert client.put(url,headers=owner,json={'kind':'receipt','version':item['version']}).status_code==409

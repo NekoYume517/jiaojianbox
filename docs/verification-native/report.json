@@ -1,0 +1,26 @@
+{
+  "at": "2026-11-07T14:55:12.130Z",
+  "packaged": true,
+  "passed": [
+    "echarts-usage-statistics-theme-responsive",
+    "task-receipt-to-material-recheck",
+    "shelf-placement-draft-purpose-apply",
+    "notification-stream-preview-before-final",
+    "file-stream-and-timing",
+    "drop-material-receipt-card-without-ai",
+    "blank-drop-only-ai",
+    "main-drag-does-not-open-quick-window",
+    "source-count-filter-persistence",
+    "edge-starts-hidden-and-dismisses",
+    "toast-auto-and-manual-dismiss",
+    "archive-list-restore-delete-confirmation",
+    "independent-edge-window",
+    "quick-task-real-api",
+    "native-file-picker-to-shelf",
+    "qq-runtime-process-discovery",
+    "sandbox-context-isolation",
+    "100-dragenter-zero-list-rebuilds",
+    "main-close-keeps-edge"
+  ],
+  "qqInstances": 1
+}

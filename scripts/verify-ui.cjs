@@ -46,7 +46,7 @@ async function until(fn, label, timeout = 15000) {
   await fs.mkdir(scratch, { recursive: true }); await fs.mkdir(evidence, { recursive: true });
   await new Promise(resolve => stub.listen(llmPort, '127.0.0.1', resolve));
   server = spawn('python', ['-m', 'uvicorn', 'server.app:app', '--host', '127.0.0.1', '--port', String(port), '--no-access-log'], { cwd: root, windowsHide: true, env: { ...process.env, JJB_DATA_DIR: scratch }, stdio: 'ignore' });
-  await until(async () => { try { return (await (await fetch(base + '/health')).json()).version === '0.1.0'; } catch { return false; } }, 'server startup');
+  await until(async () => { try { return (await (await fetch(base + '/health')).json()).status === 'ok'; } catch { return false; } }, 'server startup');
   await request('/api/auth/register', { method: 'POST', body: JSON.stringify({ username: 'ui_student', password: 'strong-test-password' }) });
   const session = await request('/api/auth/login', { method: 'POST', body: JSON.stringify({ username: 'ui_student', password: 'strong-test-password' }) });
   const seeds = [
