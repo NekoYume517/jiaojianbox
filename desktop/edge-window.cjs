@@ -21,12 +21,24 @@ class EdgeWindow{
   this.tray=new Tray(icon.isEmpty()?nativeImage.createFromDataURL('data:image/svg+xml;base64,'+Buffer.from(svg).toString('base64')):icon);
   this.tray.setToolTip('交件箱 · Ctrl+Alt+Space 快捷收集');this.tray.setContextMenu(Menu.buildFromTemplate([{label:'快捷收集',click:()=>this.show(true)},{label:'打开交件箱',click:()=>{this.main.show();this.main.focus();}},{type:'separator'},{label:'退出',click:()=>app.quit()}]));this.tray.on('double-click',()=>this.show(true));
   globalShortcut.register('CommandOrControl+Alt+Space',()=>{this.auto=false;clearTimeout(this.releaseTimer);this.show(!this.expanded);if(this.expanded)this.win.focus();});
-  this.main.on('show',()=>{if(this.auto)this.show(false);});
-  this.main.on('restore',()=>{if(this.auto)this.show(false);});
+  this.main.on('show',()=>{if(this.auto&&!this.busy)this.show(false);});
+  this.main.on('restore',()=>{if(this.auto&&!this.busy)this.show(false);});
   this.main.on('close',e=>{if(!this.stopping){e.preventDefault();this.main.hide();}});
   if(process.platform==='win32'){
    this.watcher=spawn(path.join(this.resources,'drag-watch.exe'),[],{windowsHide:true,stdio:['ignore','pipe','ignore']});
-   let pending='';this.watcher.stdout.on('data',chunk=>{pending+=chunk;let n;while((n=pending.indexOf('\n'))>=0){const event=pending.slice(0,n).trim();pending=pending.slice(n+1);if(event==='drag'&&!this.expanded&&(!this.main.isVisible()||this.main.isMinimized())){this.show(true);this.auto=true;}else if(event==='release'&&this.auto){clearTimeout(this.releaseTimer);this.releaseTimer=setTimeout(()=>{if(!this.busy&&this.auto){this.show(false);this.auto=false;}},1800);}}});this.watcher.on('error',()=>{});
+   let pending='';
+   this.watcher.stdout.on('data',chunk=>{pending+=chunk;let n;while((n=pending.indexOf('\n'))>=0){const event=pending.slice(0,n).trim();pending=pending.slice(n+1);
+    if(event==='drag'){
+      clearTimeout(this.releaseTimer);
+      // 系统级拖动开始：始终弹出快捷窗（无论主窗口是否可见），由 hook 决定时机。
+      if(!this.expanded&&!this.win.isDestroyed()){this.show(true);this.auto=true;}
+    }else if(event==='release'&&this.auto){
+      // 松开鼠标：未放入文件（busy）则收起；拖进窗口放下后 upload() 已置 auto=false，保持打开。
+      clearTimeout(this.releaseTimer);
+      this.releaseTimer=setTimeout(()=>{if(!this.busy&&this.auto){this.show(false);this.auto=false;}},900);
+    }
+   }});
+   this.watcher.on('error',()=>{});
   }
  }
  show(expand){if(!this.win||this.win.isDestroyed())return;this.expanded=expand;if(!expand){this.auto=false;clearTimeout(this.releaseTimer);this.send('edge-expanded',false);this.win.hide();return;}const a=screen.getDisplayNearestPoint(screen.getCursorScreenPoint()).workArea;const width=360,height=Math.min(a.height,560);this.win.setBounds({x:process.env.JJB_TEST_OFFSCREEN==='1'?-10000:a.x+a.width-width,y:process.env.JJB_TEST_OFFSCREEN==='1'?-10000:a.y+Math.max(0,Math.round((a.height-height)/2)),width,height},false);this.send('edge-expanded',true);this.win.showInactive();this.win.moveTop();}
