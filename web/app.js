@@ -26,6 +26,7 @@ const EMOJI_RE=new RegExp('\\[(' + Object.keys(EMOJI).sort((a,b)=>b.length-a.len
 const pretty = text => String(text ?? '').replace(/[\x00-\x08\x0b-\x1f]/g,'').replace(EMOJI_RE,(m,name)=>EMOJI[name]);
 const classifications = { actionable: ['交件通知', 'green'], chatting: ['普通聊天', ''], irrelevant: ['其他信息', ''], unprocessed: ['待分析', 'orange'] };
 const state = { session: null, profile: '', page: 'inbox', snapshot: { tasks: [], messages: [], cursor: 0 }, pending: [], selected: null, taskId: null, contexts: new Set(), search: '', source: 'all', category: 'all', taskFilter: 'active', online: false, socket: null, sources: {}, busyAnalysis: new Set(), isRegister: false, generation: 0, firstRenderDone: false, cmdkIndex: 0 };
+let editingUrgency = null, editingReminders = null;
 let flushRunning = false, refreshRunning = false, cacheTimer, reconnectTimer, llmSettings = null, editingVersion = 0, uploading = false, lastSeenMessageId = null, pendingUndoId = null;
 
 async function storeGet(key) {
@@ -195,7 +196,7 @@ function renderOnboard() {
   if (!onboardActive) return;
   const step = ONBOARD_STEPS[onboardStep];
   const card = document.createElement('div'); card.id = 'onboard'; card.className = 'onboard-card'; card.setAttribute('role', 'dialog'); card.setAttribute('aria-label', '新手引导');
-  card.innerHTML = `<div class="eyebrow">${esc(step.hint)}</div><h3>${esc(step.title)}</h3><p>${esc(step.body)}</p><div class="onboard-dots">${ONBOARD_STEPS.map((_, i) => `<i class="${i === onboardStep ? 'on' : i < onboardStep ? 'done' : ''}"></i>`).join('')}</div><div class="detail-actions"><button class="plain-button" data-onboard="skip">跳过</button><span style="flex:1"></span>${onboardStep > 0 ? '<button class="secondary" data-onboard="prev">上一步</button>' : ''}<button class="primary" data-onboard="${step.action ? 'goto' : 'next'}">${step.action ? '去' + (step.action === 'sources' ? '消息来源' : '设置') : onboardStep === ONBOARD_STEPS.length - 1 ? '开始使用' : '下一步'}</button></div>`;
+  card.innerHTML = `<div class="eyebrow">${esc(step.hint)}</div><h3>${esc(step.title)}</h3><p>${esc(step.body)}</p><div class="onboard-dots">${ONBOARD_STEPS.map((_, i) => `<i class="${i === onboardStep ? 'on' : i < onboardStep ? 'done' : ''}"></i>`).join('')}</div><div class="detail-actions"><button class="plain-button" data-onboard="skip">跳过</button><span class="flex-spacer"></span>${onboardStep > 0 ? '<button class="secondary" data-onboard="prev">上一步</button>' : ''}<button class="primary" data-onboard="${step.action ? 'goto' : 'next'}">${step.action ? '去' + (step.action === 'sources' ? '消息来源' : '设置') : onboardStep === ONBOARD_STEPS.length - 1 ? '开始使用' : '下一步'}</button></div>`;
   document.body.append(card);
 }
 document.addEventListener('click', async event => {
@@ -294,16 +295,36 @@ function tasksView() {
   const all = state.snapshot.tasks;
   const list = all.filter(t => (state.taskFilter === 'all' || state.taskFilter === 'active' ? state.taskFilter === 'all' || ['collecting', 'ready'].includes(t.status) : t.status === state.taskFilter) && (!state.search || (t.title + t.description).toLowerCase().includes(state.search.toLowerCase())));
   return heading('交件任务', '要求、材料与提交回执，一处整理。', `<button class="secondary" data-action="show-archived">已归档（${all.filter(t=>t.status==='archived').length}）</button><button class="primary" data-action="new-task">${icon('plus')}新建任务</button>`) +
-    `<div class="task-summary"><div class="summary-cell"><strong>${all.filter(t => t.status === 'collecting').length}</strong><span>准备材料</span></div><div class="summary-cell"><strong>${all.filter(t => t.status === 'ready').length}</strong><span>待提交</span></div><div class="summary-cell"><strong>${all.filter(t => t.status === 'submitted').length}</strong><span>已提交</span></div></div><div class="toolbar"><div class="search"><span>${icon('search')}</span><input id="task-search" placeholder="搜索任务" value="${esc(state.search)}" aria-label="搜索任务"></div><select id="task-filter" aria-label="任务进度"><option value="active">进行中</option><option value="all">全部任务</option><option value="collecting">准备材料</option><option value="ready">待提交</option><option value="submitted">已提交</option><option value="archived">已归档</option></select></div><div class="task-grid ${state.firstRenderDone ? '' : 'stagger'}">${list.map(t => `<article class="task-card ${state.firstRenderDone ? '' : 'stagger-item'} ${dueUrgency(t) === 'overdue' ? 'card-overdue' : ''}" tabindex="0" role="button" data-task="${esc(t.id)}"><div class="pill-row">${tag(...states[t.status])}${t.pending ? tag(t.conflict ? '同步冲突' : '待同步', 'orange') : ''}${dueUrgency(t) ? `<span class="due-chip ${dueUrgency(t)}">${dueUrgency(t) === 'overdue' ? '已逾期' : dueUrgency(t) === 'today' ? '今天截止' : '3 天内截止'}</span>` : ''}</div><h3>${esc(t.title)}</h3><p>${esc(t.description || '暂无补充说明')}</p><div class="task-card-footer"><span class="${t.due_at && new Date(t.due_at) < new Date() && !['submitted', 'archived'].includes(t.status) ? 'overdue' : ''}">${dueBadge(t.due_at)}</span><span>${t.attachments.filter(f => f.kind === 'material').length} 份材料</span></div></article>`).join('')}</div>${list.length ? '' : `<div class="panel">${empty('把下一次交件安排好', '从通知生成任务，或直接创建一项。', '<button class="primary" data-action="new-task">创建任务</button>')}</div>`}`;
+    `<div class="task-summary">${[['collecting','准备材料'],['ready','待提交'],['submitted','已提交']].map(([s,label])=>`<div class="summary-cell"><strong>${all.filter(t=>t.status===s).length}</strong><span>${label}</span></div>`).join('')}</div><div class="toolbar"><div class="search"><span>${icon('search')}</span><input id="task-search" placeholder="搜索任务" value="${esc(state.search)}" aria-label="搜索任务"></div><select id="task-filter" aria-label="任务进度"><option value="active">进行中</option><option value="all">全部任务</option><option value="collecting">准备材料</option><option value="ready">待提交</option><option value="submitted">已提交</option><option value="archived">已归档</option></select></div><div class="task-grid ${state.firstRenderDone ? '' : 'stagger'}">${list.map(t => `<article class="task-card ${state.firstRenderDone ? '' : 'stagger-item'} ${dueUrgency(t) === 'overdue' ? 'card-overdue' : ''}" tabindex="0" role="button" data-task="${esc(t.id)}"><div class="pill-row">${tag(...states[t.status])}${t.pending ? tag(t.conflict ? '同步冲突' : '待同步', 'orange') : ''}${dueUrgency(t) ? `<span class="due-chip ${dueUrgency(t)}">${dueUrgency(t) === 'overdue' ? '已逾期' : dueUrgency(t) === 'today' ? '今天截止' : '3 天内截止'}</span>` : ''}</div><h3>${esc(t.title)}</h3><p>${esc(t.description || '暂无补充说明')}</p><div class="task-card-footer"><span class="${t.due_at && new Date(t.due_at) < new Date() && !['submitted', 'archived'].includes(t.status) ? 'overdue' : ''}">${dueBadge(t.due_at)}</span><span>${t.attachments.filter(f => f.kind === 'material').length} 份材料</span></div></article>`).join('')}</div>${list.length ? '' : `<div class="panel">${empty('把下一次交件安排好', '从通知生成任务，或直接创建一项。', '<button class="primary" data-action="new-task">创建任务</button>')}</div>`}`;
 }
 function fileRow(f, task) { const ext = f.name.split('.').pop().toLowerCase().slice(0, 5); return `<div class="file-row"><span class="file-icon" data-ext="${esc(ext)}">${esc(ext)}</span><span class="file-info"><strong>${esc(f.name)}</strong><small>${bytes(f.size)}</small></span><button class="plain-button file-kind-button" data-change-kind="${esc(f.id)}" data-next-kind="${f.kind==='receipt'?'material':'receipt'}" data-version="${task.version}" ${task.pending?'disabled':''} title="${f.kind==='receipt'?'移动到任务材料，参与材料核对':'移动到提交回执'}">${f.kind==='receipt'?'转为材料':'转为回执'}</button><button class="icon-button" data-rename-file="${esc(f.id)}" data-name="${esc(f.name)}" data-version="${task.version}" title="重命名" aria-label="重命名 ${esc(f.name)}">✎</button><button class="icon-button" data-download="${esc(f.id)}" data-name="${esc(f.name)}" title="下载" aria-label="下载 ${esc(f.name)}">↓</button><button class="icon-button" data-delete-file="${esc(f.id)}" data-version="${task.version}" title="移除" aria-label="移除 ${esc(f.name)}">×</button></div>`; }
+function urgencySwitch(t) {
+  return ['high', 'normal', 'low'].map(u => `<button class="status-step ${((t.urgency || 'normal') === u) ? 'on' : ''} ${u === 'high' ? 'red' : ''}" data-set-urgency="${u}" ${t.pending ? 'disabled' : ''}>${({ high: '紧急', normal: '普通', low: '不急' })[u]}</button>`).join('');
+}
+function reminderIso(task, preset, custom) {
+  if (!task.due_at) return null;
+  const due = new Date(task.due_at);
+  if (preset === 'custom') {
+    if (!custom) return null;
+    return new Date(custom).toISOString();
+  }
+  const map = { '-1d': [1, 9, 0], '-2h': [0, null, 2], '0d': [0, 9, 0] };
+  const [days, hour, hoursBefore] = map[preset] || [0, 9, 0];
+  if (hoursBefore) return new Date(due.getTime() - hoursBefore * 3600000).toISOString();
+  const d = new Date(due); d.setDate(d.getDate() - days); d.setHours(hour ?? 9, 0, 0, 0);
+  return d.toISOString();
+}
 function taskDetail(t) {
   const origin = state.snapshot.messages.find(m => m.id === t.source_message_id);
+  const statusSwitch = `<div class="status-switch" role="group" aria-label="任务进度">${['collecting', 'ready', 'submitted'].map(s => `<button class="status-step ${t.status === s ? 'on' : ''} ${states[s][1]}" data-set-status="${s}" ${t.pending ? 'disabled' : ''}><i>${t.status === s ? '●' : ['collecting', 'ready', 'submitted'].indexOf(t.status) > ['collecting', 'ready', 'submitted'].indexOf(s) ? '✓' : ''}</i>${states[s][0]}</button>`).join('')}${t.status === 'archived' ? tag('已归档', '') : ''}</div>`;
+  const urgencyChip = { high: tag('紧急', 'red'), normal: '', low: tag('不急', '') }[t.urgency || 'normal'] || '';
+  const reminderList = (t.reminders || []).map(r => `<div class="reminder-row"><span>${icon('check')}${formatDate(r)}</span><button class="plain-button" data-remove-reminder="${esc(r)}">移除</button></div>`).join('');
+  const reminderAdd = t.due_at ? `<div class="reminder-add"><select id="reminder-preset"><option value="">选择提醒时间…</option><option value="-1d">截止前 1 天 09:00</option><option value="-2h">截止前 2 小时</option><option value="0d">截止当天 09:00</option><option value="custom">自定义…</option></select><input type="datetime-local" id="reminder-custom" hidden></div>` : `<p class="helper">设置截止时间后可添加提醒。</p>`;
   return `<button class="link task-detail-back" data-action="back-tasks">← 返回任务列表</button>` + heading(esc(t.title), t.pending ? t.conflict ? '其他设备已修改此任务。本机草稿仍保留，重新编辑后确认合并。' : '本机修改等待同步。' : '材料准备好以后，再从提交入口完成交件。', `<button class="secondary" data-action="edit-task">编辑任务</button><button class="primary" data-action="package" ${t.pending ? 'disabled' : ''}>下载材料包</button>`) +
-    `<div class="task-detail-grid"><section class="panel"><div class="panel-head"><h3>交件内容</h3>${tag(...states[t.status])}</div><div class="task-main-content"><div class="task-description">${esc(t.description || '暂无说明')}</div>${t.conflict ? '<button class="secondary" data-action="discard-conflict">放弃本机草稿，使用云端版本</button>' : ''}<div class="section-heading"><h3>交件材料</h3><small class="helper">${t.attachments.filter(f => f.kind === 'material').length} 个文件</small></div>${t.attachments.filter(f => f.kind === 'material').map(f => fileRow(f, t)).join('')}<label class="drop-zone">点击或拖入文件添加材料<input id="material-upload" type="file" multiple ${t.pending ? 'disabled' : ''} aria-label="上传交件材料"></label><div class="section-heading"><h3>提交回执</h3><small class="helper">成功截图、确认邮件或回执文件</small></div>${t.attachments.filter(f => f.kind === 'receipt').map(f => fileRow(f, t)).join('')}<label class="drop-zone">添加提交凭证<input id="receipt-upload" type="file" multiple ${t.pending ? 'disabled' : ''} aria-label="上传提交回执"></label>${origin ? `<details class="task-origin"><summary class="helper">查看原始通知 · ${esc(origin.conversation_name)}</summary><p>${esc(origin.text)}</p></details>` : ''}<div class="section-heading"><h3>任务管理</h3></div><div class="small-actions"><button class="secondary" data-action="mark-submitted" ${t.status === 'submitted' || t.pending ? 'disabled' : ''}>标记已提交</button><button class="plain-button" data-action="${t.status==='archived'?'restore-task':'archive-task'}" ${t.pending ? 'disabled' : ''}>${t.status==='archived'?'恢复任务':'归档任务'}</button><button class="plain-button danger-button" data-action="delete-task" ${t.pending ? 'disabled' : ''}>删除任务</button></div></div></section><aside><section class="panel task-side"><div class="info-label">截止时间</div><div class="info-value">${formatDate(t.due_at)}</div><div class="info-label">文件命名</div><div class="info-value">${esc(t.naming_hint || t.filename_pattern || '未设置命名要求')}</div><div class="info-label">提交入口</div><div class="info-value">${t.submit_url ? `<button class="link" data-external="${esc(t.submit_url)}">打开提交页面 ↗</button>` : '未填写'}</div><div class="section-heading"><h3>材料核对</h3><button class="link" data-action="check-task">重新核对</button></div><div id="task-check">${t.requirements.length ? t.requirements.map(r => `<div class="check-row"><span class="check-symbol manual">○</span><div><strong>${esc(r.label)}</strong><small>${esc(r.extensions.join(' / ') || '任意格式')} · 至少 ${r.min_count} 份</small></div></div>`).join('') : '<p class="helper">未设置材料清单，可在编辑任务中添加。</p>'}</div></section></aside></div>`;
+    `<div class="task-detail-grid"><section class="panel"><div class="panel-head"><h3>交件内容</h3></div><div class="task-main-content">${statusSwitch}<div class="task-description">${esc(t.description || '暂无说明')}</div>${t.conflict ? '<button class="secondary" data-action="discard-conflict">放弃本机草稿，使用云端版本</button>' : ''}<div class="section-heading"><h3>交件材料</h3><small class="helper">${t.attachments.filter(f => f.kind === 'material').length} 个文件</small></div>${t.attachments.filter(f => f.kind === 'material').map(f => fileRow(f, t)).join('')}<label class="drop-zone">点击或拖入文件添加材料<input id="material-upload" type="file" multiple ${t.pending ? 'disabled' : ''} aria-label="上传交件材料"></label><div class="section-heading"><h3>提交回执</h3><small class="helper">成功截图、确认邮件或回执文件</small></div>${t.attachments.filter(f => f.kind === 'receipt').map(f => fileRow(f, t)).join('')}<label class="drop-zone">添加提交凭证<input id="receipt-upload" type="file" multiple ${t.pending ? 'disabled' : ''} aria-label="上传提交回执"></label>${origin ? `<details class="task-origin"><summary class="helper">查看原始通知 · ${esc(origin.conversation_name)}</summary><p>${esc(pretty(origin.text))}</p></details>` : ''}<div class="section-heading"><h3>任务管理</h3></div><div class="small-actions"><button class="plain-button" data-action="${t.status==='archived'?'restore-task':'archive-task'}" ${t.pending ? 'disabled' : ''}>${t.status==='archived'?'恢复任务':'归档任务'}</button><button class="plain-button danger-button" data-action="delete-task" ${t.pending ? 'disabled' : ''}>删除任务</button></div></div></section><aside><section class="panel task-side"><div class="info-label">紧急度</div><div class="urgency-switch" role="group" aria-label="紧急度">${urgencySwitch(t)}</div><div class="info-label">截止时间</div><div class="info-value">${formatDate(t.due_at)}</div><div class="info-label">提醒</div><div class="info-value reminders-block">${reminderList || '<p class="helper">暂无提醒</p>'}${reminderAdd}</div><div class="info-label">文件命名</div><div class="info-value">${esc(t.naming_hint || t.filename_pattern || '未设置命名要求')}</div><div class="info-label">提交入口</div><div class="info-value">${t.submit_url ? `<button class="link" data-external="${esc(t.submit_url)}">打开提交页面 ↗</button>` : '未填写'}</div><div class="section-heading"><h3>材料核对</h3><button class="link" data-action="check-task">重新核对</button></div><div id="task-check">${t.requirements.length ? t.requirements.map(r => `<div class="check-row"><span class="check-symbol manual">○</span><div><strong>${esc(r.label)}</strong><small>${esc(r.extensions.join(' / ') || '任意格式')} · 至少 ${r.min_count} 份</small></div></div>`).join('') : '<p class="helper">未设置材料清单，可在编辑任务中添加。</p>'}</div></section></aside></div>`;
 }
 function settingsView() {
-  return heading('设置', '使用自己的模型接口，决定怎样整理通知。') + `<div class="settings-grid"><form id="llm-form" class="panel settings-panel"><h3>LLM 连接</h3><p class="helper">支持兼容 Chat Completions 的接口。配置按账号保存，电脑和手机共用。</p><label>API 地址<input id="llm-url" type="url" placeholder="https://api.example.com/v1" required></label><label>API Key<input id="llm-key" type="password" autocomplete="new-password" placeholder="留空保留已保存的 Key"><span id="llm-key-note" class="helper"></span></label><div class="form-grid"><label>模型<input id="llm-model" list="model-options" required placeholder="填写模型名称"><datalist id="model-options"></datalist></label><label>默认上下文条数<input id="llm-context" type="number" min="0" max="50" value="12" required></label></div><label class="switch-line"><input id="llm-vision" type="checkbox"><span><strong>模型支持图片分析</strong><small>启用后，图片会发送实际图像给模型，判断截图内容和提交状态；纯文本模型请关闭。</small></span></label><label class="switch-line"><input id="llm-auto" type="checkbox"><span><strong>自动分析新消息</strong><small>仅处理桌面端所选会话同步的新消息。关闭后，可在收件箱手动分析。</small></span></label><label class="switch-line" id="auto-task-line" style="display:none"><input id="llm-auto-task" type="checkbox"><span><strong>自动创建任务</strong><small>分析判定为交件通知且可信度不低于 80% 时，自动把任务草稿放入任务列表（仍可编辑或删除）。需要先开启自动分析。</small></span></label><div class="form-grid"><label>只自动分析含这些词的消息<input id="llm-include" placeholder="提交,报名,截止（留空处理全部）"></label><label>跳过含这些词的消息<input id="llm-exclude" placeholder="签到成功,红包（英文逗号分隔）"></label></div><label>分类偏好<textarea id="llm-instruction" rows="3" placeholder="例如：重点关注课程作业与比赛报名，日常约饭视为普通聊天。"></textarea></label><div class="detail-actions"><button type="submit" class="primary">保存设置</button><button type="button" class="secondary" data-action="test-llm">保存并读取模型</button><button type="button" class="plain-button" data-action="clear-llm-key">清除 Key</button></div><div id="llm-status" class="settings-status" role="status"></div><div id="models-output" class="models-output" hidden></div></form><aside class="settings-side"><h3>分析如何进行</h3><ol><li>采集端同步你选择的联系人和群聊。</li><li>模型结合上下文，区分交件通知、普通聊天和其他信息。</li><li>你可以查看理由、调整上下文，再确认任务草稿。</li></ol><div class="divider"></div><p>只有目标消息和所选上下文会发送给你配置的模型服务。</p><p>API Key 加密保存在服务端。留空保存会沿用已有 Key。</p></aside></div>`;
+  return heading('设置', '使用自己的模型接口，决定怎样整理通知。') + `<div class="settings-grid"><form id="llm-form" class="panel settings-panel"><h3>LLM 连接</h3><p class="helper">支持兼容 Chat Completions 的接口。配置按账号保存，电脑和手机共用。</p><label>API 地址<input id="llm-url" type="url" placeholder="https://api.example.com/v1" required></label><label>API Key<input id="llm-key" type="password" autocomplete="new-password" placeholder="留空保留已保存的 Key"><span id="llm-key-note" class="helper"></span></label><div class="form-grid"><label>模型<input id="llm-model" list="model-options" required placeholder="填写模型名称"><datalist id="model-options"></datalist></label><label>默认上下文条数<input id="llm-context" type="number" min="0" max="50" value="12" required></label></div><label class="switch-line"><input id="llm-vision" type="checkbox"><span><strong>模型支持图片分析</strong><small>启用后，图片会发送实际图像给模型，判断截图内容和提交状态；纯文本模型请关闭。</small></span></label><label class="switch-line"><input id="llm-auto" type="checkbox"><span><strong>自动分析新消息</strong><small>仅处理桌面端所选会话同步的新消息。关闭后，可在收件箱手动分析。</small></span></label><label class="switch-line" id="auto-task-line" hidden><input id="llm-auto-task" type="checkbox"><span><strong>自动创建任务</strong><small>分析判定为交件通知且可信度不低于 80% 时，自动把任务草稿放入任务列表（仍可编辑或删除）。需要先开启自动分析。</small></span></label><div class="form-grid"><label>只自动分析含这些词的消息<input id="llm-include" placeholder="提交,报名,截止（留空处理全部）"></label><label>跳过含这些词的消息<input id="llm-exclude" placeholder="签到成功,红包（英文逗号分隔）"></label></div><label>分类偏好<textarea id="llm-instruction" rows="3" placeholder="例如：重点关注课程作业与比赛报名，日常约饭视为普通聊天。"></textarea></label><div class="detail-actions"><button type="submit" class="primary">保存设置</button><button type="button" class="secondary" data-action="test-llm">保存并读取模型</button><button type="button" class="plain-button" data-action="clear-llm-key">清除 Key</button></div><div id="llm-status" class="settings-status" role="status"></div><div id="models-output" class="models-output" hidden></div></form><aside class="settings-side"><h3>分析如何进行</h3><ol><li>采集端同步你选择的联系人和群聊。</li><li>模型结合上下文，区分交件通知、普通聊天和其他信息。</li><li>你可以查看理由、调整上下文，再确认任务草稿。</li></ol><div class="divider"></div><p>只有目标消息和所选上下文会发送给你配置的模型服务。</p><p>API Key 加密保存在服务端。留空保存会沿用已有 Key。</p></aside></div>`;
 }
 function conversations(type) {
   const list = (state.sources.conversations || []).filter(c => c.source === type);
@@ -366,6 +387,8 @@ async function openTask(task = {}, source) {
   $('#task-naming').value = task.naming_hint || ''; $('#task-pattern').value = task.filename_pattern || ''; $('#task-url').value = task.submit_url || '';
   $('#task-notes').textContent = (task.notes || []).join(' ');
   (task.requirements || []).forEach(requirementRow);
+  editingUrgency = task.id ? (task.urgency || null) : null;
+  editingReminders = task.id ? (Array.isArray(task.reminders) ? task.reminders : null) : null;
   $('#task-dialog').showModal(); $('#task-title').focus();
 }
 function dialogSubmit(dialogId, task) {
@@ -407,7 +430,36 @@ async function checkTask() {
   const result = await api('/api/tasks/' + taskId + '/check');
   if (state.taskId !== taskId || !$('#task-check')) return;
   $('#task-check').innerHTML = result.results.map(r => `<div class="check-row"><span class="check-symbol ${r.ok === false ? 'fail' : r.ok === null ? 'manual' : ''}">${r.ok === true ? '✓' : r.ok === false ? '×' : '○'}</span><div><strong>${esc(r.label)}</strong><small>${esc(r.detail)}</small></div></div>`).join('') + `<p class="helper">${result.ready ? '材料检查通过，提交前请再核对内容。' : result.material_count ? '请处理缺失项或人工核对项。' : '添加材料后，会自动核对清单。'}</p>`;
+  const task = state.snapshot.tasks.find(t => t.id === taskId);
+  if (task) suggestStatus(task, result);
 }
+const statusSuggestion = { id: null };
+function suggestStatus(task, check) {
+  $('#status-suggest')?.remove();
+  if (onboardActive) return;
+  let target = null, text = '';
+  if (check.ready && task.status === 'collecting') { target = 'ready'; text = '材料已齐，把「' + task.title.slice(0, 18) + '」更新为待提交？'; }
+  else if (task.status === 'ready' && check.results.some(r => r.ok === false)) { target = 'collecting'; text = '「' + task.title.slice(0, 18) + '」有材料缺失，改回准备材料？'; }
+  if (!target) return;
+  statusSuggestion.id = task.id;
+  const card = document.createElement('div'); card.id = 'status-suggest'; card.className = 'onboard-card'; card.setAttribute('role', 'status');
+  card.innerHTML = `<div class="eyebrow">更新任务状态</div><p class="suggest-text">${esc(text)}</p><div class="detail-actions"><button class="plain-button" data-status-suggest="dismiss">暂不</button><span class="flex-spacer"></span><button class="primary" data-status-suggest="apply">更新为${states[target][0]}</button></div>`;
+  card.querySelector('[data-status-suggest="apply"]').dataset.target = target;
+  document.body.append(card);
+  setTimeout(() => { if (card.isConnected && statusSuggestion.id === task.id) { card.remove(); statusSuggestion.id = null; } }, 12000);
+}
+document.addEventListener('click', async event => {
+  const button = event.target.closest('[data-status-suggest]'); if (!button) return;
+  const card = $('#status-suggest'); card?.remove();
+  if (button.dataset.statusSuggest === 'dismiss') { statusSuggestion.id = null; return; }
+  const task = state.snapshot.tasks.find(t => t.id === statusSuggestion.id); statusSuggestion.id = null;
+  if (!task || task.pending) return;
+  try {
+    const updated = await api('/api/tasks/' + task.id, 'PUT', { ...task, status: button.dataset.target });
+    await refresh();
+    toast('已更新为' + states[button.dataset.target][0], { label: '撤销', run: async () => { try { await api('/api/tasks/' + task.id, 'PUT', { ...task, status: task.status }); await refresh(); } catch (error) { toast(error.message); } } });
+  } catch (error) { toast(error.message); }
+});
 async function uploadFiles(input, kind, taskId = state.taskId) {
   const files = [...input.files]; input.value = '';
   if (!files.length) return;
@@ -517,6 +569,30 @@ async function runAction(action, button) {
       const oldest = state.snapshot.messages.at(-1); const rows = await api('/api/messages?limit=100' + (oldest ? '&before=' + oldest.id : ''));
       const ids = new Set(state.snapshot.messages.map(m => m.id)); state.snapshot.messages.push(...rows.filter(m => !ids.has(m.id))); cacheSoon(); render(); if (!rows.length) toast('没有更早的消息了'); return;
     }
+    case 'set-status': {
+      if (!task || task.pending) return;
+      const target = runAction.sourceId;
+      if (!['collecting', 'ready', 'submitted'].includes(target)) return;
+      const previousStatus = task.status;
+      await api('/api/tasks/' + task.id, 'PUT', { ...task, status: target });
+      if (target === 'submitted') showDoneBurst();
+      await refresh();
+      toast(target === 'submitted' ? '已标记提交' : '已更新为' + states[target][0], { label: '撤销', run: async () => { try { await api('/api/tasks/' + task.id, 'PUT', { ...task, status: previousStatus }); await refresh(); } catch (error) { toast(error.message); } } });
+      return;
+    }
+    case 'set-urgency': {
+      if (!task || task.pending) return;
+      const target = runAction.sourceId;
+      if (!['high', 'normal', 'low'].includes(target)) return;
+      await api('/api/tasks/' + task.id, 'PUT', { ...task, urgency: target });
+      await refresh(); toast('紧急度已更新'); return;
+    }
+    case 'remove-reminder': {
+      if (!task || task.pending) return;
+      const remaining = (task.reminders || []).filter(r => r !== runAction.sourceId);
+      await api('/api/tasks/' + task.id, 'PUT', { ...task, reminders: remaining });
+      await refresh(); toast('提醒已移除'); return;
+    }
     case 'check-task': return checkTask();
     case 'package': return saveDownload('/api/tasks/' + task.id + '/package', task.title.replace(/[<>:"/\\|?*]/g, '_') + '.zip');
     case 'delete-task': {
@@ -578,6 +654,12 @@ document.addEventListener('click', async event => {
     const action = event.target.closest('[data-action]'); if (action) { runAction.sourceId = null; return await runAction(action.dataset.action, action); }
     const rowAction = event.target.closest('[data-row-action]');
     if (rowAction) { runAction.sourceId = rowAction.dataset.id; return await runAction(rowAction.dataset.rowAction, rowAction); }
+    const urgencyStep = event.target.closest('[data-set-urgency]');
+    if (urgencyStep) { runAction.sourceId = urgencyStep.dataset.setUrgency; return await runAction('set-urgency'); }
+    const removeReminder = event.target.closest('[data-remove-reminder]');
+    if (removeReminder) { runAction.sourceId = removeReminder.dataset.removeReminder; return await runAction('remove-reminder'); }
+    const statusStep = event.target.closest('[data-set-status]');
+    if (statusStep) { runAction.sourceId = statusStep.dataset.setStatus; return await runAction('set-status'); }
     const remove = event.target.closest('.remove-requirement'); if (remove) return remove.parentElement.remove();
     const file = event.target.closest('[data-download]'); if (file) return await saveDownload('/api/files/' + file.dataset.download, file.dataset.name);
     const changeKind=event.target.closest('[data-change-kind]');if(changeKind){await api(`/api/tasks/${state.taskId}/files/${changeKind.dataset.changeKind}/kind`,'PUT',{kind:changeKind.dataset.nextKind,version:Number(changeKind.dataset.version)});await refresh();toast(changeKind.dataset.nextKind==='material'?'已转为任务材料，并重新核对清单':'已转为提交回执');return;}
@@ -704,8 +786,25 @@ document.addEventListener('change', async event => {
     if (event.target.id === 'category-filter') { state.category = event.target.value; render(); }
     if (event.target.id === 'task-filter') { state.taskFilter = event.target.value; render(); }
     if (event.target.dataset.context) { if (event.target.checked) state.contexts.add(event.target.dataset.context); else state.contexts.delete(event.target.dataset.context); render(); }
-    if (event.target.id === 'material-upload') await uploadFiles(event.target, 'material');
-    if (event.target.id === 'receipt-upload') await uploadFiles(event.target, 'receipt');
+    if (event.target.id === 'reminder-preset') {
+      const task = state.snapshot.tasks.find(t => t.id === state.taskId); if (!task) return;
+      const custom = $('#reminder-custom'); custom.hidden = event.target.value !== 'custom';
+      if (event.target.value === 'custom') return;
+      const iso = reminderIso(task, event.target.value);
+      if (!iso) return;
+      const reminders = [...(task.reminders || []), iso].sort();
+      await api('/api/tasks/' + task.id, 'PUT', { ...task, reminders });
+      await refresh(); toast('提醒已添加'); return;
+    }
+    if (['material-upload', 'receipt-upload'].includes(event.target.id)) { /* handled below */ }    if (event.target.id === 'material-upload') await uploadFiles(event.target, 'material');
+    if (event.target.id === 'receipt-upload') await uploadFiles(event.target, 'receipt');    if (event.target.id === 'reminder-custom') {
+      const task = state.snapshot.tasks.find(t => t.id === state.taskId); if (!task || !event.target.value) return;
+      const iso = reminderIso(task, 'custom', event.target.value);
+      if (!iso) return;
+      const reminders = [...(task.reminders || []), iso].sort();
+      await api('/api/tasks/' + task.id, 'PUT', { ...task, reminders });
+      await refresh(); toast('提醒已添加'); return;
+    }
   } catch (error) { toast(error.message); }
 });
 $('#task-form').addEventListener('submit', saveTask);
@@ -741,7 +840,7 @@ $('#auth-form').addEventListener('submit', async event => {
     }
     if (state.isRegister) await call('/api/auth/register');
     const result = await call('/api/auth/login'); const session = { ...result, server };
-    if (window.desktop) await storeSet('session', session); else sessionStorage.setItem('jjb-session', JSON.stringify(session));
+    if (window.desktop) await storeSet('session', session); else localStorage.setItem('jjb-session', JSON.stringify(session));
     $('#password').value = ''; await enter(session);
   } catch (error) { $('#auth-error').textContent = error instanceof TypeError ? '无法连接服务端，请检查地址与网络。' : error.message; }
   finally { $('#auth-submit').disabled = false; }
@@ -750,7 +849,7 @@ $('#logout').addEventListener('click', async () => {
   if (state.pending.length && !confirm(`还有 ${state.pending.length} 项修改未同步，本机草稿会保留。仍要退出吗？`)) return;
   try { await api('/api/auth/logout', 'POST'); } catch { /* 离线仍可退出本机。 */ }
   state.generation++;window.liveAnalysis?.cancelAll();window.statistics?.unmount();window.shelf?.reset();clearTimeout(reconnectTimer); clearTimeout(cacheTimer); state.socket?.close();
-  if (window.desktop) { await desktop.stopCollector(); await desktop.remove('session'); } else {localStorage.removeItem('jjb-session');sessionStorage.removeItem('jjb-session');}
+  if (window.desktop) { await desktop.stopCollector(); await desktop.remove('session'); } else localStorage.removeItem('jjb-session');
   state.session = null; state.selected = null; state.contexts.clear(); state.pending = []; state.snapshot = { tasks: [], messages: [], cursor: 0 };
   $('#workspace').hidden = true; $('#auth').hidden = false;
 });
@@ -764,7 +863,7 @@ setInterval(() => { if (state.session) { refresh({ renderPage: false }); if (sta
   if(window.desktop){const platform=await desktop.platform();document.body.classList.toggle('native-titlebar',!!platform.nativeTitlebar);$('#desktop-titlebar').hidden=!platform.nativeTitlebar;try{appearance.restore(await desktop.getAppearance());}catch{}}
   $('#server-url').value = location.protocol === 'http:' || location.protocol === 'https:' ? location.origin : 'http://127.0.0.1:8765';
   try {
-    const session = window.desktop ? await storeGet('session') : JSON.parse(sessionStorage.getItem('jjb-session') || 'null');
+    const session = window.desktop ? await storeGet('session') : JSON.parse(localStorage.getItem('jjb-session') || 'null');
     if (session) return await enter(session);
   } catch (error) { toast(error.message); }
   $('#auth').hidden = false;

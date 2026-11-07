@@ -151,7 +151,7 @@ def test_settings_key_encryption_and_retain_on_blank(app):
 
 def test_llm_context_is_scoped_and_manual_selection_checked(app, monkeypatch):
     captured = []
-    async def fake(config, targets, context, key):
+    async def fake(config, targets, context, key, progress=None, user_tasks=None, tool_executor=None):
         captured.append(context)
         return {"classification": "actionable", "confidence": .9, "reason": "有明确提交要求", "summary": "交报告", "title": "实验报告", "due_at": None, "requirements": [], "max_total_bytes": None, "naming_hint": "", "submit_url": "", "notes": []}
     monkeypatch.setattr("server.app.analyze", fake)
@@ -233,7 +233,7 @@ def test_notification_dates_use_message_time():
 
 def test_auto_llm_queue_filters_and_completion(app, monkeypatch):
     calls=[]
-    async def fake(config, targets, context, key):
+    async def fake(config, targets, context, key, progress=None, user_tasks=None, tool_executor=None):
         calls.append(targets[0]["id"])
         return {"classification":"actionable","confidence":.8,"reason":"需要提交","title":"交报告","requirements":[],"due_at":None,"max_total_bytes":None,"naming_hint":"","submit_url":"","notes":[]}
     monkeypatch.setattr('server.app.analyze',fake)
@@ -330,7 +330,7 @@ def test_llm_stream_fragments_and_nonstream_fallback():
 
 
 def test_stream_analysis_auth_errors_and_final_commit(app,monkeypatch):
-    async def fake(config,targets,context,key,progress=None):
+    async def fake(config,targets,context,key,progress=None,user_tasks=None,tool_executor=None):
         await progress({'stage':'receiving','delta':'{"reason":"逐步返回的说明"'})
         if config['model']=='broken':raise ValueError('invalid json')
         return {'classification':'actionable','confidence':.9,'reason':'需要提交','title':'测试报告','requirements':[]}
@@ -353,7 +353,7 @@ def test_stream_analysis_auth_errors_and_final_commit(app,monkeypatch):
 
 def test_statistics_usage_response_owner_and_date(app,monkeypatch):
     from server.llm import LlmFailure
-    async def fake(config,targets,context,key):
+    async def fake(config,targets,context,key,progress=None,user_tasks=None,tool_executor=None):
         if config['model']=='invalid':raise LlmFailure('invalid output',{'http_status':200,'elapsed_ms':50,'prompt_tokens':10,'completion_tokens':3,'total_tokens':13,'usage_reported':True})
         result={'classification':'actionable','confidence':.9,'reason':'测试','title':'统计测试','requirements':[]}
         if config['model']=='known':result['performance']={'streamed':True,'http_status':200,'elapsed_ms':1200,'first_token_ms':200,'prompt_tokens':100,'completion_tokens':20,'total_tokens':120,'usage_reported':True}

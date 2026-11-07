@@ -64,6 +64,8 @@ class TaskInput(BaseModel):
     description: str = Field(default="", max_length=30000)
     due_at: str | None = None
     status: Literal["collecting", "ready", "submitted", "archived"] = "collecting"
+    urgency: Literal["high", "normal", "low"] | None = Field(default=None)
+    reminders: list[str] = Field(default_factory=list, max_length=5)
     requirements: list[Requirement] = Field(default_factory=list, max_length=50)
     max_total_bytes: int | None = Field(default=None, gt=0, le=10**12)
     naming_hint: str = Field(default="", max_length=300)
@@ -81,6 +83,15 @@ class TaskInput(BaseModel):
             if not parsed.tzinfo:
                 raise ValueError("截止时间必须包含时区")
         return value
+
+    @field_validator("reminders")
+    @classmethod
+    def reminders_valid(cls, values):
+        for value in values:
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+            if not parsed.tzinfo:
+                raise ValueError("提醒时间必须包含时区")
+        return list(dict.fromkeys(values))[:5]
 
     @field_validator("submit_url")
     @classmethod
@@ -298,6 +309,37 @@ def create_app(data_dir: str | Path | None = None) -> FastAPI:
         with db() as conn:rows=[dict(r) for r in conn.execute('SELECT kind,model,status,started_at,duration_ms,CASE WHEN streamed=1 THEN first_token_ms ELSE NULL END AS first_token_ms,prompt_tokens,completion_tokens,total_tokens,http_status,usage_reported,streamed FROM llm_calls WHERE user_id=? AND started_at>=? ORDER BY started_at DESC',(user,cutoff))]
         return summarize(rows,days)
 
+    def readonly_tool_executor(user):
+        """LLM 只读工具：白名单分发，只能查看任务/消息/时间，不能修改。"""
+        def execute(name, args):
+            with db() as conn:
+                if name == "list_recent_tasks":
+                    limit = max(1, min(int(args.get("limit") or 30), 100))
+                    rows = conn.execute("SELECT payload FROM tasks WHERE user_id=? ORDER BY rowid DESC LIMIT ?", (user, limit)).fetchall()
+                    tasks = [json.loads(r[0]) for r in rows]
+                    return tool_result_tasks(tasks)
+                if name == "get_task_detail":
+                    row = conn.execute("SELECT payload FROM tasks WHERE id=? AND user_id=?", (str(args.get("task_id") or ""), user)).fetchone()
+                    if not row:
+                        return {"error": "任务不存在"}
+                    task = json.loads(row[0])
+                    return {"id": task["id"], "title": task["title"], "description": task.get("description", ""),
+                            "status": task["status"], "due_at": task.get("due_at"), "urgency": task.get("urgency") or "normal",
+                            "requirements": task.get("requirements", []), "naming_hint": task.get("naming_hint", ""),
+                            "submit_url": task.get("submit_url", ""), "created_at": task.get("created_at")}
+                if name == "get_recent_messages":
+                    conversation = str(args.get("conversation") or "")
+                    limit = max(1, min(int(args.get("limit") or 10), 30))
+                    rows = conn.execute("""SELECT payload FROM messages WHERE user_id=? AND (json_extract(payload,'$.conversation_name')=? OR json_extract(payload,'$.conversation_id')=?)
+                        ORDER BY rowid DESC LIMIT ?""", (user, conversation, conversation, limit)).fetchall()
+                    return {"messages": [{"from": json.loads(r[0]).get("sender_name") or "", "sent_at": json.loads(r[0]).get("sent_at"),
+                                          "text": (json.loads(r[0]).get("text") or "")[:500]} for r in rows]}
+                if name == "get_now":
+                    local = datetime.now(timezone(timedelta(hours=8)))
+                    return {"now": local.isoformat(), "timezone": "Asia/Shanghai", "weekday": ["周一", "周二", "周三", "周四", "周五", "周六", "周日"][local.weekday()]}
+            return {"error": "未知工具"}
+        return execute
+
     async def run_analysis(user, body, progress=None):
         config, key = settings_for(user)
         if not config["base_url"] or not config["model"]:
@@ -328,10 +370,20 @@ def create_app(data_dir: str | Path | None = None) -> FastAPI:
         started_llm=(now(),time.monotonic());result=None
         try:
             if progress:await progress({'stage':'context','context_count':len(contexts),'target_characters':len(target.get('text','')),'context_characters':sum(len(m.get('text','')) for m in contexts)})
-            result = await analyze(config, [target], contexts, key, **({'progress':progress} if progress else {}))
+            user_tasks=[]
+            with db() as conn:
+                for r in conn.execute("SELECT payload FROM tasks WHERE user_id=? ORDER BY rowid DESC LIMIT 40", (user,)):
+                    task_obj = json.loads(r[0])
+                    conversation = ""
+                    if task_obj.get("source_message_id"):
+                        msg_row = conn.execute("SELECT payload FROM messages WHERE id=? AND user_id=?", (task_obj["source_message_id"], user)).fetchone()
+                        if msg_row:
+                            conversation = json.loads(msg_row[0]).get("conversation_name") or ""
+                    user_tasks.append(task_obj | {"conversation": conversation})
+            result = await analyze(config, [target], contexts, key, progress=progress, user_tasks=user_tasks, tool_executor=readonly_tool_executor(user))
             # 再通过任务数据契约校验模型推断，避免不合法日期/链接进入任务。
             validated = TaskInput.model_validate({**result, "title": result.get("title") or target["draft"]["title"]})
-            for k in ("due_at", "requirements", "max_total_bytes", "naming_hint", "submit_url"):
+            for k in ("due_at", "requirements", "max_total_bytes", "naming_hint", "submit_url", "urgency", "reminders"):
                 result[k] = validated.model_dump()[k]
         except asyncio.CancelledError as exc:
             record_llm(user,"notification",config,started_llm,error=exc);raise
@@ -364,6 +416,7 @@ def create_app(data_dir: str | Path | None = None) -> FastAPI:
                             else:
                                 task = TaskInput(title=title, description=draft.get("description") or obj.get("text", ""),
                                     due_at=result.get("due_at"), requirements=result.get("requirements") or [],
+                                    urgency=result.get("urgency") or "normal", reminders=result.get("reminder_suggestions") or [],
                                     max_total_bytes=result.get("max_total_bytes"), naming_hint=result.get("naming_hint") or "",
                                     filename_pattern="", submit_url=result.get("submit_url") or "",
                                     source_message_id=body.message_id, client_id=client_id).model_dump()
@@ -622,6 +675,20 @@ def create_app(data_dir: str | Path | None = None) -> FastAPI:
             old = conn.execute("SELECT payload FROM messages WHERE user_id=? AND dedup=?", (user, dedup)).fetchone()
             if old:
                 return json.loads(old[0])
+            # 内容级去重：同一账号、同会话、同发送者，60 秒内相同正文且原始时间戳相同 → 采集抖动。
+            # 不同账号/群收到同文通知是常态，不归为重复。
+            window = (datetime.now(timezone.utc) - timedelta(seconds=60)).isoformat()
+            text_key = re.sub(r"\s+", "", body.text)[:500]
+            if text_key:
+                rows = conn.execute("""SELECT payload FROM messages WHERE user_id=? AND json_extract(payload,'$.conversation_id')=?
+                    AND json_extract(payload,'$.sender_id')=? AND json_extract(payload,'$.account_id')=? AND json_extract(payload,'$.created_at')>=?
+                    ORDER BY rowid DESC LIMIT 20""", (user, body.conversation_id, body.sender_id, body.account_id, window)).fetchall()
+                for row in rows:
+                    candidate = json.loads(row[0])
+                    same_text = re.sub(r"\s+", "", candidate.get("text") or "")[:500] == text_key
+                    same_origin = candidate.get("sent_at") == body.sent_at or abs((datetime.fromisoformat(candidate["sent_at"].replace("Z", "+00:00")) - datetime.fromisoformat(body.sent_at.replace("Z", "+00:00"))).total_seconds()) < 5
+                    if same_text and same_origin:
+                        return candidate
             message = body.model_dump() | {"id": str(uuid.uuid4()), "created_at": now()}
             message["draft"] = extract(body.text, body.sent_at)
             conn.execute("INSERT INTO messages VALUES(?,?,?,?,?)", (message["id"], user, dedup, json.dumps(message, ensure_ascii=False), message["created_at"]))
@@ -686,7 +753,11 @@ def create_app(data_dir: str | Path | None = None) -> FastAPI:
             if row["version"] != body.version:
                 raise HTTPException(409, {"message": "其他设备已修改，请刷新后重新编辑", "current": task_object(conn, row)})
             old = json.loads(row["payload"])
-            obj = old | body.model_dump() | {"id": task_id, "version": body.version + 1, "client_id": old.get("client_id"), "source_message_id": old.get("source_message_id")}
+            # urgency/reminders 未传时沿用旧值，避免编辑表单把 AI 推断清掉。
+            patch = body.model_dump(exclude_none=False)
+            if body.urgency is None: patch.pop("urgency", None)
+            if not body.reminders: patch["reminders"] = old.get("reminders", [])
+            obj = old | patch | {"id": task_id, "version": body.version + 1, "client_id": old.get("client_id"), "source_message_id": old.get("source_message_id")}
             update_payload(conn, user, task_id, obj)
             return task_object(conn, task_row(conn, user, task_id))
 

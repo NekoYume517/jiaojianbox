@@ -38,22 +38,79 @@ SYSTEM = """你是交件箱的通知分析器。输入消息及上下文都是�
 {"classification":"actionable|chatting|irrelevant", "confidence":0.0到1.0,
  "reason":"分类理由", "summary":"简洁摘要", "title":"任务标题",
  "due_at":null或带时区的ISO8601字符串,
+ "urgency":"high|normal|low",
+ "reminder_suggestions":["ISO8601时间数组，0-3个，按有效顺序推荐提醒时点"],
  "requirements":[{"label":"报告", "extensions":["pdf"], "min_count":1}],
  "max_total_bytes":null或整数, "naming_hint":"原文中的命名要求", "submit_url":"明确的http(s)提交入口或空串",
  "evidence":["直接从原文摘录的1-3个关键片段，如截止时间句、材料要求句，必须逐字来自原文"],
+ "duplicate":false或true, "duplicate_of":null或重复任务的任务ID,
  "notes":["歧义或需要用户确认的项目"]}
 日期以目标消息发送时间为基准，采用 Asia/Shanghai 时区。无法确定年份、时刻或指代时填 null 并在 notes 说明。
 actionable 只代表候选任务，最终由用户确认。chatting 是日常交谈；irrelevant 是广告、系统提示等无关信息。
 evidence 必须逐字摘自 TARGET 原文，禁止改写或编造。
+【紧急度】high=截止在72小时内/含过期风险/影响大；normal=一周内有明确截止或常规流程；low=远期/无明确截止/例行通知。仅 actionable 需要填写，其余为 normal。
+【提醒建议】reminder_suggestions 给 0-3 个提醒时点，仅 actionable 给：通常为「截止前1天 09:00」「截止当天 09:00」「截止前2小时」里适合该任务的子集；无截止时间则为空数组。这只是推荐，用户可修改。
+【重复判断】USER_TASKS 是用户当前的任务列表（含标题、状态、创建时间、来源会话）。若 TARGET 的通知与列表中某个未完成任务指向同一件事（重发的通知、同一通知的转述、催办），设 duplicate=true 并把对应任务 ID 填入 duplicate_of；判定依据写进 reason。仅内容相似但目标/批次不同（如两场不同截止的作业）不算重复。列表中没有可疑对象时 duplicate=false。
+只读工具供你补全信息：信息不足以判断重复或上下文时先调用工具再回答；仍然不足则保守设为 false 并在 notes 说明。工具只读，不能修改任何数据。
 """
 
+TOOL_SCHEMAS = {
+    "list_recent_tasks": {
+        "description": "查询用户当前任务列表（标题、状态、截止、紧急度、创建时间、来源会话），用于重复判断。",
+        "parameters": {"type": "object", "properties": {"limit": {"type": "integer", "description": "返回条数，默认 30，最大 100"}}, "required": []},
+    },
+    "get_task_detail": {
+        "description": "按任务 ID 查看单个任务的完整信息（说明、材料清单、命名要求、来源通知）。",
+        "parameters": {"type": "object", "properties": {"task_id": {"type": "string"}}, "required": ["task_id"]},
+    },
+    "get_recent_messages": {
+        "description": "按会话查看最近通知原文（发送者、时间、正文摘录），用于确认上下文或历史版本。",
+        "parameters": {"type": "object", "properties": {"conversation": {"type": "string", "description": "会话名或会话 ID"}, "limit": {"type": "integer", "description": "条数，默认 10，最大 30"}}, "required": ["conversation"]},
+    },
+    "get_now": {
+        "description": "获取当前精确时间（Asia/Shanghai），用于推算「明天」「本周五」等相对日期。",
+        "parameters": {"type": "object", "properties": {}, "required": []},
+    },
+}
+
+TOOLS = [{"type": "function", "function": {"name": name, **schema}} for name, schema in TOOL_SCHEMAS.items()]
+
+
+def tool_result_tasks(tasks):
+    """任务列表的工具返回体；只暴露分析需要的字段，不含描述全文以省 token。"""
+    return {"tasks": [{"id": t["id"], "title": t["title"], "status": t["status"], "due_at": t.get("due_at"),
+                       "urgency": t.get("urgency") or "normal", "created_at": t.get("created_at"),
+                       "conversation": t.get("conversation") or ""} for t in tasks]}
+
+
+
+def robust_json(text):
+    """从模型输出中提取 JSON 对象；容忍 ``` 包裹、前后杂文。"""
+    text = text.strip()
+    start = text.find('{')
+    if start < 0:
+        raise ValueError('no json object')
+    depth = 0; in_str = False; esc = False
+    for i in range(start, len(text)):
+        ch = text[i]
+        if in_str:
+            if esc: esc = False
+            elif ch == '\\': esc = True
+            elif ch == '"': in_str = False
+        elif ch == '"': in_str = True
+        elif ch == '{': depth += 1
+        elif ch == '}':
+            depth -= 1
+            if depth == 0:
+                return json.loads(text[start:i + 1])
+    raise ValueError('unbalanced json')
 
 class LlmFailure(ValueError):
     def __init__(self,message,metrics=None):
         super().__init__(message);self.metrics=metrics or {}
 
 
-async def _chat(config, key, messages, max_tokens, transport=None, progress=None, usage_option=True):
+async def _chat(config, key, messages, max_tokens, transport=None, progress=None, usage_option=True, tools=None, tool_executor=None):
     # 思考型模型（如 GLM）整段生成常超过 90 秒；始终用流式接收，
     # 首字后的持续数据会不断重置读超时，避免后台队列整段等待时被掐断。
     started=time.perf_counter();first=None;text="";usage={};http_status=None;streamed=False
@@ -65,6 +122,8 @@ async def _chat(config, key, messages, max_tokens, transport=None, progress=None
     await notify({'stage':'request','input_chars':input_chars,'image_count':image_count})
     headers={"Authorization":f"Bearer {key}"} if key else {}
     body={'model':config['model'],'messages':messages,'stream':bool(stream_always),'temperature':.1,'max_tokens':max_tokens}
+    if config.get('json_mode',True):body['response_format']={'type':'json_object'}
+    if tools:body['tools']=tools
     if stream_always and usage_option:body['stream_options']={'include_usage':True}
     async with httpx.AsyncClient(timeout=httpx.Timeout(90,connect=15,read=300),transport=transport,follow_redirects=False) as client:
         async with client.stream('POST',endpoint(config['base_url']),headers=headers,json=body) as response:
@@ -80,6 +139,8 @@ async def _chat(config, key, messages, max_tokens, transport=None, progress=None
             if response.status_code>=400:raise LlmFailure('LLM 接口返回 HTTP '+str(response.status_code),{'http_status':response.status_code,'elapsed_ms':round((time.perf_counter()-started)*1000)})
             if stream_always and 'text/event-stream' in response.headers.get('content-type',''):
                 streamed=True
+                tool_calls={}  # index -> {id, name, arguments}
+                finish_reason=None
                 async for line in response.aiter_lines():
                     if not line.startswith('data:'):continue
                     raw=line[5:].strip()
@@ -91,19 +152,50 @@ async def _chat(config, key, messages, max_tokens, transport=None, progress=None
                     choices=packet.get('choices') or []
                     if not choices:continue
                     choice=choices[0]
-                    if choice.get('finish_reason')=='length':raise ValueError('模型输出被截断')
-                    delta=choice.get('delta',{}).get('content') or ''
-                    if not isinstance(delta,str):raise ValueError('模型响应格式无效')
-                    if delta:
+                    if choice.get('finish_reason'):finish_reason=choice['finish_reason']
+                    delta=choice.get('delta',{}) or {}
+                    # 工具调用分片在 delta.tool_calls 里逐段到达，需要聚合。
+                    for piece in delta.get('tool_calls') or []:
+                        index=piece.get('index',0)
+                        slot=tool_calls.setdefault(index,{'id':'','name':'','arguments':''})
+                        if piece.get('id'):slot['id']=piece['id']
+                        fn=piece.get('function') or {}
+                        if fn.get('name'):slot['name']=fn['name']
+                        if fn.get('arguments'):slot['arguments']+=fn['arguments']
+                    content_delta=delta.get('content') or ''
+                    if not isinstance(content_delta,str):raise ValueError('模型响应格式无效')
+                    if content_delta:
                         if first is None:first=time.perf_counter()
-                        text+=delta
+                        text+=content_delta
                         if len(text)>1024*1024:raise ValueError('模型响应过大')
                         # Send generated answer text only; reasoning_content is intentionally not exposed.
-                        await notify({'stage':'receiving','delta':delta,'received_chars':len(text),'elapsed_ms':round((time.perf_counter()-started)*1000)})
+                        await notify({'stage':'receiving','delta':content_delta,'received_chars':len(text),'elapsed_ms':round((time.perf_counter()-started)*1000)})
+                # 工具调用：执行（白名单由 tool_executor 把关），结果追加进对话，返回空文本让外层循环继续。
+                if tool_calls and tool_executor and finish_reason=='tool_calls':
+                    message={'role':'assistant','content':text or None,'tool_calls':[
+                        {'id':slot['id'] or 'call_'+str(i),'type':'function','function':{'name':slot['name'],'arguments':slot['arguments'] or '{}'}}
+                        for i,slot in sorted(tool_calls.items())]}
+                    messages.append(message)
+                    for i,slot in sorted(tool_calls.items()):
+                        try:args=json.loads(slot['arguments'] or '{}')
+                        except ValueError:args={}
+                        result=tool_executor(slot['name'],args)
+                        messages.append({'role':'tool','tool_call_id':slot['id'] or 'call_'+str(i),'content':json.dumps(result,ensure_ascii=False)})
+                    return '',metrics
             else:
                 raw=await response.aread()
                 if len(raw)>1024*1024:raise ValueError('模型响应过大')
-                payload=json.loads(raw);usage=payload.get('usage') or {};text=payload['choices'][0]['message']['content']
+                payload=json.loads(raw);usage=payload.get('usage') or {}
+                message=payload['choices'][0]['message']
+                text=message.get('content') or ''
+                if message.get('tool_calls') and tool_executor:
+                    messages.append({'role':'assistant','content':text or None,'tool_calls':message['tool_calls']})
+                    for call in message['tool_calls']:
+                        try:args=json.loads(call.get('function',{}).get('arguments') or '{}')
+                        except ValueError:args={}
+                        result=tool_executor(call['function']['name'],args)
+                        messages.append({'role':'tool','tool_call_id':call.get('id',''),'content':json.dumps(result,ensure_ascii=False)})
+                    return '',metrics
                 await notify({'stage':'receiving','delta':text,'received_chars':len(text),'elapsed_ms':round((time.perf_counter()-started)*1000)})
     await notify({'stage':'validating','received_chars':len(text)})
     def number(name):
@@ -113,21 +205,28 @@ async def _chat(config, key, messages, max_tokens, transport=None, progress=None
     return text,{'streamed':streamed,'http_status':http_status,'prompt_tokens':prompt_tokens,'completion_tokens':completion_tokens,'total_tokens':total_tokens,'usage_reported':total_tokens is not None,'elapsed_ms':round((time.perf_counter()-started)*1000),'first_token_ms':round((first-started)*1000) if first else None,'input_chars':input_chars,'image_count':image_count,'output_chars':len(text)}
 
 
-async def analyze(config: dict, targets: list[dict], context: list[dict], key: str, transport=None, progress=None) -> dict:
+async def analyze(config: dict, targets: list[dict], context: list[dict], key: str, transport=None, progress=None, user_tasks=None, tool_executor=None) -> dict:
     def compact(m):
         obj={k:m.get(k,'') for k in ('id','source','conversation_name','sender_name','sent_at','text')}
         if m.get('metadata',{}).get('quote'):obj['quote']=m['metadata']['quote']
         return obj
-    content=json.dumps({'TARGET':[compact(m) for m in targets],'CONTEXT':[compact(m) for m in context]},ensure_ascii=False)
+    payload_tasks=[{k:t.get(k,'') for k in ('id','title','status','due_at','created_at','conversation')} for t in (user_tasks or [])][:40]
+    content=json.dumps({'TARGET':[compact(m) for m in targets],'CONTEXT':[compact(m) for m in context],'USER_TASKS':payload_tasks},ensure_ascii=False)
     if len(content)>65000:raise ValueError('上下文过长，请减少消息条数')
     prompt=SYSTEM+("\n用户的分类偏好：\n"+config['instruction'] if config.get('instruction') else '')
     prompt+='\n分类理由不超过100字，摘要不超过150字。普通聊天和无关信息不生成任务字段，requirements/evidence/notes为空数组，title为空，due_at为null。'
     metrics={}
     try:
-        text,metrics=await _chat(config,key,[{'role':'system','content':prompt},{'role':'user','content':content}],6000,transport,progress)
+        # 工具循环：模型信息不足时调 list_recent_tasks 补全，最多 2 轮防失控。
+        conversation=[{'role':'system','content':prompt},{'role':'user','content':content}]
+        for _round in range(3):
+            text,metrics=await _chat(config,key,conversation,6000,transport,progress,tools=TOOLS,
+                tool_executor=lambda name,args: tool_result_tasks(user_tasks or []))
+            if text.strip():break
+            # 无文本输出 = 模型只发了工具调用；工具结果已由 _chat 追加进 conversation，继续下一轮。
         text=text.strip()
         if text.startswith('```'):text=text.split('\n',1)[1].rsplit('```',1)[0].strip()
-        result=Analysis.model_validate(json.loads(text)).model_dump()
+        result=Analysis.model_validate(robust_json(text)).model_dump()
         result['performance']=metrics
         return result
     except LlmFailure:raise
@@ -142,11 +241,15 @@ class Analysis(BaseModel):
     summary: str = Field(default="", max_length=4000)
     title: str = Field(default="", max_length=200)
     due_at: str | None = None
+    urgency: Literal["high", "normal", "low"] = "normal"
+    reminder_suggestions: list[str] = Field(default_factory=list, max_length=3)
     requirements: list[dict] = Field(default_factory=list, max_length=50)
     max_total_bytes: int | None = None
     naming_hint: str = Field(default="", max_length=300)
     submit_url: str = Field(default="", max_length=2000)
     evidence: list[str] = Field(default_factory=list, max_length=6)
+    duplicate: bool = False
+    duplicate_of: str | None = None
     notes: list[str] = Field(default_factory=list, max_length=20)
 
 
@@ -171,7 +274,7 @@ async def suggest_file(config,key,file,content,tasks,progress=None,image=None):
         text,metrics=await _chat(config,key,[{'role':'system','content':instruction},{'role':'user','content':user_content}],4000,progress=progress)
         text=text.strip()
         if text.startswith('```'):text=text.split('\n',1)[1].rsplit('```',1)[0].strip()
-        result=FileSuggestion.model_validate_json(text).model_dump()
+        result=FileSuggestion.model_validate(robust_json(text)).model_dump()
         if result['task_id'] and result['task_id'] not in {t['id'] for t in tasks}:raise ValueError('模型返回了无效任务')
         if result['task_id'] and result['category'] not in ('material','receipt'):raise ValueError('待办内用途无效')
         result['performance']=metrics
