@@ -46,7 +46,7 @@ object CalendarReminders {
             put(CalendarContract.Events.DTEND, dueAtMillis)
             put(CalendarContract.Events.EVENT_TIMEZONE, java.util.TimeZone.getDefault().id)
             location?.takeIf { it.startsWith("http") }?.let { put(CalendarContract.Events.EVENT_LOCATION, it) }
-            put(CalendarContract.Events.AVAILABLE, 1) // 「有空」，不占用时间
+            put(CalendarContract.Events.AVAILABILITY, CalendarContract.Events.AVAILABILITY_FREE)
         }
         val id = context.contentResolver.insert(CalendarContract.Events.CONTENT_URI, values)
             ?.lastPathSegment?.toLong() ?: return null

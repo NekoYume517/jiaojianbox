@@ -47,9 +47,9 @@ fun JjbApp(
     if (!loaded) return
     val current = sessionState
     if (current == null) {
-        LoginScreen(onLogin = { store.saveSession(it) })
+        LoginScreen(onLogin = { session -> lifecycleDispatch { store.saveSession(session) } })
     } else {
-        MainScaffold(store, current, pendingUris, onUrisConsumed, requestCalendar, onLogout = { store.clearSession() })
+        MainScaffold(store, current, pendingUris, onUrisConsumed, requestCalendar, onLogout = { lifecycleDispatch { store.clearSession() } })
     }
 }
 
@@ -128,8 +128,7 @@ fun MainScaffold(
                                 .onSuccess { reload() }
                                 .onFailure { snackbar.showSnackbar(it.message ?: "更新失败") }
                         }
-                    },
-                    onRemind = {
+                    },                    onRemind = {
                         if (CalendarReminders.available(store.context())) calendarPickerFor = it
                         else requestCalendar()
                     },
@@ -169,9 +168,6 @@ fun MainScaffold(
         )
     }
 }
-
-/** 把协程从 composable 事件回调中发出（简单桥接）。 */
-private fun lifecycleDispatch(block: suspend () -> Unit) { globalScope.launch { block() } }
 
 @Composable
 fun ShelfPage(snapshot: Snapshot?, busy: Boolean) {

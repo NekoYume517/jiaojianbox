@@ -52,7 +52,7 @@ class JjbApi(private val session: Session) {
     }
 
     suspend fun snapshot(): Snapshot = withContext(Dispatchers.IO) {
-        request("/api/snapshot").await().use { response ->
+        http.newCall(request("/api/snapshot")).await().use { response ->
             val obj = response.jsonOrThrow()
             Snapshot(
                 tasks = obj.getJSONArray("tasks").let { arr -> List(arr.length()) { arr.getJSONObject(it).toTask() } },

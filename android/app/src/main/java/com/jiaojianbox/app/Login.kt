@@ -1,6 +1,7 @@
 package com.jiaojianbox.app
 
 import android.content.Context
+import android.net.Uri
 import android.provider.OpenableColumns
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -11,18 +12,16 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 
-/** 会话上下文桥（供 composable 事件回调里读取 ContentResolver）。 */
+/** 应用上下文桥（供 composable 事件回调里读取 ContentResolver）。 */
 private var appContext: Context? = null
 fun AppStore.context(): Context = appContext ?: throw IllegalStateException("context 未初始化")
 fun initAppContext(context: Context) { appContext = context.applicationContext }
 
-fun queryDisplayName(context: Context, uri: Uri2): String? = runCatching {
+fun queryDisplayName(context: Context, uri: Uri): String? = runCatching {
     context.contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
         if (cursor.moveToFirst()) cursor.getString(0) else null
     }
 }.getOrNull()
-
-typealias Uri2 = android.net.Uri
 
 @Composable
 fun LoginScreen(onLogin: (Session) -> Unit) {
@@ -54,7 +53,7 @@ fun LoginScreen(onLogin: (Session) -> Unit) {
                 busy = true; error = ""
                 lifecycleDispatch {
                     runCatching { JjbApi(Session(server, "", "")).login(server, username, password) }
-                        .onSuccess { onLogin(it) }
+                        .onSuccess { session -> onLogin(session) }
                         .onFailure { error = it.message ?: "登录失败" }
                     busy = false
                 }
