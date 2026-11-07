@@ -541,3 +541,14 @@ body.dragging-files .file-shelf *{animation:none!important}
 .shelf-placement{display:grid;grid-template-columns:minmax(0,1fr);gap:0}.shelf-placement select{width:100%;min-width:0}.shelf-draft-note{color:var(--orange-text);margin-bottom:12px}
 
 .file-kind-button{font-size:.75rem;padding:6px 7px;white-space:nowrap;color:var(--green);border:1px solid var(--line);border-radius:5px}
+
+/* 首次使用引导 */
+.onboard-card{position:fixed;right:26px;bottom:26px;z-index:950;width:min(360px,calc(100vw - 40px));background:var(--panel);border:1px solid var(--line);border-radius:14px;box-shadow:var(--shadow);padding:24px;animation:dialog-in 200ms var(--ease-out)}
+.onboard-card h3{margin:0 0 10px;font-size:1.15rem}
+.onboard-card p{font-size:.9rem;color:var(--text);line-height:1.8;margin-bottom:16px}
+.onboard-dots{display:flex;gap:7px;margin-bottom:16px}
+.onboard-dots i{width:7px;height:7px;border-radius:50%;background:var(--line);transition:background 160ms}
+.onboard-dots i.on{background:var(--green)}
+.onboard-dots i.done{background:var(--selected-border)}
+.onboard-card .detail-actions{align-items:center;margin:0}
+@media(max-width:620px){.onboard-card{right:12px;left:12px;bottom:calc(80px + env(safe-area-inset-bottom));width:auto}}

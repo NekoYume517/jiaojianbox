@@ -14,6 +14,7 @@ class LlmConfig(BaseModel):
     api_key: str | None = Field(default=None, max_length=2000)
     context_count: int = Field(default=12, ge=0, le=50)
     auto_analyze: bool = False
+    auto_task: bool = False
     vision_enabled: bool = False
     include_keywords: str = Field(default="", max_length=1000)
     exclude_keywords: str = Field(default="", max_length=1000)
@@ -53,19 +54,22 @@ class LlmFailure(ValueError):
 
 
 async def _chat(config, key, messages, max_tokens, transport=None, progress=None, usage_option=True):
+    # 思考型模型（如 GLM）整段生成常超过 90 秒；始终用流式接收，
+    # 首字后的持续数据会不断重置读超时，避免后台队列整段等待时被掐断。
     started=time.perf_counter();first=None;text="";usage={};http_status=None;streamed=False
     async def notify(value):
         if progress:await progress(value)
+    stream_always=progress or config.get('stream_background',True)
     input_chars=sum(len(m['content']) if isinstance(m['content'],str) else sum(len(p.get('text','')) for p in m['content'] if p.get('type')=='text') for m in messages)
     image_count=sum(sum(p.get('type')=='image_url' for p in m['content']) for m in messages if isinstance(m['content'],list))
     await notify({'stage':'request','input_chars':input_chars,'image_count':image_count})
     headers={"Authorization":f"Bearer {key}"} if key else {}
-    body={'model':config['model'],'messages':messages,'stream':bool(progress),'temperature':.1,'max_tokens':max_tokens}
-    if progress and usage_option:body['stream_options']={'include_usage':True}
-    async with httpx.AsyncClient(timeout=httpx.Timeout(90,connect=15),transport=transport,follow_redirects=False) as client:
+    body={'model':config['model'],'messages':messages,'stream':bool(stream_always),'temperature':.1,'max_tokens':max_tokens}
+    if stream_always and usage_option:body['stream_options']={'include_usage':True}
+    async with httpx.AsyncClient(timeout=httpx.Timeout(90,connect=15,read=300),transport=transport,follow_redirects=False) as client:
         async with client.stream('POST',endpoint(config['base_url']),headers=headers,json=body) as response:
             http_status=response.status_code
-            if response.status_code==400 and progress and usage_option:
+            if response.status_code==400 and stream_always and usage_option:
                 error_body=(await response.aread()).lower()
                 if b'stream_options' in error_body or b'include_usage' in error_body:
                     spent=round((time.perf_counter()-started)*1000);await response.aclose()
@@ -74,7 +78,7 @@ async def _chat(config, key, messages, max_tokens, transport=None, progress=None
                     if metrics.get('first_token_ms') is not None:metrics['first_token_ms']+=spent
                     return value,metrics
             if response.status_code>=400:raise LlmFailure('LLM 接口返回 HTTP '+str(response.status_code),{'http_status':response.status_code,'elapsed_ms':round((time.perf_counter()-started)*1000)})
-            if progress and 'text/event-stream' in response.headers.get('content-type',''):
+            if stream_always and 'text/event-stream' in response.headers.get('content-type',''):
                 streamed=True
                 async for line in response.aiter_lines():
                     if not line.startswith('data:'):continue
@@ -120,7 +124,7 @@ async def analyze(config: dict, targets: list[dict], context: list[dict], key: s
     prompt+='\n分类理由不超过100字，摘要不超过150字。普通聊天和无关信息不生成任务字段，requirements/evidence/notes为空数组，title为空，due_at为null。'
     metrics={}
     try:
-        text,metrics=await _chat(config,key,[{'role':'system','content':prompt},{'role':'user','content':content}],2200,transport,progress)
+        text,metrics=await _chat(config,key,[{'role':'system','content':prompt},{'role':'user','content':content}],6000,transport,progress)
         text=text.strip()
         if text.startswith('```'):text=text.split('\n',1)[1].rsplit('```',1)[0].strip()
         result=Analysis.model_validate(json.loads(text)).model_dump()
@@ -164,7 +168,7 @@ async def suggest_file(config,key,file,content,tasks,progress=None,image=None):
     user_content=[{'type':'text','text':json.dumps(data,ensure_ascii=False)},image] if image else json.dumps(data,ensure_ascii=False)
     metrics={}
     try:
-        text,metrics=await _chat(config,key,[{'role':'system','content':instruction},{'role':'user','content':user_content}],1200,progress=progress)
+        text,metrics=await _chat(config,key,[{'role':'system','content':instruction},{'role':'user','content':user_content}],4000,progress=progress)
         text=text.strip()
         if text.startswith('```'):text=text.split('\n',1)[1].rsplit('```',1)[0].strip()
         result=FileSuggestion.model_validate_json(text).model_dump()

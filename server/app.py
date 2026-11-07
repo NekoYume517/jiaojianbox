@@ -340,6 +340,37 @@ def create_app(data_dir: str | Path | None = None) -> FastAPI:
             raise HTTPException(502, "LLM 分析失败：请检查接口、模型及输出格式后重试")
         record_llm(user,"notification",config,started_llm,result=result)
         result |= {"at": now(), "context_ids": [m["id"] for m in contexts], "model": config["model"]}
+        created_task = None
+        if config.get("auto_task") and result.get("classification") == "actionable" and result.get("confidence", 0) >= .8:
+            with db(True) as conn:
+                current = conn.execute("SELECT payload FROM messages WHERE id=? AND user_id=?", (body.message_id, user)).fetchone()
+                if current:
+                    obj = json.loads(current[0])
+                    draft = obj.get("draft") or {}
+                    title = (result.get("title") or draft.get("title") or "").strip()[:200]
+                    if title:
+                        client_id = "auto-" + body.message_id
+                        old = conn.execute("SELECT * FROM tasks WHERE user_id=? AND client_id=?", (user, client_id)).fetchone()
+                        if old:
+                            created_task = json.loads(old["payload"]) | {"attachments": []}
+                        else:
+                            # 同会话短窗口内容重复的通知（如重发）不重复建任务。
+                            window = time.time() - 3600
+                            recent = conn.execute("""SELECT payload FROM tasks WHERE user_id=? AND client_id LIKE 'auto-%'
+                                AND json_extract(payload,'$.created_at')>=? AND json_extract(payload,'$.title')=?""",
+                                (user, datetime.fromtimestamp(window, timezone.utc).isoformat(), title)).fetchone()
+                            if recent:
+                                created_task = json.loads(recent[0]) | {"attachments": [], "duplicate_of": json.loads(recent[0])["id"]}
+                            else:
+                                task = TaskInput(title=title, description=draft.get("description") or obj.get("text", ""),
+                                    due_at=result.get("due_at"), requirements=result.get("requirements") or [],
+                                    max_total_bytes=result.get("max_total_bytes"), naming_hint=result.get("naming_hint") or "",
+                                    filename_pattern="", submit_url=result.get("submit_url") or "",
+                                    source_message_id=body.message_id, client_id=client_id).model_dump()
+                                task |= {"id": str(uuid.uuid4()), "version": 1, "created_at": now(), "updated_at": now()}
+                                conn.execute("INSERT INTO tasks VALUES(?,?,?,?,?)", (task["id"], user, 1, client_id, json.dumps(task, ensure_ascii=False)))
+                                event(conn, user, "task.upsert", task["id"])
+                                created_task = task | {"attachments": []}
         with db(True) as conn:
             current = conn.execute("SELECT payload FROM messages WHERE id=? AND user_id=?", (body.message_id, user)).fetchone()
             if not current:
@@ -347,8 +378,14 @@ def create_app(data_dir: str | Path | None = None) -> FastAPI:
             obj = json.loads(current[0])
             obj["analysis"] = result
             obj.pop("analysis_error", None)
+            if created_task:
+                obj["auto_task_id"] = created_task["id"]
+                if created_task.get("duplicate_of"):
+                    obj["auto_task_duplicate"] = True
             conn.execute("UPDATE messages SET payload=? WHERE id=? AND user_id=?", (json.dumps(obj, ensure_ascii=False), body.message_id, user))
             event(conn, user, "message.upsert", body.message_id)
+        if created_task:
+            result["auto_created_task"] = created_task
         return result
 
     async def analyze_worker():
@@ -361,10 +398,10 @@ def create_app(data_dir: str | Path | None = None) -> FastAPI:
                 await asyncio.sleep(1)
                 continue
             try:
-                await run_analysis(row["user_id"], AnalyzeInput(message_id=row["message_id"]))
+                result = await run_analysis(row["user_id"], AnalyzeInput(message_id=row["message_id"]))
                 state, error, retry = "done", "", 0
             except (HTTPException, ValueError, httpx.HTTPError):
-                state, error, retry = ("failed" if row["attempts"] >= 2 else "queued"), "分析失败，可在消息页手动重试", time.time() + 20
+                state, error, retry = ("failed" if row["attempts"] >= 2 else "queued"), "自动分析失败，将在消息页显示重试入口", time.time() + 20
             with db(True) as conn:
                 conn.execute("UPDATE analysis_jobs SET state=?,error=?,next_at=? WHERE id=?", (state, error, retry, row["id"]))
                 if error:

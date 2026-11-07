@@ -5,6 +5,54 @@ from zoneinfo import ZoneInfo
 
 ZONE = ZoneInfo("Asia/Shanghai")
 
+# 微信/QQ 文本表情码 → emoji；仅用于展示与草稿，原文保持不变。
+EMOJI = {
+    "微笑": "🙂", "撇嘴": "😕", "色": "😍", "发呆": "😮", "得意": "😎", "流泪": "😭",
+    "害羞": "😊", "闭嘴": "🤐", "睡": "😴", "大哭": "😭", "尴尬": "😅", "发怒": "😡",
+    "调皮": "😜", "呲牙": "😁", "惊讶": "😲", "难过": "🙁", "酷": "😎", "冷汗": "😓",
+    "抓狂": "🤯", "吐": "🤮", "偷笑": "🤭", "愉快": "😄", "白眼": "🙄", "傲慢": "😤",
+    "困": "😪", "惊恐": "😱", "憨笑": "🤣", "悠闲": "😌", "咒骂": "🤬", "疑问": "❓",
+    "嘘": "🤫", "晕": "😵", "衰": "😩", "骷髅": "💀", "敲打": "🤕", "再见": "👋",
+    "擦汗": "😅", "抠鼻": "😤", "鼓掌": "👏", "坏笑": "😏", "右哼哼": "哼", "鄙视": "😒",
+    "委屈": "🥹", "快哭了": "😥", "阴险": "😈", "亲亲": "😘", "可怜": "🥺", "笑脸": "😄",
+    "生病": "🤒", "脸红": "😳", "破涕为笑": "😂", "恐惧": "😨", "失望": "😞", "无语": "😶",
+    "嘿哈": "😐", "捂脸": "🤦", "奸笑": "😌", "机智": "🧐", "皱眉": "🙁", "耶": "✌️",
+    "吃瓜": "🍉", "加油": "💪", "汗": "😅", "天啊": "😱", "Emm": "😶", "社会社会": "😎",
+    "旺柴": "🐶", "好的": "👌", "打脸": "🤡", "哇": "😮", "翻白眼": "🙄", "666": "👍",
+    "让我看看": "👀", "叹气": "😮‍💨", "苦涩": "😖", "裂开": "💥", "嘴唇": "👄", "爱心": "❤️",
+    "心碎": "💔", "拥抱": "🤗", "强": "👍", "弱": "👎", "握手": "🤝", "胜利": "✌️",
+    "抱拳": "🙏", "勾引": "💋", "拳头": "✊", "OK": "👌", "合十": "🙏", "啤酒": "🍺",
+    "咖啡": "☕", "蛋糕": "🎂", "玫瑰": "🌹", "凋谢": "🥀", "菜刀": "🔪", "炸弹": "💣",
+    "便便": "💩", "月亮": "🌙", "太阳": "☀️", "庆祝": "🎉", "红包": "🧧", "礼物": "🎁",
+    "鞭炮": "🧨", "烟花": "🎆", "猪头": "🐷", "闪电": "⚡", "旋风": "🌀", "礼物2": "🎁",
+}
+EMOJI_PATTERN = re.compile(r"\[((" + "|".join(sorted((re.escape(k) for k in EMOJI), key=len, reverse=True)) + r"))\]")
+
+
+def pretty_text(text: str) -> str:
+    """表情码转 emoji，并清理微信导出的控制字符。"""
+    text = re.sub(r"[\x00-\x08\x0b-\x1f]", "", text or "")
+    return EMOJI_PATTERN.sub(lambda m: EMOJI[m[1]], text)
+
+
+def draft_title(text: str) -> str:
+    """取第一条有信息量的行：跳过称呼（以冒号结尾）与纯表情行。"""
+    for raw in (text or "").strip().splitlines():
+        line = pretty_text(raw).strip()
+        if not line:
+            continue
+        if re.fullmatch(r"[①-⑳\d、.\s/]*", line):
+            continue
+        line = line.lstrip("/｜|■●○·\\.\\s")
+        if not line:
+            continue
+        if line.endswith(("：", ":")) and len(line) <= 16:
+            continue
+        if re.fullmatch(r"(?:[\U0001F300-\U0001FAFF\u2600-\u27BF~\s/]|[一二三四五六七八九十]|切|了|哈|嗯)+", line):
+            continue
+        return line[:100] or "新交件任务"
+    return "新交件任务"
+
 
 def extract(text: str, sent_at: str) -> dict:
     base = datetime.fromisoformat(sent_at.replace("Z", "+00:00")).astimezone(ZONE)
@@ -50,7 +98,7 @@ def extract(text: str, sent_at: str) -> dict:
             due = target.replace(hour=hour, minute=minute, second=0, microsecond=0).isoformat()
     except ValueError:
         notes.append("日期无法确定，请手动填写。")
-    return {"title": text.strip().splitlines()[0][:100] or "新交件任务", "description": text,
+    return {"title": draft_title(text), "description": text,
             "due_at": due, "requirements": requirements, "max_total_bytes": max_bytes,
             "naming_hint": naming[1].strip() if naming else "", "submit_url": urls[0] if urls else "",
             "notes": notes, "candidate": bool(re.search(r"提交|截止|报名|交作业|上交|交齐|交材料|报告", text))}
