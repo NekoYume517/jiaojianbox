@@ -1,5 +1,7 @@
 {
-  "at": "2026-11-07T09:24:00.671Z",
+  "at": "2026-11-07T12:52:05.162Z",
+  "runtime": "Chromium",
+  "packaged": false,
   "data": "synthetic-only",
   "passed": [
     "browser-login",
@@ -7,6 +9,7 @@
     "selected-context-llm-call",
     "task-from-message",
     "multi-file-upload-and-validation",
+    "file-rename-recheck",
     "desktop-to-mobile-websocket-sync",
     "mobile-390px-no-overflow",
     "optimistic-version-conflict",

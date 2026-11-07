@@ -21,7 +21,7 @@ const stub = http.createServer(async (req, res) => {
   if (req.url === '/v1/models') return res.end(JSON.stringify({ data: [{ id: 'verification-model' }] }));
   let content = ''; for await (const part of req) content += part;
   prompts.push(JSON.parse(content));
-  res.end(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ classification: 'actionable', confidence: .97, reason: '明确要求提交报告和源码，含截止时间与命名要求。', summary: '周五前提交 PDF 报告与 ZIP 源码，按学号姓名命名。', title: '实验报告与源码提交', due_at: '2026-11-20T18:00:00+08:00', requirements: [{ label: '实验报告', extensions: ['pdf'], min_count: 1 }, { label: '源码压缩包', extensions: ['zip'], min_count: 1 }], max_total_bytes: 20 * 1024 ** 2, naming_hint: '学号_姓名', submit_url: 'https://example.com/submit', notes: ['请核对课程要求及实际截止时间。'] }) } }] }));
+  res.end(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ classification: 'actionable', confidence: .97, reason: '明确要求提交报告和源码，含截止时间与命名要求。', summary: '周五前提交 PDF 报告与 ZIP 源码，按学号姓名命名。', title: '实验报告与源码提交', due_at: '2026-11-20T18:00:00+08:00', requirements: [{ label: '实验报告', extensions: ['pdf'], min_count: 1 }, { label: '源码压缩包', extensions: ['zip'], min_count: 1 }], max_total_bytes: 20 * 1024 ** 2, naming_hint: '学号_姓名', submit_url: 'https://example.com/submit', evidence: ['11月20日18:00前提交实验报告 PDF 和源码 ZIP', '文件名为学号_姓名'], notes: ['请核对课程要求及实际截止时间。'] }) } }] }));
 });
 
 async function request(route, options = {}, token) {
@@ -82,7 +82,7 @@ async function until(fn, label, timeout = 15000) {
   await page.locator(`[data-context="${messages[0].id}"]`).check();
   await page.locator(`[data-message="${messages[1].id}"]`).click();
   await page.locator('[data-action=analyze]').click();
-  await page.getByText('可信度 97%', { exact: true }).waitFor();
+  await page.locator('.confidence-chip.high').first().waitFor();
   assert.equal(JSON.parse(prompts[0].messages[1].content).CONTEXT.length, 1);
   await page.screenshot({ path: path.join(evidence, 'inbox-desktop.png'), fullPage: true });
   await page.locator('[data-action=message-task]').click();

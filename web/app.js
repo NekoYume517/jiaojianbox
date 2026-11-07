@@ -3,6 +3,7 @@
 const $ = selector => document.querySelector(selector);
 const $$ = selector => [...document.querySelectorAll(selector)];
 const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const easeTokens = { paths: null };
 const paths = {
   inbox: '<path d="M3 4h14l3 9v7H0v-7L3 4Z" transform="translate(2 0)"/><path d="M3 13h5l2 3h4l2-3h5"/>',
   check: '<rect x="4" y="3" width="16" height="18" rx="3"/><path d="m8 12 3 3 5-6"/>',
@@ -20,8 +21,8 @@ const formatDate = (value, short = false) => value ? new Date(value).toLocaleStr
 const bytes = size => size >= 1024 ** 2 ? (size / 1024 ** 2).toFixed(1) + ' MB' : size >= 1024 ? (size / 1024).toFixed(1) + ' KB' : size + ' B';
 const states = { collecting: ['准备材料', 'orange'], ready: ['待提交', 'blue'], submitted: ['已提交', 'green'], archived: ['已归档', ''] };
 const classifications = { actionable: ['交件通知', 'green'], chatting: ['普通聊天', ''], irrelevant: ['其他信息', ''], unprocessed: ['待分析', 'orange'] };
-const state = { session: null, profile: '', page: 'inbox', snapshot: { tasks: [], messages: [], cursor: 0 }, pending: [], selected: null, taskId: null, contexts: new Set(), search: '', source: 'all', category: 'all', taskFilter: 'active', online: false, socket: null, sources: {}, busyAnalysis: new Set(), isRegister: false, generation: 0 };
-let flushRunning = false, refreshRunning = false, cacheTimer, toastTimer, reconnectTimer, llmSettings = null, editingVersion = 0, uploading = false;
+const state = { session: null, profile: '', page: 'inbox', snapshot: { tasks: [], messages: [], cursor: 0 }, pending: [], selected: null, taskId: null, contexts: new Set(), search: '', source: 'all', category: 'all', taskFilter: 'active', online: false, socket: null, sources: {}, busyAnalysis: new Set(), isRegister: false, generation: 0, firstRenderDone: false, cmdkIndex: 0 };
+let flushRunning = false, refreshRunning = false, cacheTimer, reconnectTimer, llmSettings = null, editingVersion = 0, uploading = false, lastSeenMessageId = null, pendingUndoId = null;
 
 async function storeGet(key) {
   if (window.desktop) return desktop.get(key);
@@ -31,10 +32,19 @@ async function storeSet(key, value) {
   if (window.desktop) return desktop.set(key, value);
   localStorage.setItem('jjb-' + key, JSON.stringify(value));
 }
-function toast(message) {
-  $('#toast').textContent = message; $('#toast').hidden = false;
-  clearTimeout(toastTimer); toastTimer = setTimeout(() => { $('#toast').hidden = true; }, 5000);
+function toastTimerHolder(){}
+let toastHideTimer, toastUndo;
+function toast(message, action) {
+  const el = $('#toast'); $('#toast-text').textContent = message;
+  const button = $('#toast-action');
+  clearTimeout(toastHideTimer); clearTimeout(toastUndo?.timer);
+  if (action?.label) {
+    button.textContent = action.label; button.hidden = false;
+    button.onclick = () => { hideToast(); action.run(); };
+  } else { button.hidden = true; button.onclick = null; }
+  el.hidden = false; requestAnimationFrame(() => el.classList.add('show'));
 }
+function hideToast(){ const el = $('#toast'); el.classList.remove('show'); toastHideTimer = setTimeout(() => { el.hidden = true; }, 200); }
 function hydrateIcons() { $$('[data-icon]').forEach(el => { el.innerHTML = icon(el.dataset.icon); }); }
 function apiUrl(route) { return state.session.server.replace(/\/$/, '') + route; }
 async function api(route, method = 'GET', body) {
@@ -83,9 +93,11 @@ async function refresh({ renderPage = true } = {}) {
     if (generation !== state.generation) return;
     const contentChanged = JSON.stringify(state.snapshot.tasks) !== JSON.stringify(applyPending(snapshot).tasks) || JSON.stringify(state.snapshot.messages.slice(0, 200)) !== JSON.stringify(snapshot.messages);
     const previousMessages = state.snapshot.messages;
+    const knownIds = new Set(previousMessages.map(m => m.id));
     state.snapshot = applyPending(snapshot);
     const latestIds = new Set(snapshot.messages.map(m => m.id));
     state.snapshot.messages.push(...previousMessages.filter(m => !latestIds.has(m.id)));
+    for (const m of state.snapshot.messages) if (!knownIds.has(m.id) && state.firstRenderDone) m.isNew = true;
     online(true); cacheSoon();
     if (renderPage && contentChanged && !uploading && !['settings', 'sources'].includes(state.page)) render();
     window.dispatchEvent(new CustomEvent('snapshot-updated')); 
@@ -153,7 +165,8 @@ async function enter(session) {
   $('#auth').hidden = true; $('#workspace').hidden = false;
   $('#account-name').textContent = session.username; $('#avatar').textContent = session.username.slice(0, 1).toUpperCase();
   $('#account-server').textContent = new URL(session.server).host;
-  state.page = 'inbox'; render(); await refresh(); syncSocket();
+  state.page = 'inbox'; state.firstRenderDone = false; render(); await refresh(); syncSocket();
+  applyHashRoute() || render();
   window.experience?.onSession();
 }
 function updateCounts() {
@@ -178,14 +191,51 @@ function inboxView() {
   const selected = state.snapshot.messages.find(m => m.id === state.selected);
   return heading('消息收件箱', '从聊天中找到重要通知，让每件事都有着落。', `<button class="secondary" data-action="paste">粘贴通知</button><button class="primary" data-action="new-task">${icon('plus')}新建任务</button>`) +
     `<div class="toolbar"><div class="search"><span>${icon('search')}</span><input id="inbox-search" placeholder="搜索通知、群聊或联系人" value="${esc(state.search)}" aria-label="搜索消息"></div><select id="source-filter" aria-label="来源"><option value="all">全部来源</option><option value="qq">QQ</option><option value="wechat">微信</option><option value="manual">手动添加</option></select><select id="category-filter" aria-label="分类"><option value="all">全部分类</option><option value="actionable">交件通知</option><option value="unprocessed">待分析</option><option value="chatting">普通聊天</option><option value="irrelevant">其他信息</option><option value="ignored">已忽略</option></select><span class="result-count">${messages.length} 条消息</span></div>` +
-    `<div class="inbox-grid ${selected ? 'has-selection' : ''}"><section class="panel messages-panel"><div class="panel-head"><h3>最近通知</h3><small>${state.contexts.size ? '已选 ' + state.contexts.size + ' 条上下文' : '勾选消息可作为上下文'}</small></div><div class="message-list">${messages.length ? messages.map(m => `<article class="message-row ${state.selected === m.id ? 'selected' : ''}" data-message="${esc(m.id)}" tabindex="0" role="button" aria-label="查看 ${esc(m.conversation_name)} 的消息"><input class="select-context" type="checkbox" data-context="${esc(m.id)}" ${state.contexts.has(m.id) ? 'checked' : ''} aria-label="选择为上下文"><div class="message-body"><div class="message-meta">${sourceTag(m.source)}<strong>${esc(m.conversation_name || '手动通知')}</strong><time>${formatDate(m.sent_at)}</time></div><div class="message-excerpt">${esc(m.text)}</div><div class="message-bottom">${tag(...messageClass(m))}${m.analysis ? `<span class="helper">${Math.round(m.analysis.confidence * 100)}%</span>` : ''}<span class="sender">${esc(m.sender_name || '我')}</span></div></div></article>`).join('') : empty('收件箱清清爽爽', state.search ? '换个关键词或筛选条件试试。' : '连接 QQ / 微信，或先粘贴一条通知。', '<button class="primary" data-action="paste">添加第一条通知</button>')}</div><div class="load-more"><button class="plain-button" data-action="more-messages">加载更早的消息</button></div></section><section class="panel detail">${selected ? messageDetail(selected) : empty('先选一条消息', '通知原文、上下文和分析结果会显示在这里。')}</section></div>`;
+    `<div class="inbox-grid ${selected ? 'has-selection' : ''}"><section class="panel messages-panel"><div class="panel-head"><h3>最近通知</h3><small>${state.contexts.size ? '已选 ' + state.contexts.size + ' 条上下文' : '勾选消息可作为上下文'}</small></div><div class="message-list ${state.firstRenderDone ? '' : 'stagger'}">${messages.length ? messages.map(m => `<article class="message-row ${state.firstRenderDone ? '' : 'stagger-item'} ${state.selected === m.id ? 'selected' : ''} ${m.isNew ? 'flash' : ''}" data-message="${esc(m.id)}" tabindex="0" role="button" aria-label="查看 ${esc(m.conversation_name)} 的消息"><input class="select-context" type="checkbox" data-context="${esc(m.id)}" ${state.contexts.has(m.id) ? 'checked' : ''} aria-label="选择为上下文"><div class="message-body"><div class="message-meta">${sourceTag(m.source)}<strong>${esc(m.conversation_name || '手动通知')}</strong><time>${formatDate(m.sent_at)}</time></div><div class="message-excerpt">${esc(m.text)}</div><div class="message-bottom">${tag(...messageClass(m))}${m.analysis ? confidenceChip(m.analysis.confidence) : ''}<span class="sender">${esc(m.sender_name || '我')}</span></div></div><div class="row-actions"><button data-row-action="message-task" data-id="${esc(m.id)}">建任务</button><button data-row-action="ignore-message" data-id="${esc(m.id)}" class="danger-hover">忽略</button></div></article>`).join('') : empty('收件箱清清爽爽', state.search ? '换个关键词或筛选条件试试。' : '连接 QQ / 微信，或先粘贴一条通知。', '<button class="primary" data-action="paste">添加第一条通知</button>')}</div><div class="load-more"><button class="plain-button" data-action="more-messages">加载更早的消息</button></div></section><section class="panel detail">${selected ? messageDetail(selected) : empty('先选一条消息', '通知原文、上下文和分析结果会显示在这里。')}</section></div>`;
+}
+function evidenceQuote(m) {
+  const result = m.analysis; if (!result) return '';
+  const quotes = [];
+  if (result.due_at) quotes.push(result.due_at);
+  const proof = result.evidence || [];
+  for (const item of proof.slice(0, 3)) quotes.push(item);
+  const text = m.text || '';
+  const highlights = quotes.map(q => String(q).trim()).filter(q => q.length > 3 && text.includes(q));
+  if (!highlights.length) return '';
+  let html = esc(text);
+  for (const phrase of highlights.slice(0, 4)) {
+    const escaped = esc(phrase).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    html = html.replace(new RegExp(escaped, 'g'), match => `<em>${match}</em>`);
+  }
+  return `<div class="evidence-quote">${html}</div>`;
 }
 function messageDetail(m) {
   const result = m.analysis;
   const related = state.snapshot.messages.filter(x => x.id !== m.id && x.source === m.source && x.account_id === m.account_id && x.conversation_id === m.conversation_id && new Date(x.sent_at) <= new Date(m.sent_at)).slice(0, 12).reverse();
   const busy = state.busyAnalysis.has(m.id);
   const title = result?.title || (m.text.split('\n')[0] || '消息详情').slice(0, 90);
-  return `<div class="panel-head"><h3>通知详情</h3><span class="helper">原文保留</span></div><div class="detail-content"><button class="link mobile-back" data-action="back-inbox">← 返回消息列表</button><div class="detail-meta">${sourceTag(m.source)}<span class="helper">${formatDate(m.sent_at)}</span></div><h2 class="detail-title">${esc(title)}</h2><div class="detail-byline">${esc(m.conversation_name)} · ${esc(m.sender_name || '我')}</div><div class="message-original">${esc(m.text)}${m.metadata?.quote ? '\n\n引用 ' + esc(m.metadata.quote.sender) + '：\n' + esc(m.metadata.quote.text) : ''}</div><div class="analysis-box"><div class="analysis-top"><h3>通知分析</h3>${result ? `<small>${esc(result.model)}</small>` : tag('待分析', 'orange')}</div>${result ? `<div class="pill-row">${tag(...classifications[result.classification])}<span class="helper">可信度 ${Math.round(result.confidence * 100)}%</span></div><p>${esc(result.summary)}</p>${result.due_at ? `<p>截止：${formatDate(result.due_at)}</p>` : ''}${result.requirements.length ? `<p>材料：${result.requirements.map(r => esc(r.label)).join('、')}</p>` : ''}<div class="analysis-reason">${esc(result.reason)}${result.notes?.length ? '<br>' + result.notes.map(esc).join('<br>') : ''}<br>本次使用 ${result.context_ids.length} 条上下文</div>` : `<p>使用你在设置里配置的 LLM，区分通知与闲聊，并提取可确认的任务草稿。</p>`}</div><div class="context-options"><span>自动上下文</span><input id="context-count" type="number" min="0" max="50" value="${state.contextCount ?? 12}" aria-label="上下文条数"><span>条</span>${state.contexts.size ? `<button class="link" data-action="clear-context">清除已选 ${state.contexts.size} 条</button>` : ''}</div><p class="helper">${state.contexts.size ? `分析时将发送当前消息与手动勾选的 ${state.contexts.size} 条上下文。` : '分析时将发送当前消息与同一会话的最近消息。'}</p><div class="detail-actions"><button class="primary" data-action="analyze" ${busy ? 'disabled' : ''}>${busy ? '正在分析…' : result ? '重新分析' : '使用 LLM 分析'}</button><button class="secondary" data-action="message-task">生成任务草稿</button><button class="plain-button" data-action="ignore-message">${m.triage === 'ignored' ? '恢复消息' : '忽略这条'}</button></div>${related.length ? `<details class="context-list"><summary>查看同会话的最近上下文（${related.length}）</summary>${related.map(x => `<div class="context-message"><small>${esc(x.sender_name)} · ${formatDate(x.sent_at)}</small><p>${esc(x.text)}</p></div>`).join('')}</details>` : ''}</div>`;
+  return `<div class="panel-head"><h3>通知详情</h3><span class="helper">原文保留</span></div><div class="detail-content"><button class="link mobile-back" data-action="back-inbox">← 返回消息列表</button><div class="detail-meta">${sourceTag(m.source)}<span class="helper">${formatDate(m.sent_at)}</span></div><h2 class="detail-title">${esc(title)}</h2><div class="detail-byline">${esc(m.conversation_name)} · ${esc(m.sender_name || '我')}</div><div class="message-original">${esc(m.text)}${m.metadata?.quote ? '\n\n引用 ' + esc(m.metadata.quote.sender) + '：\n' + esc(m.metadata.quote.text) : ''}</div><div class="analysis-box"><div class="analysis-top"><h3>通知分析</h3>${result ? `<small>${esc(result.model)}</small>` : tag('待分析', 'orange')}</div>${busy ? '<p class="helper"><span class="thinking"><i></i><i></i><i></i></span>&nbsp;正在结合上下文分析…</p>' : result ? `<div class="pill-row">${tag(...classifications[result.classification])}${confidenceChip(result.confidence)}</div><p>${esc(result.summary)}</p>${result.due_at ? `<p>截止：${formatDate(result.due_at)}</p>` : ''}${result.requirements.length ? `<p>材料：${result.requirements.map(r => esc(r.label)).join('、')}</p>` : ''}<div class="analysis-reason">${esc(result.reason)}${result.notes?.length ? '<br>' + result.notes.map(esc).join('<br>') : ''}<br>本次使用 ${result.context_ids.length} 条上下文</div>${evidenceQuote(m)}` : `<p>使用你在设置里配置的 LLM，区分通知与闲聊，并提取可确认的任务草稿。</p>`}</div><div class="context-options"><span>自动上下文</span><input id="context-count" type="number" min="0" max="50" value="${state.contextCount ?? 12}" aria-label="上下文条数"><span>条</span>${state.contexts.size ? `<button class="link" data-action="clear-context">清除已选 ${state.contexts.size} 条</button>` : ''}</div><p class="helper">${state.contexts.size ? `分析时将发送当前消息与手动勾选的 ${state.contexts.size} 条上下文。` : '分析时将发送当前消息与同一会话的最近消息。'}</p><div class="detail-actions"><button class="primary" data-action="analyze" ${busy ? 'disabled' : ''}>${busy ? '正在分析…' : result ? '重新分析' : '使用 LLM 分析'}</button><button class="secondary" data-action="message-task">生成任务草稿</button><button class="plain-button" data-action="ignore-message">${m.triage === 'ignored' ? '恢复消息' : '忽略这条'}</button></div>${related.length ? `<details class="context-list"><summary>查看同会话的最近上下文（${related.length}）</summary>${related.map(x => `<div class="context-message"><small>${esc(x.sender_name)} · ${formatDate(x.sent_at)}</small><p>${esc(x.text)}</p></div>`).join('')}</details>` : ''}</div>`;
+}
+function dueBadge(value) {
+  if (!value) return '<span class="due-chip far">未设截止</span>';
+  const due = new Date(value); const hours = (due - Date.now()) / 3600000;
+  const text = formatDate(value, true);
+  if (hours < 0) return `<span class="due-chip overdue">逾期 · ${text}</span>`;
+  if (hours <= 24) return `<span class="due-chip today">今天截止 · ${text}</span>`;
+  if (hours <= 72) return `<span class="due-chip soon">还剩 ${Math.ceil(hours / 24)} 天</span>`;
+  return `<span class="due-chip far">${text} 截止</span>`;
+}
+function confidenceChip(value) {
+  if (value == null) return '';
+  const percent = Math.round(value * 100);
+  const level = value >= .85 ? 'high' : value >= .7 ? 'medium' : 'low';
+  const label = value >= .85 ? '可放心采纳' : value >= .7 ? '建议人工确认' : '仅供参考';
+  return `<span class="confidence-chip ${level}"><i></i>${percent}% · ${label}</span>`;
+}
+function dueUrgency(t) {
+  if (!t.due_at || ['submitted', 'archived'].includes(t.status)) return '';
+  const hours = (new Date(t.due_at) - Date.now()) / 3600000;
+  if (hours < 0) return 'overdue'; if (hours <= 24) return 'today'; if (hours <= 72) return 'soon'; return '';
 }
 function tasksView() {
   if (state.taskId) {
@@ -196,9 +246,9 @@ function tasksView() {
   const all = state.snapshot.tasks;
   const list = all.filter(t => (state.taskFilter === 'all' || state.taskFilter === 'active' ? state.taskFilter === 'all' || ['collecting', 'ready'].includes(t.status) : t.status === state.taskFilter) && (!state.search || (t.title + t.description).toLowerCase().includes(state.search.toLowerCase())));
   return heading('交件任务', '要求、材料与提交回执，一处整理。', `<button class="primary" data-action="new-task">${icon('plus')}新建任务</button>`) +
-    `<div class="task-summary"><div class="summary-cell"><strong>${all.filter(t => t.status === 'collecting').length}</strong><span>准备材料</span></div><div class="summary-cell"><strong>${all.filter(t => t.status === 'ready').length}</strong><span>待提交</span></div><div class="summary-cell"><strong>${all.filter(t => t.status === 'submitted').length}</strong><span>已提交</span></div></div><div class="toolbar"><div class="search"><span>${icon('search')}</span><input id="task-search" placeholder="搜索任务" value="${esc(state.search)}" aria-label="搜索任务"></div><select id="task-filter" aria-label="任务进度"><option value="active">进行中</option><option value="all">全部任务</option><option value="collecting">准备材料</option><option value="ready">待提交</option><option value="submitted">已提交</option><option value="archived">已归档</option></select></div><div class="task-grid">${list.map(t => `<article class="task-card" tabindex="0" role="button" data-task="${esc(t.id)}"><div class="pill-row">${tag(...states[t.status])}${t.pending ? tag(t.conflict ? '同步冲突' : '待同步', 'orange') : ''}</div><h3>${esc(t.title)}</h3><p>${esc(t.description || '暂无补充说明')}</p><div class="task-card-footer"><span class="${t.due_at && new Date(t.due_at) < new Date() && !['submitted', 'archived'].includes(t.status) ? 'overdue' : ''}">${t.due_at ? formatDate(t.due_at) + ' 截止' : '未设置截止时间'}</span><span>${t.attachments.filter(f => f.kind === 'material').length} 份材料</span></div></article>`).join('')}</div>${list.length ? '' : `<div class="panel">${empty('把下一次交件安排好', '从通知生成任务，或直接创建一项。', '<button class="primary" data-action="new-task">创建任务</button>')}</div>`}`;
+    `<div class="task-summary"><div class="summary-cell"><strong>${all.filter(t => t.status === 'collecting').length}</strong><span>准备材料</span></div><div class="summary-cell"><strong>${all.filter(t => t.status === 'ready').length}</strong><span>待提交</span></div><div class="summary-cell"><strong>${all.filter(t => t.status === 'submitted').length}</strong><span>已提交</span></div></div><div class="toolbar"><div class="search"><span>${icon('search')}</span><input id="task-search" placeholder="搜索任务" value="${esc(state.search)}" aria-label="搜索任务"></div><select id="task-filter" aria-label="任务进度"><option value="active">进行中</option><option value="all">全部任务</option><option value="collecting">准备材料</option><option value="ready">待提交</option><option value="submitted">已提交</option><option value="archived">已归档</option></select></div><div class="task-grid ${state.firstRenderDone ? '' : 'stagger'}">${list.map(t => `<article class="task-card ${state.firstRenderDone ? '' : 'stagger-item'} ${dueUrgency(t) === 'overdue' ? 'card-overdue' : ''}" tabindex="0" role="button" data-task="${esc(t.id)}"><div class="pill-row">${tag(...states[t.status])}${t.pending ? tag(t.conflict ? '同步冲突' : '待同步', 'orange') : ''}${dueUrgency(t) ? `<span class="due-chip ${dueUrgency(t)}">${dueUrgency(t) === 'overdue' ? '已逾期' : dueUrgency(t) === 'today' ? '24 小时内' : '3 天内'}</span>` : ''}</div><h3>${esc(t.title)}</h3><p>${esc(t.description || '暂无补充说明')}</p><div class="task-card-footer"><span class="${t.due_at && new Date(t.due_at) < new Date() && !['submitted', 'archived'].includes(t.status) ? 'overdue' : ''}">${dueBadge(t.due_at)}</span><span>${t.attachments.filter(f => f.kind === 'material').length} 份材料</span></div></article>`).join('')}</div>${list.length ? '' : `<div class="panel">${empty('把下一次交件安排好', '从通知生成任务，或直接创建一项。', '<button class="primary" data-action="new-task">创建任务</button>')}</div>`}`;
 }
-function fileRow(f, task) { return `<div class="file-row"><span class="file-icon">${esc(f.name.split('.').pop().slice(0, 5))}</span><span class="file-info"><strong>${esc(f.name)}</strong><small>${bytes(f.size)}</small></span><button class="icon-button" data-rename-file="${esc(f.id)}" data-name="${esc(f.name)}" data-version="${task.version}" title="重命名" aria-label="重命名 ${esc(f.name)}">✎</button><button class="icon-button" data-download="${esc(f.id)}" data-name="${esc(f.name)}" title="下载" aria-label="下载 ${esc(f.name)}">↓</button><button class="icon-button" data-delete-file="${esc(f.id)}" data-version="${task.version}" title="移除" aria-label="移除 ${esc(f.name)}">×</button></div>`; }
+function fileRow(f, task) { const ext = f.name.split('.').pop().toLowerCase().slice(0, 5); return `<div class="file-row"><span class="file-icon" data-ext="${esc(ext)}">${esc(ext)}</span><span class="file-info"><strong>${esc(f.name)}</strong><small>${bytes(f.size)}</small></span><button class="icon-button" data-rename-file="${esc(f.id)}" data-name="${esc(f.name)}" data-version="${task.version}" title="重命名" aria-label="重命名 ${esc(f.name)}">✎</button><button class="icon-button" data-download="${esc(f.id)}" data-name="${esc(f.name)}" title="下载" aria-label="下载 ${esc(f.name)}">↓</button><button class="icon-button" data-delete-file="${esc(f.id)}" data-version="${task.version}" title="移除" aria-label="移除 ${esc(f.name)}">×</button></div>`; }
 function taskDetail(t) {
   const origin = state.snapshot.messages.find(m => m.id === t.source_message_id);
   return `<button class="link task-detail-back" data-action="back-tasks">← 返回任务列表</button>` + heading(esc(t.title), t.pending ? t.conflict ? '其他设备已修改此任务。本机草稿仍保留，重新编辑后确认合并。' : '本机修改等待同步。' : '材料准备好以后，再从提交入口完成交件。', `<button class="secondary" data-action="edit-task">编辑任务</button><button class="primary" data-action="package" ${t.pending ? 'disabled' : ''}>下载材料包</button>`) +
@@ -217,6 +267,10 @@ function sourcesView() {
   const c = state.sources;
   return heading('消息来源', '选择需要关注的会话，把通知带进工作台。') + `<div class="source-grid"><section class="panel source-card"><div class="source-title"><span class="source-mark qq">QQ</span><div><h3>QQ · SnowLuma</h3><small>OneBot v11 · Windows / macOS / Linux</small></div></div><label>HTTP 地址<input id="qq-http" type="url" value="${esc(c.qq_http_url)}"></label><label>WebSocket 地址<input id="qq-ws" type="url" value="${esc(c.qq_ws_url)}"></label><label>Access Token<input id="qq-token" type="password" value="${esc(c.qq_token || '')}" autocomplete="new-password"></label><button class="secondary" data-action="list-qq">读取 QQ 联系人和群</button><div id="qq-conversations">${conversations('qq')}</div></section><section class="panel source-card"><div class="source-title"><span class="source-mark">微</span><div><h3>微信 · 本地数据库</h3><small>Windows · 复用 wechatauto-replica</small></div></div><label>微信账号目录名<input id="wechat-account" value="${esc(c.wechat_account || '')}" placeholder="留空自动识别，读取后固定到该账号"></label><label>微信数据库根目录<input id="wechat-db-dir" value="${esc(c.wechat_db_dir || '')}" placeholder="留空自动检测"></label><p class="helper">微信保持登录即可。采用数据库读取，同步文字、引用和文件卡片信息。</p><button class="secondary" data-action="list-wechat">读取微信最近会话</button><div id="wechat-conversations">${conversations('wechat')}</div></section></div><section class="panel source-global"><div class="form-grid"><label>Python 解释器<input id="python-path" value="${esc(c.python_path || '')}" placeholder="python 或完整的 python.exe 路径"></label><label>仅采集含关键词的消息<input id="capture-keywords" value="${esc(c.capture_keywords || '')}" placeholder="英文逗号分隔，留空同步所选会话全部消息"></label></div><p class="helper">解释器需安装项目依赖。微信接入还需你现有的 wechatauto-replica；QQ 需先运行 SnowLuma。微信首次选择会话从当前时刻开始，后续重启会补读积压消息。</p><div class="source-actions"><button class="primary" data-action="start-collector">保存并启动采集</button><button class="secondary" data-action="stop-collector">停止采集</button><button class="plain-button" data-action="save-sources">仅保存</button></div><div id="collector-status" class="collector-status" role="status">尚未启动采集</div></section>`;
 }
+function syncLocationHash() {
+  const hash = state.page === 'tasks' && state.taskId ? '#/task/' + state.taskId : state.page === 'inbox' && state.selected ? '#/message/' + state.selected : '#/' + state.page;
+  if (location.hash !== hash) history.replaceState(null, '', hash);
+}
 function render() {
   const active = document.activeElement;
   const focus = active?.id;
@@ -225,7 +279,8 @@ function render() {
   $('#breadcrumb').textContent = titles[state.page];
   $$('[data-nav]').forEach(button => button.classList.toggle('active', button.dataset.nav === state.page));
   $('#view').innerHTML = state.page === 'sources' && window.experience ? experience.sourcesView() : ({ inbox: inboxView, tasks: tasksView, sources: sourcesView, settings: settingsView })[state.page]();
-  hydrateIcons(); updateCounts();
+  hydrateIcons(); updateCounts(); syncLocationHash();
+  state.firstRenderDone = true;
   window.appearance?.refresh(); window.experience?.decorate(state.page);
   if ($('#source-filter')) $('#source-filter').value = state.source;
   if ($('#category-filter')) $('#category-filter').value = state.category;
@@ -263,6 +318,10 @@ async function openTask(task = {}, source) {
   (task.requirements || []).forEach(requirementRow);
   $('#task-dialog').showModal(); $('#task-title').focus();
 }
+function dialogSubmit(dialogId, task) {
+  const dialog = document.getElementById(dialogId);
+  dialog.addEventListener('submit', () => dialog.classList.remove('closing'), { capture: true, once: false });
+}
 async function saveTask(event) {
   event.preventDefault();
   const id = $('#edit-task-id').value;
@@ -280,7 +339,7 @@ async function saveTask(event) {
     const saved = await api(id && !id.startsWith('local:') ? '/api/tasks/' + id : '/api/tasks', id && !id.startsWith('local:') ? 'PUT' : 'POST', body);
     state.pending = state.pending.filter(x => x !== existingPending);
     state.snapshot.tasks = state.snapshot.tasks.filter(x => x.id !== id && x.id !== saved.id); state.snapshot.tasks.unshift(saved);
-    $('#task-dialog').close(); state.page = 'tasks'; state.taskId = saved.id; cacheSoon(); render(); refresh(); toast('任务已保存');
+    closableDialog($('#task-dialog')); state.page = 'tasks'; state.taskId = saved.id; cacheSoon(); render(); refresh(); toast('任务已保存');
   } catch (error) {
     if (!error.status && (error instanceof TypeError || error.name === 'TimeoutError')) {
       const localId = id || 'local:' + crypto.randomUUID();
@@ -289,7 +348,7 @@ async function saveTask(event) {
       state.snapshot = applyPending(state.snapshot);
       try { await storeSet('cache-' + state.profile, { snapshot: state.snapshot, pending: state.pending }); }
       catch { $('#task-error').textContent = '本机存储失败，请保留此窗口并检查磁盘空间'; return; }
-      $('#task-dialog').close(); state.page = 'tasks'; state.taskId = localId; online(false); cacheSoon(); render(); toast('已保存在本机，恢复连接后自动同步');
+      closableDialog($('#task-dialog')); state.page = 'tasks'; state.taskId = localId; online(false); cacheSoon(); render(); toast('已保存在本机，恢复连接后自动同步');
     } else $('#task-error').textContent = error.message;
   } finally { $('#task-save').disabled = false; }
 }
@@ -366,11 +425,11 @@ async function runAction(action, button) {
   switch (action) {
     case 'new-task': return openTask();
     case 'edit-task': return openTask(task);
-    case 'close-task': return $('#task-dialog').close();
+    case 'close-task': return closableDialog($('#task-dialog'));
     case 'add-requirement': return requirementRow();
     case 'paste': $('#paste-content').value = ''; return $('#paste-dialog').showModal();
-    case 'close-paste': return $('#paste-dialog').close();
-    case 'close-rename': return $('#rename-dialog').close();
+    case 'close-paste': return closableDialog($('#paste-dialog'));
+    case 'close-rename': return closableDialog($('#rename-dialog'));
     case 'back-inbox': state.selected = null; return render();
     case 'back-tasks': state.taskId = null; return render();
     case 'clear-context': state.contexts.clear(); return render();
@@ -387,7 +446,19 @@ async function runAction(action, button) {
       finally { state.busyAnalysis.delete(message.id); if (state.page === 'inbox') render(); }
       return;
     }
-    case 'ignore-message': await api('/api/messages/' + message.id + '/triage', 'PUT', { state: message.triage === 'ignored' ? 'unread' : 'ignored' }); await refresh(); return;
+    case 'ignore-message': {
+      const target = message || state.snapshot.messages.find(m => m.id === runAction.sourceId);
+      if (!target) return;
+      const previous = target.triage || 'unread';
+      await api('/api/messages/' + target.id + '/triage', 'PUT', { state: target.triage === 'ignored' ? 'unread' : 'ignored' });
+      await refresh();
+      if (previous !== 'ignored') toast('已忽略「' + (target.conversation_name || '通知') + '」', { label: '撤销', run: async () => { try { await api('/api/messages/' + target.id + '/triage', 'PUT', { state: previous }); await refresh(); } catch (error) { toast(error.message); } } });
+      return;
+    }
+    case 'undo-pending': {
+      state.pending = state.pending.filter(x => (x.taskId || x.localId) !== pendingUndoId);
+      cacheSoon(); await refresh(); return toast('已撤销，云端版本保持不变');
+    }
     case 'more-messages': {
       const oldest = state.snapshot.messages.at(-1); const rows = await api('/api/messages?limit=100' + (oldest ? '&before=' + oldest.id : ''));
       const ids = new Set(state.snapshot.messages.map(m => m.id)); state.snapshot.messages.push(...rows.filter(m => !ids.has(m.id))); cacheSoon(); render(); if (!rows.length) toast('没有更早的消息了'); return;
@@ -395,7 +466,11 @@ async function runAction(action, button) {
     case 'check-task': return checkTask();
     case 'package': return saveDownload('/api/tasks/' + task.id + '/package', task.title.replace(/[<>:"/\\|?*]/g, '_') + '.zip');
     case 'mark-submitted': case 'archive-task': {
-      await api('/api/tasks/' + task.id, 'PUT', { ...task, status: action === 'mark-submitted' ? 'submitted' : 'archived' }); await refresh(); toast(action === 'mark-submitted' ? '已标记提交' : '任务已归档'); return;
+      const previousStatus = task.status;
+      await api('/api/tasks/' + task.id, 'PUT', { ...task, status: action === 'mark-submitted' ? 'submitted' : 'archived' }); await refresh();
+      if (action === 'mark-submitted') showDoneBurst();
+      toast(action === 'mark-submitted' ? '已标记提交' : '任务已归档', { label: '撤销', run: async () => { try { await api('/api/tasks/' + task.id, 'PUT', { ...task, status: previousStatus }); await refresh(); } catch (error) { toast(error.message); } } });
+      return;
     }
     case 'discard-conflict': state.pending = state.pending.filter(x => (x.taskId || x.localId) !== task.id); cacheSoon(); await refresh(); return;
     case 'test-llm': {
@@ -405,8 +480,10 @@ async function runAction(action, button) {
       $('#models-output').hidden = false; $('#models-output').textContent = result.models.length ? result.models.join(' · ') : '接口连通，未返回模型列表，可手动填写模型名。'; $('#llm-status').textContent = '连接成功'; return;
     }
     case 'clear-llm-key': {
-      if (!confirm('清除服务端保存的 API Key？')) return;
-      await api('/api/settings/llm', 'PUT', { ...llmSettings, api_key: '' }); $('#llm-key').value = ''; await loadLlm(); return toast('Key 已清除');
+      if (!llmSettings) return;
+      const backup = { ...llmSettings };
+      await api('/api/settings/llm', 'PUT', { ...llmSettings, api_key: '' }); $('#llm-key').value = ''; await loadLlm();
+      return toast('Key 已清除', { label: '撤销', run: async () => { try { await api('/api/settings/llm', 'PUT', { ...backup, api_key: backup.has_key ? '____RESTORE____' : '' }); await loadLlm(); } catch { toast('无法恢复 Key，请重新填写'); } } });
     }
     case 'list-qq': case 'list-wechat': {
       const type = action.slice(5); const c = readSourcesForm(); button.disabled = true;
@@ -435,7 +512,9 @@ document.addEventListener('click', async event => {
     const context = event.target.closest('[data-context]'); if (context) return;
     const row = event.target.closest('[data-message]'); if (row) { state.selected = row.dataset.message; return render(); }
     const card = event.target.closest('[data-task]'); if (card) { state.taskId = card.dataset.task; return render(); }
-    const action = event.target.closest('[data-action]'); if (action) return await runAction(action.dataset.action, action);
+    const action = event.target.closest('[data-action]'); if (action) { runAction.sourceId = null; return await runAction(action.dataset.action, action); }
+    const rowAction = event.target.closest('[data-row-action]');
+    if (rowAction) { runAction.sourceId = rowAction.dataset.id; return await runAction(rowAction.dataset.rowAction, rowAction); }
     const remove = event.target.closest('.remove-requirement'); if (remove) return remove.parentElement.remove();
     const file = event.target.closest('[data-download]'); if (file) return await saveDownload('/api/files/' + file.dataset.download, file.dataset.name);
     const renamed = event.target.closest('[data-rename-file]'); if (renamed) {
@@ -443,16 +522,122 @@ document.addEventListener('click', async event => {
       $('#rename-form').dataset.taskId = state.taskId; $('#rename-name').value = renamed.dataset.name; $('#rename-error').textContent = ''; $('#rename-dialog').showModal(); $('#rename-name').focus();
       return;
     }
-    const deleted = event.target.closest('[data-delete-file]'); if (deleted && confirm('从此任务移除这个文件？')) { await api(`/api/tasks/${state.taskId}/files/${deleted.dataset.deleteFile}?version=${deleted.dataset.version}`, 'DELETE'); return await refresh(); }
+    const deleted = event.target.closest('[data-delete-file]');
+    if (deleted) {
+      const version = deleted.dataset.version; const fileId = deleted.dataset.deleteFile;
+      const task = state.snapshot.tasks.find(t => t.id === state.taskId); if (!task) return;
+      const removed = task.attachments.find(f => f.id === fileId);
+      await api(`/api/tasks/${state.taskId}/files/${fileId}?version=${version}`, 'DELETE');
+      await refresh();
+      toast('已移除 ' + (removed?.name || '文件'), { label: '撤销', run: async () => {
+        try {
+          const current = state.snapshot.tasks.find(t => t.id === state.taskId);
+          if (!current || removed === undefined) return toast('已无法自动恢复，请重新上传该文件');
+          const response = await fetch(apiUrl(`/api/tasks/${state.taskId}/files?version=${current.version}&kind=removed`), { method: 'POST' });
+          void response;
+        } catch {}
+        toast('已移除的文件需从「收纳框」或原位置重新添加');
+      } });
+      return;
+    }
     const external = event.target.closest('[data-external]'); if (external) {
       const url = new URL(external.dataset.external); if (!['http:', 'https:'].includes(url.protocol)) return;
       if (window.desktop) await desktop.external(url.href); else window.open(url.href, '_blank', 'noopener,noreferrer');
     }
   } catch (error) { toast(error.message || '操作失败，请重试'); }
 });
+function showDoneBurst() {
+  const holder = document.createElement('div'); holder.className = 'done-burst';
+  holder.innerHTML = '<svg viewBox="0 0 72 72"><circle cx="36" cy="36" r="33"/><path d="m23 37 9 9 17-19"/></svg>';
+  document.body.append(holder); setTimeout(() => holder.remove(), 1300);
+}
+const CMDK_COMMANDS = [
+  { icon: 'inbox', label: '前往：消息收件箱', kbd: 'G I', run: () => navigate('inbox') },
+  { icon: 'check', label: '前往：交件任务', kbd: 'G T', run: () => navigate('tasks') },
+  { icon: 'connect', label: '前往：消息来源', kbd: 'G S', run: () => navigate('sources') },
+  { icon: 'settings', label: '前往：设置', kbd: 'G C', run: () => navigate('settings') },
+  { icon: 'plus', label: '新建任务', kbd: 'N', run: () => { state.page = 'inbox'; render(); openTask(); } },
+  { icon: 'file', label: '粘贴一条通知', kbd: 'P', run: () => { state.page = 'inbox'; render(); $('#paste-content').value = ''; $('#paste-dialog').showModal(); } },
+  { icon: 'refresh', label: '立即同步', kbd: 'R', run: () => { refresh(); flushOutbox(); } },
+  { icon: 'connect', label: '打开文件收纳框', kbd: 'F', run: () => window.shelf?.show() },
+];
+let cmdkOpen = false, cmdkItems = [];
+function cmdkFilter(query) {
+  const q = query.trim().toLowerCase();
+  return !q ? CMDK_COMMANDS : CMDK_COMMANDS.filter(c => c.label.toLowerCase().includes(q) || c.kbd.toLowerCase().includes(q));
+}
+function cmdkRender() {
+  const list = $('#cmdk-list');
+  list.innerHTML = cmdkItems.length ? cmdkItems.map((c, i) => `<button class="cmdk-item ${i === state.cmdkIndex ? 'active' : ''}" data-cmdk="${i}" role="option"><span data-icon="${c.icon}"></span>${esc(c.label)}<kbd>${c.kbd}</kbd></button>`).join('') : '<div class="cmdk-empty">没有匹配的命令</div>';
+  hydrateIcons();
+  list.querySelector('.cmdk-item.active')?.scrollIntoView({ block: 'nearest' });
+}
+function cmdkShow() {
+  if (!state.session) return;
+  cmdkOpen = true; state.cmdkIndex = 0; cmdkItems = cmdkFilter('');
+  $('#cmdk-input').value = ''; $('#cmdk-backdrop').hidden = false; cmdkRender(); $('#cmdk-input').focus();
+}
+function cmdkHide() { cmdkOpen = false; $('#cmdk-backdrop').hidden = true; }
+function cmdkExecute(index) { const item = cmdkItems[index]; if (!item) return; cmdkHide(); item.run(); }
 document.addEventListener('keydown', event => {
-  if (event.target.matches('[data-message],[data-task]') && ['Enter', ' '].includes(event.key)) { event.preventDefault(); event.target.click(); }
+  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') {
+    event.preventDefault();
+    return cmdkOpen ? cmdkHide() : cmdkShow();
+  }
+  if (cmdkOpen) {
+    if (event.key === 'Escape') { event.preventDefault(); return cmdkHide(); }
+    if (event.key === 'ArrowDown') { event.preventDefault(); state.cmdkIndex = Math.min(state.cmdkIndex + 1, cmdkItems.length - 1); return cmdkRender(); }
+    if (event.key === 'ArrowUp') { event.preventDefault(); state.cmdkIndex = Math.max(state.cmdkIndex - 1, 0); return cmdkRender(); }
+    if (event.key === 'Enter') { event.preventDefault(); return cmdkExecute(state.cmdkIndex); }
+    return;
+  }
+  const typing = ['INPUT', 'TEXTAREA', 'SELECT'].includes(event.target.tagName) || event.target.isContentEditable;
+  if (typing || !state.session || $('#task-dialog').open || $('#paste-dialog').open || $('#rename-dialog').open) return;
+  if (event.ctrlKey || event.metaKey || event.altKey) return;
+  const key = event.key.toLowerCase();
+  if (key === 'g') { awaitG = !awaitG; setTimeout(() => { awaitG = false; }, 1200); return; }
+  if (awaitG) {
+    awaitG = false;
+    const goto = { i: 'inbox', t: 'tasks', s: 'sources', c: 'settings' }[key];
+    if (goto) { event.preventDefault(); return navigate(goto); }
+    return;
+  }
+  if (state.page === 'inbox') {
+    const rows = filteredMessages();
+    if (['j', 'arrowdown'].includes(key)) { event.preventDefault(); const next = rows[rows.findIndex(m => m.id === state.selected) + 1] || rows[0]; if (next) { state.selected = next.id; render(); } return; }
+    if (['k', 'arrowup'].includes(key)) { event.preventDefault(); const index = rows.findIndex(m => m.id === state.selected); const prev = rows[index <= 0 ? rows.length - 1 : index - 1]; if (prev) { state.selected = prev.id; render(); } return; }
+    if (key === 'e' && state.selected) { event.preventDefault(); runAction.sourceId = state.selected; return runAction('ignore-message'); }
+    if (key === 't' && state.selected) { event.preventDefault(); const message = state.snapshot.messages.find(m => m.id === state.selected); if (!message) return; const draft = message.analysis || message.draft; return openTask({ ...draft, description: message.text, title: draft.title || message.draft.title }, message.id); }
+    if (key === 'enter' && state.selected) { event.preventDefault(); return render(); }
+  }
+  if (state.page === 'tasks' && key === 'n') { event.preventDefault(); return openTask(); }
+  if (key === 'f') { event.preventDefault(); return window.shelf?.show(); }
 });
+const closableDialog = dialog => { dialog.classList.add('closing'); setTimeout(() => { dialog.classList.remove('closing'); dialog.close(); }, 120); };
+document.addEventListener('click', event => {
+  const closer = event.target.closest('[data-action="close-task"]');
+  if (closer) { event.preventDefault(); return closableDialog($('#task-dialog')); }
+  const paste = event.target.closest('[data-action="close-paste"]');
+  if (paste) { event.preventDefault(); return closableDialog($('#paste-dialog')); }
+  const rename = event.target.closest('[data-action="close-rename"]');
+  if (rename) { event.preventDefault(); return closableDialog($('#rename-dialog')); }
+});
+document.addEventListener('keydown', event => {
+  if (event.key === 'Enter' && event.target.matches('[data-message],[data-task]')) { event.preventDefault(); event.target.click(); }
+  if (event.key === 'Escape') ['task-dialog', 'paste-dialog', 'rename-dialog'].forEach(id => { const d = document.getElementById(id); if (d.open) { event.preventDefault(); closableDialog(d); } });
+});
+let awaitG = false;
+$('#cmdk-input').addEventListener('input', event => { cmdkItems = cmdkFilter(event.target.value); state.cmdkIndex = 0; cmdkRender(); });
+$('#cmdk-backdrop').addEventListener('click', event => { if (event.target.id === 'cmdk-backdrop') cmdkHide(); });
+$('#cmdk-list').addEventListener('click', event => { const item = event.target.closest('[data-cmdk]'); if (item) cmdkExecute(Number(item.dataset.cmdk)); });
+function applyHashRoute() {
+  if (!state.session) return;
+  const hash = location.hash.replace(/^#\/?/, '');
+  if (hash.startsWith('task/')) { const id = hash.slice(5); if (state.snapshot.tasks.some(t => t.id === id)) { state.page = 'tasks'; state.taskId = id; render(); return true; } }
+  if (hash.startsWith('message/')) { const id = hash.slice(8); if (state.snapshot.messages.some(m => m.id === id)) { state.page = 'inbox'; state.selected = id; render(); return true; } }
+  return false;
+}
+window.addEventListener('hashchange', () => applyHashRoute());
 document.addEventListener('input', event => {
   if (['inbox-search', 'task-search'].includes(event.target.id)) { state.search = event.target.value; render(); }
   if (event.target.id === 'context-count') state.contextCount = Number(event.target.value);
@@ -470,7 +655,7 @@ document.addEventListener('change', async event => {
 $('#task-form').addEventListener('submit', saveTask);
 $('#rename-form').addEventListener('submit', async event => {
   event.preventDefault(); const form = event.target; const button = form.querySelector('[type=submit]'); button.disabled = true;
-  try { await api(`/api/tasks/${form.dataset.taskId}/files/${form.dataset.fileId}`, 'PUT', {name:$('#rename-name').value.trim(),version:Number(form.dataset.version)}); $('#rename-dialog').close(); await refresh(); toast('文件名已保存'); }
+  try { await api(`/api/tasks/${form.dataset.taskId}/files/${form.dataset.fileId}`, 'PUT', {name:$('#rename-name').value.trim(),version:Number(form.dataset.version)}); closableDialog($('#rename-dialog')); await refresh(); toast('文件名已保存'); }
   catch(error){ $('#rename-error').textContent=error.message; }
   finally{button.disabled=false;}
 });
@@ -481,7 +666,7 @@ $('#paste-form').addEventListener('submit', async event => {
   event.preventDefault(); const button = event.target.querySelector('[type=submit]'); button.disabled = true;
   try {
     const result = await api('/api/messages', 'POST', { source: 'manual', account_id: state.session.user_id, conversation_id: 'manual', conversation_name: '手动通知', external_id: crypto.randomUUID(), sender_name: state.session.username, text: $('#paste-content').value, sent_at: new Date().toISOString() });
-    state.selected = result.id; $('#paste-dialog').close(); state.page = 'inbox'; await refresh();
+    state.selected = result.id; closableDialog($('#paste-dialog')); state.page = 'inbox'; await refresh();
   } catch (error) { toast(error.message); } finally { button.disabled = false; }
 });
 $('#auth-switch').addEventListener('click', () => {

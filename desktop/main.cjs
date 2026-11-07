@@ -175,10 +175,11 @@ app.whenReady().then(async () => {
   Menu.setApplicationMenu(null);
   const area=screen.getPrimaryDisplay().workAreaSize;
   window = new BrowserWindow({ width:Math.max(360,Math.min(1360,area.width-48)), height:Math.max(520,Math.min(900,area.height-48)), minWidth:360, minHeight:520,
-    title: '交件箱', backgroundColor:nativeTheme.shouldUseDarkColors?'#101914':'#f5f7f3', autoHideMenuBar: true,
+    title: '交件箱', backgroundColor:nativeTheme.shouldUseDarkColors?'#101914':'#f5f7f3', autoHideMenuBar: true, show: false,
     ...(process.platform==='win32'?{titleBarStyle:'hidden',titleBarOverlay:{color:nativeTheme.shouldUseDarkColors?'#141f19':'#eff3ed',symbolColor:nativeTheme.shouldUseDarkColors?'#dce9df':'#34483a',height:40}}:{}),
     webPreferences: { preload: path.join(__dirname, 'preload.cjs'), contextIsolation: true, sandbox: true, nodeIntegration: false },
   });
+  window.once('ready-to-show', () => window.show());
   window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   window.webContents.on('will-navigate', event => event.preventDefault());
   window.webContents.session.setPermissionRequestHandler((_web, _permission, callback) => callback(false));
