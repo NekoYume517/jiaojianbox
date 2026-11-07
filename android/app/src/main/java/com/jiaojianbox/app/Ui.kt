@@ -15,6 +15,11 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.clickable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.ui.platform.LocalContext
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import java.time.format.DateTimeFormatter
 import java.time.ZonedDateTime
 import java.time.format.FormatStyle
@@ -76,6 +81,20 @@ fun MainScaffold(
     }
 
     LaunchedEffect(session) { reload() }
+
+    // 日历自动同步：每次打开/回到前台，把云端提醒时间对齐到系统日历
+    val context = LocalContext.current
+    LaunchedEffect(session) {
+        ReminderSync.syncOnStart(context, store)
+    }
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) ReminderSync.syncOnStart(context, store)
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
 
     // 分享/拖进来的文件：上传收纳 → 自动 AI 归类
     LaunchedEffect(pendingUris) {

@@ -24,7 +24,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        initAppContext(this)
+        AppContext.init(this)
         handleIncoming(intent)
         setContent {
             MaterialTheme(colorScheme = JjbTheme.light()) {

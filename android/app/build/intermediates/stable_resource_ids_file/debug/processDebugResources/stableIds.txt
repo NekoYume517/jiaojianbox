@@ -267,6 +267,7 @@ com.jiaojianbox.app:attr/route = 0x7f010021
 com.jiaojianbox.app:string/m3c_date_picker_switch_to_year_selection = 0x7f080028
 com.jiaojianbox.app:drawable/ic_call_decline = 0x7f040004
 com.jiaojianbox.app:id/accessibility_custom_action_28 = 0x7f050016
+com.jiaojianbox.app:xml/network_security_config = 0x7f0b0000
 com.jiaojianbox.app:id/title = 0x7f050053
 com.jiaojianbox.app:drawable/notify_panel_notification_icon_bg = 0x7f040012
 com.jiaojianbox.app:string/m3c_time_picker_hour = 0x7f08003c

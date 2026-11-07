@@ -34,7 +34,7 @@
 21-->[androidx.core:core:1.13.1] E:\gradle-home\caches\9.3.1\transforms\28839d70cb036ff20d033842115883b0\workspace\transformed\core-1.13.1\AndroidManifest.xml:26:22-94
 22
 23    <application
-23-->C:\Users\zzy\Documents\Codex\2026-11-07\jie-h\outputs\jiaojianbox\android\app\src\main\AndroidManifest.xml:11:5-49:19
+23-->C:\Users\zzy\Documents\Codex\2026-11-07\jie-h\outputs\jiaojianbox\android\app\src\main\AndroidManifest.xml:11:5-50:19
 24        android:allowBackup="true"
 24-->C:\Users\zzy\Documents\Codex\2026-11-07\jie-h\outputs\jiaojianbox\android\app\src\main\AndroidManifest.xml:12:9-35
 25        android:appComponentFactory="androidx.core.app.CoreComponentFactory"
@@ -43,153 +43,155 @@
 27        android:extractNativeLibs="false"
 28        android:label="@string/app_name"
 28-->C:\Users\zzy\Documents\Codex\2026-11-07\jie-h\outputs\jiaojianbox\android\app\src\main\AndroidManifest.xml:13:9-41
-29        android:supportsRtl="true"
-29-->C:\Users\zzy\Documents\Codex\2026-11-07\jie-h\outputs\jiaojianbox\android\app\src\main\AndroidManifest.xml:14:9-35
-30        android:theme="@style/Theme.JiaojianBox" >
-30-->C:\Users\zzy\Documents\Codex\2026-11-07\jie-h\outputs\jiaojianbox\android\app\src\main\AndroidManifest.xml:15:9-49
-31        <activity
-31-->C:\Users\zzy\Documents\Codex\2026-11-07\jie-h\outputs\jiaojianbox\android\app\src\main\AndroidManifest.xml:18:9-48:20
-32            android:name="com.jiaojianbox.app.MainActivity"
-32-->C:\Users\zzy\Documents\Codex\2026-11-07\jie-h\outputs\jiaojianbox\android\app\src\main\AndroidManifest.xml:19:13-41
-33            android:exported="true"
-33-->C:\Users\zzy\Documents\Codex\2026-11-07\jie-h\outputs\jiaojianbox\android\app\src\main\AndroidManifest.xml:20:13-36
-34            android:theme="@style/Theme.JiaojianBox"
-34-->C:\Users\zzy\Documents\Codex\2026-11-07\jie-h\outputs\jiaojianbox\android\app\src\main\AndroidManifest.xml:22:13-53
-35            android:windowSoftInputMode="adjustResize" >
-35-->C:\Users\zzy\Documents\Codex\2026-11-07\jie-h\outputs\jiaojianbox\android\app\src\main\AndroidManifest.xml:21:13-55
-36            <intent-filter>
-36-->C:\Users\zzy\Documents\Codex\2026-11-07\jie-h\outputs\jiaojianbox\android\app\src\main\AndroidManifest.xml:23:13-26:29
-37                <action android:name="android.intent.action.MAIN" />
-37-->C:\Users\zzy\Documents\Codex\2026-11-07\jie-h\outputs\jiaojianbox\android\app\src\main\AndroidManifest.xml:24:17-69
-37-->C:\Users\zzy\Documents\Codex\2026-11-07\jie-h\outputs\jiaojianbox\android\app\src\main\AndroidManifest.xml:24:25-66
-38
-39                <category android:name="android.intent.category.LAUNCHER" />
-39-->C:\Users\zzy\Documents\Codex\2026-11-07\jie-h\outputs\jiaojianbox\android\app\src\main\AndroidManifest.xml:25:17-77
-39-->C:\Users\zzy\Documents\Codex\2026-11-07\jie-h\outputs\jiaojianbox\android\app\src\main\AndroidManifest.xml:25:27-74
-40            </intent-filter>
-41            <!-- 接收系统分享：文件管理器「分享到交件箱」 -->
-42            <intent-filter>
-42-->C:\Users\zzy\Documents\Codex\2026-11-07\jie-h\outputs\jiaojianbox\android\app\src\main\AndroidManifest.xml:28:13-32:29
-43                <action android:name="android.intent.action.SEND" />
-43-->C:\Users\zzy\Documents\Codex\2026-11-07\jie-h\outputs\jiaojianbox\android\app\src\main\AndroidManifest.xml:29:17-69
-43-->C:\Users\zzy\Documents\Codex\2026-11-07\jie-h\outputs\jiaojianbox\android\app\src\main\AndroidManifest.xml:29:25-66
-44
-45                <category android:name="android.intent.category.DEFAULT" />
-45-->C:\Users\zzy\Documents\Codex\2026-11-07\jie-h\outputs\jiaojianbox\android\app\src\main\AndroidManifest.xml:30:17-76
-45-->C:\Users\zzy\Documents\Codex\2026-11-07\jie-h\outputs\jiaojianbox\android\app\src\main\AndroidManifest.xml:30:27-73
-46
-47                <data android:mimeType="*/*" />
-47-->C:\Users\zzy\Documents\Codex\2026-11-07\jie-h\outputs\jiaojianbox\android\app\src\main\AndroidManifest.xml:31:17-48
-47-->C:\Users\zzy\Documents\Codex\2026-11-07\jie-h\outputs\jiaojianbox\android\app\src\main\AndroidManifest.xml:31:23-45
-48            </intent-filter>
-49            <intent-filter>
-49-->C:\Users\zzy\Documents\Codex\2026-11-07\jie-h\outputs\jiaojianbox\android\app\src\main\AndroidManifest.xml:33:13-37:29
-50                <action android:name="android.intent.action.SEND_MULTIPLE" />
-50-->C:\Users\zzy\Documents\Codex\2026-11-07\jie-h\outputs\jiaojianbox\android\app\src\main\AndroidManifest.xml:34:17-78
-50-->C:\Users\zzy\Documents\Codex\2026-11-07\jie-h\outputs\jiaojianbox\android\app\src\main\AndroidManifest.xml:34:25-75
-51
-52                <category android:name="android.intent.category.DEFAULT" />
-52-->C:\Users\zzy\Documents\Codex\2026-11-07\jie-h\outputs\jiaojianbox\android\app\src\main\AndroidManifest.xml:30:17-76
-52-->C:\Users\zzy\Documents\Codex\2026-11-07\jie-h\outputs\jiaojianbox\android\app\src\main\AndroidManifest.xml:30:27-73
-53
-54                <data android:mimeType="*/*" />
-54-->C:\Users\zzy\Documents\Codex\2026-11-07\jie-h\outputs\jiaojianbox\android\app\src\main\AndroidManifest.xml:31:17-48
-54-->C:\Users\zzy\Documents\Codex\2026-11-07\jie-h\outputs\jiaojianbox\android\app\src\main\AndroidManifest.xml:31:23-45
-55            </intent-filter>
-56            <!-- 系统文件选择器直接打开 -->
-57            <intent-filter>
-57-->C:\Users\zzy\Documents\Codex\2026-11-07\jie-h\outputs\jiaojianbox\android\app\src\main\AndroidManifest.xml:39:13-47:29
-58                <action android:name="android.intent.action.VIEW" />
-58-->C:\Users\zzy\Documents\Codex\2026-11-07\jie-h\outputs\jiaojianbox\android\app\src\main\AndroidManifest.xml:40:17-69
-58-->C:\Users\zzy\Documents\Codex\2026-11-07\jie-h\outputs\jiaojianbox\android\app\src\main\AndroidManifest.xml:40:25-66
-59
-60                <category android:name="android.intent.category.DEFAULT" />
-60-->C:\Users\zzy\Documents\Codex\2026-11-07\jie-h\outputs\jiaojianbox\android\app\src\main\AndroidManifest.xml:30:17-76
-60-->C:\Users\zzy\Documents\Codex\2026-11-07\jie-h\outputs\jiaojianbox\android\app\src\main\AndroidManifest.xml:30:27-73
-61                <category android:name="android.intent.category.BROWSABLE" />
-61-->C:\Users\zzy\Documents\Codex\2026-11-07\jie-h\outputs\jiaojianbox\android\app\src\main\AndroidManifest.xml:42:17-78
-61-->C:\Users\zzy\Documents\Codex\2026-11-07\jie-h\outputs\jiaojianbox\android\app\src\main\AndroidManifest.xml:42:27-75
-62
-63                <data android:mimeType="application/pdf" />
-63-->C:\Users\zzy\Documents\Codex\2026-11-07\jie-h\outputs\jiaojianbox\android\app\src\main\AndroidManifest.xml:31:17-48
-63-->C:\Users\zzy\Documents\Codex\2026-11-07\jie-h\outputs\jiaojianbox\android\app\src\main\AndroidManifest.xml:31:23-45
-64                <data android:mimeType="application/zip" />
-64-->C:\Users\zzy\Documents\Codex\2026-11-07\jie-h\outputs\jiaojianbox\android\app\src\main\AndroidManifest.xml:31:17-48
-64-->C:\Users\zzy\Documents\Codex\2026-11-07\jie-h\outputs\jiaojianbox\android\app\src\main\AndroidManifest.xml:31:23-45
-65                <data android:mimeType="image/*" />
-65-->C:\Users\zzy\Documents\Codex\2026-11-07\jie-h\outputs\jiaojianbox\android\app\src\main\AndroidManifest.xml:31:17-48
-65-->C:\Users\zzy\Documents\Codex\2026-11-07\jie-h\outputs\jiaojianbox\android\app\src\main\AndroidManifest.xml:31:23-45
-66                <data android:mimeType="text/*" />
-66-->C:\Users\zzy\Documents\Codex\2026-11-07\jie-h\outputs\jiaojianbox\android\app\src\main\AndroidManifest.xml:31:17-48
-66-->C:\Users\zzy\Documents\Codex\2026-11-07\jie-h\outputs\jiaojianbox\android\app\src\main\AndroidManifest.xml:31:23-45
-67            </intent-filter>
-68        </activity>
-69
-70        <provider
-70-->[androidx.emoji2:emoji2:1.3.0] E:\gradle-home\caches\9.3.1\transforms\bb134e096d24283aedf100937a0d5ec1\workspace\transformed\emoji2-1.3.0\AndroidManifest.xml:24:9-32:20
-71            android:name="androidx.startup.InitializationProvider"
-71-->[androidx.emoji2:emoji2:1.3.0] E:\gradle-home\caches\9.3.1\transforms\bb134e096d24283aedf100937a0d5ec1\workspace\transformed\emoji2-1.3.0\AndroidManifest.xml:25:13-67
-72            android:authorities="com.jiaojianbox.app.androidx-startup"
-72-->[androidx.emoji2:emoji2:1.3.0] E:\gradle-home\caches\9.3.1\transforms\bb134e096d24283aedf100937a0d5ec1\workspace\transformed\emoji2-1.3.0\AndroidManifest.xml:26:13-68
-73            android:exported="false" >
-73-->[androidx.emoji2:emoji2:1.3.0] E:\gradle-home\caches\9.3.1\transforms\bb134e096d24283aedf100937a0d5ec1\workspace\transformed\emoji2-1.3.0\AndroidManifest.xml:27:13-37
-74            <meta-data
-74-->[androidx.emoji2:emoji2:1.3.0] E:\gradle-home\caches\9.3.1\transforms\bb134e096d24283aedf100937a0d5ec1\workspace\transformed\emoji2-1.3.0\AndroidManifest.xml:29:13-31:52
-75                android:name="androidx.emoji2.text.EmojiCompatInitializer"
-75-->[androidx.emoji2:emoji2:1.3.0] E:\gradle-home\caches\9.3.1\transforms\bb134e096d24283aedf100937a0d5ec1\workspace\transformed\emoji2-1.3.0\AndroidManifest.xml:30:17-75
-76                android:value="androidx.startup" />
-76-->[androidx.emoji2:emoji2:1.3.0] E:\gradle-home\caches\9.3.1\transforms\bb134e096d24283aedf100937a0d5ec1\workspace\transformed\emoji2-1.3.0\AndroidManifest.xml:31:17-49
-77            <meta-data
-77-->[androidx.lifecycle:lifecycle-process:2.8.7] E:\gradle-home\caches\9.3.1\transforms\747904bdf5c2560b8120034387b7ce33\workspace\transformed\lifecycle-process-2.8.7\AndroidManifest.xml:29:13-31:52
-78                android:name="androidx.lifecycle.ProcessLifecycleInitializer"
-78-->[androidx.lifecycle:lifecycle-process:2.8.7] E:\gradle-home\caches\9.3.1\transforms\747904bdf5c2560b8120034387b7ce33\workspace\transformed\lifecycle-process-2.8.7\AndroidManifest.xml:30:17-78
-79                android:value="androidx.startup" />
-79-->[androidx.lifecycle:lifecycle-process:2.8.7] E:\gradle-home\caches\9.3.1\transforms\747904bdf5c2560b8120034387b7ce33\workspace\transformed\lifecycle-process-2.8.7\AndroidManifest.xml:31:17-49
-80            <meta-data
-80-->[androidx.profileinstaller:profileinstaller:1.3.1] E:\gradle-home\caches\9.3.1\transforms\f1aefc9589917e87416e99f160a0dae7\workspace\transformed\profileinstaller-1.3.1\AndroidManifest.xml:29:13-31:52
-81                android:name="androidx.profileinstaller.ProfileInstallerInitializer"
-81-->[androidx.profileinstaller:profileinstaller:1.3.1] E:\gradle-home\caches\9.3.1\transforms\f1aefc9589917e87416e99f160a0dae7\workspace\transformed\profileinstaller-1.3.1\AndroidManifest.xml:30:17-85
-82                android:value="androidx.startup" />
-82-->[androidx.profileinstaller:profileinstaller:1.3.1] E:\gradle-home\caches\9.3.1\transforms\f1aefc9589917e87416e99f160a0dae7\workspace\transformed\profileinstaller-1.3.1\AndroidManifest.xml:31:17-49
-83        </provider>
-84
-85        <receiver
-85-->[androidx.profileinstaller:profileinstaller:1.3.1] E:\gradle-home\caches\9.3.1\transforms\f1aefc9589917e87416e99f160a0dae7\workspace\transformed\profileinstaller-1.3.1\AndroidManifest.xml:34:9-52:20
-86            android:name="androidx.profileinstaller.ProfileInstallReceiver"
-86-->[androidx.profileinstaller:profileinstaller:1.3.1] E:\gradle-home\caches\9.3.1\transforms\f1aefc9589917e87416e99f160a0dae7\workspace\transformed\profileinstaller-1.3.1\AndroidManifest.xml:35:13-76
-87            android:directBootAware="false"
-87-->[androidx.profileinstaller:profileinstaller:1.3.1] E:\gradle-home\caches\9.3.1\transforms\f1aefc9589917e87416e99f160a0dae7\workspace\transformed\profileinstaller-1.3.1\AndroidManifest.xml:36:13-44
-88            android:enabled="true"
-88-->[androidx.profileinstaller:profileinstaller:1.3.1] E:\gradle-home\caches\9.3.1\transforms\f1aefc9589917e87416e99f160a0dae7\workspace\transformed\profileinstaller-1.3.1\AndroidManifest.xml:37:13-35
-89            android:exported="true"
-89-->[androidx.profileinstaller:profileinstaller:1.3.1] E:\gradle-home\caches\9.3.1\transforms\f1aefc9589917e87416e99f160a0dae7\workspace\transformed\profileinstaller-1.3.1\AndroidManifest.xml:38:13-36
-90            android:permission="android.permission.DUMP" >
-90-->[androidx.profileinstaller:profileinstaller:1.3.1] E:\gradle-home\caches\9.3.1\transforms\f1aefc9589917e87416e99f160a0dae7\workspace\transformed\profileinstaller-1.3.1\AndroidManifest.xml:39:13-57
-91            <intent-filter>
-91-->[androidx.profileinstaller:profileinstaller:1.3.1] E:\gradle-home\caches\9.3.1\transforms\f1aefc9589917e87416e99f160a0dae7\workspace\transformed\profileinstaller-1.3.1\AndroidManifest.xml:40:13-42:29
-92                <action android:name="androidx.profileinstaller.action.INSTALL_PROFILE" />
-92-->[androidx.profileinstaller:profileinstaller:1.3.1] E:\gradle-home\caches\9.3.1\transforms\f1aefc9589917e87416e99f160a0dae7\workspace\transformed\profileinstaller-1.3.1\AndroidManifest.xml:41:17-91
-92-->[androidx.profileinstaller:profileinstaller:1.3.1] E:\gradle-home\caches\9.3.1\transforms\f1aefc9589917e87416e99f160a0dae7\workspace\transformed\profileinstaller-1.3.1\AndroidManifest.xml:41:25-88
-93            </intent-filter>
-94            <intent-filter>
-94-->[androidx.profileinstaller:profileinstaller:1.3.1] E:\gradle-home\caches\9.3.1\transforms\f1aefc9589917e87416e99f160a0dae7\workspace\transformed\profileinstaller-1.3.1\AndroidManifest.xml:43:13-45:29
-95                <action android:name="androidx.profileinstaller.action.SKIP_FILE" />
-95-->[androidx.profileinstaller:profileinstaller:1.3.1] E:\gradle-home\caches\9.3.1\transforms\f1aefc9589917e87416e99f160a0dae7\workspace\transformed\profileinstaller-1.3.1\AndroidManifest.xml:44:17-85
-95-->[androidx.profileinstaller:profileinstaller:1.3.1] E:\gradle-home\caches\9.3.1\transforms\f1aefc9589917e87416e99f160a0dae7\workspace\transformed\profileinstaller-1.3.1\AndroidManifest.xml:44:25-82
-96            </intent-filter>
-97            <intent-filter>
-97-->[androidx.profileinstaller:profileinstaller:1.3.1] E:\gradle-home\caches\9.3.1\transforms\f1aefc9589917e87416e99f160a0dae7\workspace\transformed\profileinstaller-1.3.1\AndroidManifest.xml:46:13-48:29
-98                <action android:name="androidx.profileinstaller.action.SAVE_PROFILE" />
-98-->[androidx.profileinstaller:profileinstaller:1.3.1] E:\gradle-home\caches\9.3.1\transforms\f1aefc9589917e87416e99f160a0dae7\workspace\transformed\profileinstaller-1.3.1\AndroidManifest.xml:47:17-88
-98-->[androidx.profileinstaller:profileinstaller:1.3.1] E:\gradle-home\caches\9.3.1\transforms\f1aefc9589917e87416e99f160a0dae7\workspace\transformed\profileinstaller-1.3.1\AndroidManifest.xml:47:25-85
-99            </intent-filter>
-100            <intent-filter>
-100-->[androidx.profileinstaller:profileinstaller:1.3.1] E:\gradle-home\caches\9.3.1\transforms\f1aefc9589917e87416e99f160a0dae7\workspace\transformed\profileinstaller-1.3.1\AndroidManifest.xml:49:13-51:29
-101                <action android:name="androidx.profileinstaller.action.BENCHMARK_OPERATION" />
-101-->[androidx.profileinstaller:profileinstaller:1.3.1] E:\gradle-home\caches\9.3.1\transforms\f1aefc9589917e87416e99f160a0dae7\workspace\transformed\profileinstaller-1.3.1\AndroidManifest.xml:50:17-95
-101-->[androidx.profileinstaller:profileinstaller:1.3.1] E:\gradle-home\caches\9.3.1\transforms\f1aefc9589917e87416e99f160a0dae7\workspace\transformed\profileinstaller-1.3.1\AndroidManifest.xml:50:25-92
-102            </intent-filter>
-103        </receiver>
-104    </application>
-105
-106</manifest>
+29        android:networkSecurityConfig="@xml/network_security_config"
+29-->C:\Users\zzy\Documents\Codex\2026-11-07\jie-h\outputs\jiaojianbox\android\app\src\main\AndroidManifest.xml:15:9-69
+30        android:supportsRtl="true"
+30-->C:\Users\zzy\Documents\Codex\2026-11-07\jie-h\outputs\jiaojianbox\android\app\src\main\AndroidManifest.xml:14:9-35
+31        android:theme="@style/Theme.JiaojianBox" >
+31-->C:\Users\zzy\Documents\Codex\2026-11-07\jie-h\outputs\jiaojianbox\android\app\src\main\AndroidManifest.xml:16:9-49
+32        <activity
+32-->C:\Users\zzy\Documents\Codex\2026-11-07\jie-h\outputs\jiaojianbox\android\app\src\main\AndroidManifest.xml:19:9-49:20
+33            android:name="com.jiaojianbox.app.MainActivity"
+33-->C:\Users\zzy\Documents\Codex\2026-11-07\jie-h\outputs\jiaojianbox\android\app\src\main\AndroidManifest.xml:20:13-41
+34            android:exported="true"
+34-->C:\Users\zzy\Documents\Codex\2026-11-07\jie-h\outputs\jiaojianbox\android\app\src\main\AndroidManifest.xml:21:13-36
+35            android:theme="@style/Theme.JiaojianBox"
+35-->C:\Users\zzy\Documents\Codex\2026-11-07\jie-h\outputs\jiaojianbox\android\app\src\main\AndroidManifest.xml:23:13-53
+36            android:windowSoftInputMode="adjustResize" >
+36-->C:\Users\zzy\Documents\Codex\2026-11-07\jie-h\outputs\jiaojianbox\android\app\src\main\AndroidManifest.xml:22:13-55
+37            <intent-filter>
+37-->C:\Users\zzy\Documents\Codex\2026-11-07\jie-h\outputs\jiaojianbox\android\app\src\main\AndroidManifest.xml:24:13-27:29
+38                <action android:name="android.intent.action.MAIN" />
+38-->C:\Users\zzy\Documents\Codex\2026-11-07\jie-h\outputs\jiaojianbox\android\app\src\main\AndroidManifest.xml:25:17-69
+38-->C:\Users\zzy\Documents\Codex\2026-11-07\jie-h\outputs\jiaojianbox\android\app\src\main\AndroidManifest.xml:25:25-66
+39
+40                <category android:name="android.intent.category.LAUNCHER" />
+40-->C:\Users\zzy\Documents\Codex\2026-11-07\jie-h\outputs\jiaojianbox\android\app\src\main\AndroidManifest.xml:26:17-77
+40-->C:\Users\zzy\Documents\Codex\2026-11-07\jie-h\outputs\jiaojianbox\android\app\src\main\AndroidManifest.xml:26:27-74
+41            </intent-filter>
+42            <!-- 接收系统分享：文件管理器「分享到交件箱」 -->
+43            <intent-filter>
+43-->C:\Users\zzy\Documents\Codex\2026-11-07\jie-h\outputs\jiaojianbox\android\app\src\main\AndroidManifest.xml:29:13-33:29
+44                <action android:name="android.intent.action.SEND" />
+44-->C:\Users\zzy\Documents\Codex\2026-11-07\jie-h\outputs\jiaojianbox\android\app\src\main\AndroidManifest.xml:30:17-69
+44-->C:\Users\zzy\Documents\Codex\2026-11-07\jie-h\outputs\jiaojianbox\android\app\src\main\AndroidManifest.xml:30:25-66
+45
+46                <category android:name="android.intent.category.DEFAULT" />
+46-->C:\Users\zzy\Documents\Codex\2026-11-07\jie-h\outputs\jiaojianbox\android\app\src\main\AndroidManifest.xml:31:17-76
+46-->C:\Users\zzy\Documents\Codex\2026-11-07\jie-h\outputs\jiaojianbox\android\app\src\main\AndroidManifest.xml:31:27-73
+47
+48                <data android:mimeType="*/*" />
+48-->C:\Users\zzy\Documents\Codex\2026-11-07\jie-h\outputs\jiaojianbox\android\app\src\main\AndroidManifest.xml:32:17-48
+48-->C:\Users\zzy\Documents\Codex\2026-11-07\jie-h\outputs\jiaojianbox\android\app\src\main\AndroidManifest.xml:32:23-45
+49            </intent-filter>
+50            <intent-filter>
+50-->C:\Users\zzy\Documents\Codex\2026-11-07\jie-h\outputs\jiaojianbox\android\app\src\main\AndroidManifest.xml:34:13-38:29
+51                <action android:name="android.intent.action.SEND_MULTIPLE" />
+51-->C:\Users\zzy\Documents\Codex\2026-11-07\jie-h\outputs\jiaojianbox\android\app\src\main\AndroidManifest.xml:35:17-78
+51-->C:\Users\zzy\Documents\Codex\2026-11-07\jie-h\outputs\jiaojianbox\android\app\src\main\AndroidManifest.xml:35:25-75
+52
+53                <category android:name="android.intent.category.DEFAULT" />
+53-->C:\Users\zzy\Documents\Codex\2026-11-07\jie-h\outputs\jiaojianbox\android\app\src\main\AndroidManifest.xml:31:17-76
+53-->C:\Users\zzy\Documents\Codex\2026-11-07\jie-h\outputs\jiaojianbox\android\app\src\main\AndroidManifest.xml:31:27-73
+54
+55                <data android:mimeType="*/*" />
+55-->C:\Users\zzy\Documents\Codex\2026-11-07\jie-h\outputs\jiaojianbox\android\app\src\main\AndroidManifest.xml:32:17-48
+55-->C:\Users\zzy\Documents\Codex\2026-11-07\jie-h\outputs\jiaojianbox\android\app\src\main\AndroidManifest.xml:32:23-45
+56            </intent-filter>
+57            <!-- 系统文件选择器直接打开 -->
+58            <intent-filter>
+58-->C:\Users\zzy\Documents\Codex\2026-11-07\jie-h\outputs\jiaojianbox\android\app\src\main\AndroidManifest.xml:40:13-48:29
+59                <action android:name="android.intent.action.VIEW" />
+59-->C:\Users\zzy\Documents\Codex\2026-11-07\jie-h\outputs\jiaojianbox\android\app\src\main\AndroidManifest.xml:41:17-69
+59-->C:\Users\zzy\Documents\Codex\2026-11-07\jie-h\outputs\jiaojianbox\android\app\src\main\AndroidManifest.xml:41:25-66
+60
+61                <category android:name="android.intent.category.DEFAULT" />
+61-->C:\Users\zzy\Documents\Codex\2026-11-07\jie-h\outputs\jiaojianbox\android\app\src\main\AndroidManifest.xml:31:17-76
+61-->C:\Users\zzy\Documents\Codex\2026-11-07\jie-h\outputs\jiaojianbox\android\app\src\main\AndroidManifest.xml:31:27-73
+62                <category android:name="android.intent.category.BROWSABLE" />
+62-->C:\Users\zzy\Documents\Codex\2026-11-07\jie-h\outputs\jiaojianbox\android\app\src\main\AndroidManifest.xml:43:17-78
+62-->C:\Users\zzy\Documents\Codex\2026-11-07\jie-h\outputs\jiaojianbox\android\app\src\main\AndroidManifest.xml:43:27-75
+63
+64                <data android:mimeType="application/pdf" />
+64-->C:\Users\zzy\Documents\Codex\2026-11-07\jie-h\outputs\jiaojianbox\android\app\src\main\AndroidManifest.xml:32:17-48
+64-->C:\Users\zzy\Documents\Codex\2026-11-07\jie-h\outputs\jiaojianbox\android\app\src\main\AndroidManifest.xml:32:23-45
+65                <data android:mimeType="application/zip" />
+65-->C:\Users\zzy\Documents\Codex\2026-11-07\jie-h\outputs\jiaojianbox\android\app\src\main\AndroidManifest.xml:32:17-48
+65-->C:\Users\zzy\Documents\Codex\2026-11-07\jie-h\outputs\jiaojianbox\android\app\src\main\AndroidManifest.xml:32:23-45
+66                <data android:mimeType="image/*" />
+66-->C:\Users\zzy\Documents\Codex\2026-11-07\jie-h\outputs\jiaojianbox\android\app\src\main\AndroidManifest.xml:32:17-48
+66-->C:\Users\zzy\Documents\Codex\2026-11-07\jie-h\outputs\jiaojianbox\android\app\src\main\AndroidManifest.xml:32:23-45
+67                <data android:mimeType="text/*" />
+67-->C:\Users\zzy\Documents\Codex\2026-11-07\jie-h\outputs\jiaojianbox\android\app\src\main\AndroidManifest.xml:32:17-48
+67-->C:\Users\zzy\Documents\Codex\2026-11-07\jie-h\outputs\jiaojianbox\android\app\src\main\AndroidManifest.xml:32:23-45
+68            </intent-filter>
+69        </activity>
+70
+71        <provider
+71-->[androidx.emoji2:emoji2:1.3.0] E:\gradle-home\caches\9.3.1\transforms\bb134e096d24283aedf100937a0d5ec1\workspace\transformed\emoji2-1.3.0\AndroidManifest.xml:24:9-32:20
+72            android:name="androidx.startup.InitializationProvider"
+72-->[androidx.emoji2:emoji2:1.3.0] E:\gradle-home\caches\9.3.1\transforms\bb134e096d24283aedf100937a0d5ec1\workspace\transformed\emoji2-1.3.0\AndroidManifest.xml:25:13-67
+73            android:authorities="com.jiaojianbox.app.androidx-startup"
+73-->[androidx.emoji2:emoji2:1.3.0] E:\gradle-home\caches\9.3.1\transforms\bb134e096d24283aedf100937a0d5ec1\workspace\transformed\emoji2-1.3.0\AndroidManifest.xml:26:13-68
+74            android:exported="false" >
+74-->[androidx.emoji2:emoji2:1.3.0] E:\gradle-home\caches\9.3.1\transforms\bb134e096d24283aedf100937a0d5ec1\workspace\transformed\emoji2-1.3.0\AndroidManifest.xml:27:13-37
+75            <meta-data
+75-->[androidx.emoji2:emoji2:1.3.0] E:\gradle-home\caches\9.3.1\transforms\bb134e096d24283aedf100937a0d5ec1\workspace\transformed\emoji2-1.3.0\AndroidManifest.xml:29:13-31:52
+76                android:name="androidx.emoji2.text.EmojiCompatInitializer"
+76-->[androidx.emoji2:emoji2:1.3.0] E:\gradle-home\caches\9.3.1\transforms\bb134e096d24283aedf100937a0d5ec1\workspace\transformed\emoji2-1.3.0\AndroidManifest.xml:30:17-75
+77                android:value="androidx.startup" />
+77-->[androidx.emoji2:emoji2:1.3.0] E:\gradle-home\caches\9.3.1\transforms\bb134e096d24283aedf100937a0d5ec1\workspace\transformed\emoji2-1.3.0\AndroidManifest.xml:31:17-49
+78            <meta-data
+78-->[androidx.lifecycle:lifecycle-process:2.8.7] E:\gradle-home\caches\9.3.1\transforms\747904bdf5c2560b8120034387b7ce33\workspace\transformed\lifecycle-process-2.8.7\AndroidManifest.xml:29:13-31:52
+79                android:name="androidx.lifecycle.ProcessLifecycleInitializer"
+79-->[androidx.lifecycle:lifecycle-process:2.8.7] E:\gradle-home\caches\9.3.1\transforms\747904bdf5c2560b8120034387b7ce33\workspace\transformed\lifecycle-process-2.8.7\AndroidManifest.xml:30:17-78
+80                android:value="androidx.startup" />
+80-->[androidx.lifecycle:lifecycle-process:2.8.7] E:\gradle-home\caches\9.3.1\transforms\747904bdf5c2560b8120034387b7ce33\workspace\transformed\lifecycle-process-2.8.7\AndroidManifest.xml:31:17-49
+81            <meta-data
+81-->[androidx.profileinstaller:profileinstaller:1.3.1] E:\gradle-home\caches\9.3.1\transforms\f1aefc9589917e87416e99f160a0dae7\workspace\transformed\profileinstaller-1.3.1\AndroidManifest.xml:29:13-31:52
+82                android:name="androidx.profileinstaller.ProfileInstallerInitializer"
+82-->[androidx.profileinstaller:profileinstaller:1.3.1] E:\gradle-home\caches\9.3.1\transforms\f1aefc9589917e87416e99f160a0dae7\workspace\transformed\profileinstaller-1.3.1\AndroidManifest.xml:30:17-85
+83                android:value="androidx.startup" />
+83-->[androidx.profileinstaller:profileinstaller:1.3.1] E:\gradle-home\caches\9.3.1\transforms\f1aefc9589917e87416e99f160a0dae7\workspace\transformed\profileinstaller-1.3.1\AndroidManifest.xml:31:17-49
+84        </provider>
+85
+86        <receiver
+86-->[androidx.profileinstaller:profileinstaller:1.3.1] E:\gradle-home\caches\9.3.1\transforms\f1aefc9589917e87416e99f160a0dae7\workspace\transformed\profileinstaller-1.3.1\AndroidManifest.xml:34:9-52:20
+87            android:name="androidx.profileinstaller.ProfileInstallReceiver"
+87-->[androidx.profileinstaller:profileinstaller:1.3.1] E:\gradle-home\caches\9.3.1\transforms\f1aefc9589917e87416e99f160a0dae7\workspace\transformed\profileinstaller-1.3.1\AndroidManifest.xml:35:13-76
+88            android:directBootAware="false"
+88-->[androidx.profileinstaller:profileinstaller:1.3.1] E:\gradle-home\caches\9.3.1\transforms\f1aefc9589917e87416e99f160a0dae7\workspace\transformed\profileinstaller-1.3.1\AndroidManifest.xml:36:13-44
+89            android:enabled="true"
+89-->[androidx.profileinstaller:profileinstaller:1.3.1] E:\gradle-home\caches\9.3.1\transforms\f1aefc9589917e87416e99f160a0dae7\workspace\transformed\profileinstaller-1.3.1\AndroidManifest.xml:37:13-35
+90            android:exported="true"
+90-->[androidx.profileinstaller:profileinstaller:1.3.1] E:\gradle-home\caches\9.3.1\transforms\f1aefc9589917e87416e99f160a0dae7\workspace\transformed\profileinstaller-1.3.1\AndroidManifest.xml:38:13-36
+91            android:permission="android.permission.DUMP" >
+91-->[androidx.profileinstaller:profileinstaller:1.3.1] E:\gradle-home\caches\9.3.1\transforms\f1aefc9589917e87416e99f160a0dae7\workspace\transformed\profileinstaller-1.3.1\AndroidManifest.xml:39:13-57
+92            <intent-filter>
+92-->[androidx.profileinstaller:profileinstaller:1.3.1] E:\gradle-home\caches\9.3.1\transforms\f1aefc9589917e87416e99f160a0dae7\workspace\transformed\profileinstaller-1.3.1\AndroidManifest.xml:40:13-42:29
+93                <action android:name="androidx.profileinstaller.action.INSTALL_PROFILE" />
+93-->[androidx.profileinstaller:profileinstaller:1.3.1] E:\gradle-home\caches\9.3.1\transforms\f1aefc9589917e87416e99f160a0dae7\workspace\transformed\profileinstaller-1.3.1\AndroidManifest.xml:41:17-91
+93-->[androidx.profileinstaller:profileinstaller:1.3.1] E:\gradle-home\caches\9.3.1\transforms\f1aefc9589917e87416e99f160a0dae7\workspace\transformed\profileinstaller-1.3.1\AndroidManifest.xml:41:25-88
+94            </intent-filter>
+95            <intent-filter>
+95-->[androidx.profileinstaller:profileinstaller:1.3.1] E:\gradle-home\caches\9.3.1\transforms\f1aefc9589917e87416e99f160a0dae7\workspace\transformed\profileinstaller-1.3.1\AndroidManifest.xml:43:13-45:29
+96                <action android:name="androidx.profileinstaller.action.SKIP_FILE" />
+96-->[androidx.profileinstaller:profileinstaller:1.3.1] E:\gradle-home\caches\9.3.1\transforms\f1aefc9589917e87416e99f160a0dae7\workspace\transformed\profileinstaller-1.3.1\AndroidManifest.xml:44:17-85
+96-->[androidx.profileinstaller:profileinstaller:1.3.1] E:\gradle-home\caches\9.3.1\transforms\f1aefc9589917e87416e99f160a0dae7\workspace\transformed\profileinstaller-1.3.1\AndroidManifest.xml:44:25-82
+97            </intent-filter>
+98            <intent-filter>
+98-->[androidx.profileinstaller:profileinstaller:1.3.1] E:\gradle-home\caches\9.3.1\transforms\f1aefc9589917e87416e99f160a0dae7\workspace\transformed\profileinstaller-1.3.1\AndroidManifest.xml:46:13-48:29
+99                <action android:name="androidx.profileinstaller.action.SAVE_PROFILE" />
+99-->[androidx.profileinstaller:profileinstaller:1.3.1] E:\gradle-home\caches\9.3.1\transforms\f1aefc9589917e87416e99f160a0dae7\workspace\transformed\profileinstaller-1.3.1\AndroidManifest.xml:47:17-88
+99-->[androidx.profileinstaller:profileinstaller:1.3.1] E:\gradle-home\caches\9.3.1\transforms\f1aefc9589917e87416e99f160a0dae7\workspace\transformed\profileinstaller-1.3.1\AndroidManifest.xml:47:25-85
+100            </intent-filter>
+101            <intent-filter>
+101-->[androidx.profileinstaller:profileinstaller:1.3.1] E:\gradle-home\caches\9.3.1\transforms\f1aefc9589917e87416e99f160a0dae7\workspace\transformed\profileinstaller-1.3.1\AndroidManifest.xml:49:13-51:29
+102                <action android:name="androidx.profileinstaller.action.BENCHMARK_OPERATION" />
+102-->[androidx.profileinstaller:profileinstaller:1.3.1] E:\gradle-home\caches\9.3.1\transforms\f1aefc9589917e87416e99f160a0dae7\workspace\transformed\profileinstaller-1.3.1\AndroidManifest.xml:50:17-95
+102-->[androidx.profileinstaller:profileinstaller:1.3.1] E:\gradle-home\caches\9.3.1\transforms\f1aefc9589917e87416e99f160a0dae7\workspace\transformed\profileinstaller-1.3.1\AndroidManifest.xml:50:25-92
+103            </intent-filter>
+104        </receiver>
+105    </application>
+106
+107</manifest>
