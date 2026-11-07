@@ -7,7 +7,7 @@
     if(page==='settings'&&!$('#appearance-panel-marker')){
       const marker=document.createElement('div');marker.id='appearance-panel-marker';marker.innerHTML=appearancePanel();$('#view .page-heading').after(marker);appearance.refresh();
     }
-    if(state.session)$('#shelf-handle').hidden=!!window.desktop;
+    if(state.session)$('#shelf-handle').hidden=false;
   }
   function chatList(type){
     const list=(state.sources.conversations||[]).filter(c=>c.source===type);
@@ -99,7 +99,7 @@
   async function onSession(){
     if(lastSessionGeneration===state.generation)return;lastSessionGeneration=state.generation;
     if(location.pathname==='/authorize')return showConsent();
-    $('#browser-consent').hidden=true;$('#shelf-handle').hidden=!!window.desktop;
+    $('#browser-consent').hidden=true;$('#shelf-handle').hidden=false;
     if(window.desktop)detect(true);
   }
   document.addEventListener('click',async event=>{
@@ -136,7 +136,7 @@
     try{await api('/api/auth/device/approve','POST',{user_code:authorizationCode(),approve:allowed});$('#consent-status').textContent=allowed?'授权完成，可以返回桌面客户端。':'已取消此次授权。';}
     catch(error){$('#consent-status').textContent=error.message;$('#approve-device').disabled=false;$('#deny-device').disabled=false;}
   }
-  $('#consent-workspace').addEventListener('click',()=>{history.replaceState(null,'','/');$('#browser-consent').hidden=true;$('#workspace').hidden=false;$('#shelf-handle').hidden=!!window.desktop;render();});
+  $('#consent-workspace').addEventListener('click',()=>{history.replaceState(null,'','/');$('#browser-consent').hidden=true;$('#workspace').hidden=false;$('#shelf-handle').hidden=false;render();});
   window.addEventListener('appearance-error',()=>toast('外观已应用，但本机偏好未能保存'));
   window.experience={sourcesView,decorate,detect,onSession,prepareLogin,browserLogin};
   if(window.desktop){prepareLogin();desktop.onAppearance(value=>appearance.restore(value));}
