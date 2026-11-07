@@ -363,6 +363,13 @@ function render() {
   if (state.page === 'tasks' && state.taskId && !state.taskId.startsWith('local:')) checkTask().catch(() => {});
   if (state.page === 'sources' && window.desktop) desktop.collectorState().then(showCollectorState);
 }
+function renderDetailOnly(messageId) {
+  const holder = document.querySelector('.inbox-grid>.detail');
+  if (!holder) return;
+  const message = state.snapshot.messages.find(m => m.id === messageId);
+  holder.innerHTML = message ? messageDetail(message) : empty('先选一条消息', '通知原文、上下文和分析结果会显示在这里。');
+  hydrateIcons();
+}
 async function navigate(page) {
   state.page = page; state.search = ''; state.taskId = null; render();
   if (page === 'settings') await loadLlm();
@@ -649,7 +656,25 @@ document.addEventListener('click', async event => {
   try {
     const nav = event.target.closest('[data-nav]'); if (nav) return await navigate(nav.dataset.nav);
     const context = event.target.closest('[data-context]'); if (context) return;
-    const row = event.target.closest('[data-message]'); if (row) { state.selected = row.dataset.message; return render(); }
+    const row = event.target.closest('[data-message]');
+    if (row) {
+      // 就地切换选中态，不重建列表 DOM，保持滚动位置与勾选状态。
+      const id = row.dataset.message;
+      if (state.selected === id) return;
+      state.selected = id;
+      const list = row.closest('.message-list');
+      const previous = list?.querySelector('.message-row.selected');
+      if (previous) previous.classList.remove('selected');
+      row.classList.add('selected');
+      const grid = row.closest('.inbox-grid');
+      if (grid && !grid.classList.contains('has-selection')) {
+        // 移动端首次选中：需要切换双栏显示，此时才整页重绘。
+        return render();
+      }
+      renderDetailOnly(id);
+      syncLocationHash();
+      return;
+    }
     const card = event.target.closest('[data-task]'); if (card) { state.taskId = card.dataset.task; return render(); }
     const action = event.target.closest('[data-action]'); if (action) { runAction.sourceId = null; return await runAction(action.dataset.action, action); }
     const rowAction = event.target.closest('[data-row-action]');

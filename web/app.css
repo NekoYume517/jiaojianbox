@@ -87,10 +87,10 @@ nav .count{margin-left:auto;font-size:0.82rem;font-variant-numeric:tabular-nums;
 .page-heading .actions{display:flex;gap:8px}
 .toolbar{display:flex;gap:10px;align-items:center;margin-bottom:18px;flex-wrap:wrap}
 .search{position:relative;flex:1;min-width:180px;max-width:360px}
-.search input{padding-left:38px;background:var(--panel);line-height:1.5}
+.search>input.search-field,.search input{padding-left:38px!important;background:var(--panel);line-height:1.5}
 .search>span{position:absolute;left:12px;top:50%;transform:translateY(-50%);color:var(--muted);display:flex;align-items:center}
 .search svg{width:16px;height:16px}
-.toolbar select{width:auto;min-width:100px}
+.toolbar select{width:auto;min-width:132px;padding-right:34px}
 .toolbar .result-count{margin-left:auto;color:var(--muted);font-size:0.82rem}
 .inbox-grid{display:grid;grid-template-columns:minmax(290px,.85fr) minmax(370px,1.15fr);gap:22px;align-items:start}
 .panel{background:var(--panel);border:1px solid var(--line);border-radius:10px;overflow:hidden}
@@ -194,7 +194,7 @@ nav .count{margin-left:auto;font-size:0.82rem;font-variant-numeric:tabular-nums;
 .form-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}
 .form-grid.three{grid-template-columns:1fr 1fr 1fr}
 label{display:block;font-size:0.857rem;color:var(--text);margin-bottom:19px}
-input:not([type=checkbox]),select,textarea{display:block;min-height:38px;width:100%;border:1px solid var(--line);border-radius:6px;background:var(--panel);padding:9px 11px;color:var(--text);margin-top:8px;outline-offset:2px}
+input:not([type=checkbox]),select,textarea{display:block;min-height:38px;width:100%;border:1px solid var(--line);border-radius:6px;background:var(--panel);padding:9px 34px 9px 11px;color:var(--text);margin-top:8px;outline-offset:2px}
 input::placeholder,textarea::placeholder{color:var(--muted);font-size:0.857rem}
 input:focus,textarea:focus,select:focus{border-color:var(--focus);outline:none;box-shadow:0 0 0 3px var(--focus-soft)}
 textarea{resize:vertical;line-height:1.7}
