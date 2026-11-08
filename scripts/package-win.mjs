@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
 const outArgument=process.argv.find(s=>s.startsWith('--out-dir='));
 const zipArgument=process.argv.find(s=>s.startsWith('--electron-zip-dir='));
-await fs.access(path.join(root,'work','bundle','manifest.json'));
+const bundleAvailable=await fs.access(path.join(root,'work','bundle','manifest.json')).then(()=>true,()=>false);
 await fs.mkdir(path.join(root,'web','vendor'),{recursive:true});
 await fs.copyFile(path.join(root,'node_modules','echarts','dist','echarts.min.js'),path.join(root,'web','vendor','echarts.min.js'));
 await fs.copyFile(path.join(root,'node_modules','echarts','LICENSE'),path.join(root,'web','vendor','echarts.LICENSE'));
