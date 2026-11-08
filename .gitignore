@@ -15,3 +15,6 @@ verification-artifacts/
 
 work/
 artifacts*/
+android/.gradle/
+android/build/
+android/app/build/

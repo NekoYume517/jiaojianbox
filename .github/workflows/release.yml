@@ -65,6 +65,15 @@ jobs:
         with:
           node-version: '22'
 
+      - uses: astral-sh/setup-uv@v5
+
+      - name: Prepare portable Python runtime
+        shell: pwsh
+        run: |
+          uv python install 3.13
+          $pythonHome = Split-Path -Parent (uv python find 3.13)
+          "JJB_PYTHON_HOME=$pythonHome" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
@@ -77,19 +86,15 @@ jobs:
         run: python -m pytest tests -q
 
       - name: Package Windows desktop
-        env:
-          ELECTRON_MIRROR: https://npmmirror.com/mirrors/electron/
         run: npm run package:win
-
-      - name: Zip package
-        shell: pwsh
-        run: Compress-Archive -Path "artifacts/JiaojianBox-win32-x64/*" -DestinationPath "JiaojianBox-${env:GITHUB_REF_NAME}-win32-x64.zip"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: jiaojianbox-win32-x64
-          path: JiaojianBox-*-win32-x64.zip
+          path: |
+            artifacts/JiaojianBox-Setup-*-x64.exe
+            artifacts/latest.yml
 
   release:
     name: Publish GitHub Release
@@ -115,5 +120,5 @@ jobs:
           generate_release_notes: true
           overwrite_files: false
           files: |
-            dist/JiaojianBox-*-win32-x64.zip
+            dist/JiaojianBox-Setup-*-x64.exe
             dist/JiaojianBox-*-android-debug.apk

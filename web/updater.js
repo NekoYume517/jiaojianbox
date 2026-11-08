@@ -22,7 +22,8 @@
     if (!response.ok) throw new Error(`检查更新失败（HTTP ${response.status}）`);
     const release = await response.json();
     const latest = String(release.tag_name || '').replace(/^v/, '');
-    const asset = (release.assets || []).find(a => /win32-x64\.zip$/i.test(a.name));
+    const asset = (release.assets || []).find(a => /-setup-.*x64\.exe$/i.test(a.name))
+      || (release.assets || []).find(a => /win32-x64\.zip$/i.test(a.name));
     return {
       updatable: compareVersions(latest, currentVersion) > 0,
       current: currentVersion,

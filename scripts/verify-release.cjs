@@ -2,7 +2,7 @@ const {_electron,chromium}=require('playwright');
 const fs=require('node:fs/promises'),path=require('node:path'),assert=require('node:assert/strict');
 (async()=>{
  const root=path.resolve(__dirname,'..'),scratch=await fs.mkdtemp(path.join(root,'work','release-smoke-'));
- const executablePath=path.join(root,'artifacts-0.5.0','JiaojianBox-win32-x64','JiaojianBox.exe');
+ const executablePath=path.join(root,'artifacts-0.5.1','win-unpacked','交件箱.exe');
  const env={...process.env,JJB_USER_DATA:path.join(scratch,'profile'),JJB_TEST_OFFSCREEN:'1'};delete env.ELECTRON_RUN_AS_NODE;
  let client;
  async function launch(){
