@@ -353,6 +353,7 @@ function render() {
   if(state.page==='stats')window.statistics?.mount();
   state.firstRenderDone = true;
   window.appearance?.refresh(); window.experience?.decorate(state.page);
+  window.jjbAdmin?.mount();
   if ($('#source-filter')) $('#source-filter').value = state.source;
   if ($('#category-filter')) $('#category-filter').value = state.category;
   if ($('#task-filter')) $('#task-filter').value = state.taskFilter;
@@ -858,7 +859,7 @@ $('#auth-form').addEventListener('submit', async event => {
   $('#auth-submit').disabled = true; $('#auth-error').textContent = '';
   try {
     const url = new URL($('#server-url').value.trim()); if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.search || url.hash) throw new Error('请填写有效的服务端地址');
-    const server = url.href.replace(/\/$/, ''); const credentials = { username: $('#username').value.trim(), password: $('#password').value };
+    const server = url.href.replace(/\/$/, ''); const credentials = { username: $('#username').value.trim(), password: $('#password').value, invitation_code: $('#invitation-code').value.trim() };
     async function call(route) {
       const response = await fetch(server + route, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(credentials), signal: AbortSignal.timeout(20000) });
       const data = await response.json(); if (!response.ok) throw new Error(typeof data.detail === 'string' ? data.detail : '请检查用户名与密码'); return data;

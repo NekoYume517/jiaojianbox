@@ -29,6 +29,7 @@ from starlette.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from .stats import summarize
+from .accounts import Accounts
 from .extract import extract
 from .llm import LlmConfig, analyze, endpoint, suggest_file
 from .file_content import read_text
@@ -44,6 +45,7 @@ def now() -> str:
 class Credentials(BaseModel):
     username: str = Field(min_length=3, max_length=64, pattern=r"^[a-zA-Z0-9_.@-]+$")
     password: str = Field(min_length=10, max_length=256)
+    invitation_code: str = Field(default='', max_length=128)
 
 
 class Requirement(BaseModel):
@@ -244,7 +246,7 @@ def create_app(data_dir: str | Path | None = None) -> FastAPI:
         worker.cancel()
         await asyncio.gather(worker, return_exceptions=True)
 
-    app = FastAPI(title="交件箱 API", version="0.3.0", docs_url="/docs", lifespan=lifespan)
+    app = FastAPI(title="交件箱 API", version="0.4.1", docs_url="/docs", lifespan=lifespan)
     app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["GET", "POST", "PUT", "DELETE"], allow_headers=["Authorization", "Content-Type"])
     app.state.database = database
     attempts = defaultdict(deque)
@@ -272,6 +274,9 @@ def create_app(data_dir: str | Path | None = None) -> FastAPI:
 
     def owner(authorization: str = Header(default="")):
         return user_for_token(authorization.removeprefix("Bearer ") if authorization.startswith("Bearer ") else "")
+
+    accounts = Accounts(db)
+    accounts.install(app, owner)
 
     def task_row(conn, user, task_id):
         row = conn.execute("SELECT * FROM tasks WHERE id=? AND user_id=?", (task_id, user)).fetchone()
@@ -535,20 +540,13 @@ def create_app(data_dir: str | Path | None = None) -> FastAPI:
 
     @app.get("/health")
     def health():
-        return {"status": "ok", "version": "0.3.0"}
+        return {"status": "ok", "version": "0.4.1"}
 
     @app.post("/api/auth/register", status_code=201)
     def register(body: Credentials, request: Request):
         limit_auth(request)
-        if os.environ.get("JJB_ALLOW_REGISTRATION", "true").lower() != "true":
-            raise HTTPException(403, "注册已关闭")
-        salt = secrets.token_hex(16)
-        password = hashlib.pbkdf2_hmac("sha256", body.password.encode(), bytes.fromhex(salt), 310000).hex()
-        try:
-            with db(True) as conn:
-                conn.execute("INSERT INTO users VALUES(?,?,?,?)", (str(uuid.uuid4()), body.username, salt, password))
-        except sqlite3.IntegrityError:
-            raise HTTPException(409, "用户名已存在")
+        with db(True) as conn:
+            accounts.register(conn, body)
         return {"registered": True}
 
     @app.post("/api/auth/login")

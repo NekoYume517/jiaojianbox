@@ -570,3 +570,6 @@ body.dragging-files .file-shelf *{animation:none!important}
 .onboard-dots i.done{background:var(--selected-border)}
 .onboard-card .detail-actions{align-items:center;margin:0}
 @media(max-width:620px){.onboard-card{right:12px;left:12px;bottom:calc(80px + env(safe-area-inset-bottom));width:auto}}
+
+.admin-panel { margin-top: 24px; }
+.admin-panel .detail-actions { flex-wrap: wrap; overflow-wrap: anywhere; }
