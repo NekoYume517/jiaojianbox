@@ -110,6 +110,45 @@ func powershellEnv(extra ...string) []string {
 	values = append(values, "PSModulePath="+filepath.Join(os.Getenv("SystemRoot"), "System32", "WindowsPowerShell", "v1.0", "Modules"))
 	return append(values, extra...)
 }
+
+// Preserve an existing opt-in when upgrading from the older installation path.
+// Registry entries belonging to other applications are never changed.
+func migrateAutostart(key registry.Key, target string, remove bool) error {
+	names, err := key.ReadValueNames(-1)
+	if err != nil {
+		return err
+	}
+	for _, name := range names {
+		if !strings.EqualFold(name, "交件箱") && !strings.EqualFold(name, "jiaojianbox") && !strings.EqualFold(name, "com.electron.jiaojianbox") {
+			continue
+		}
+		command, _, err := key.GetStringValue(name)
+		if err != nil {
+			continue
+		}
+		parts, err := windows.DecomposeCommandLine(command)
+		if err != nil || len(parts) == 0 {
+			continue
+		}
+		base := filepath.Base(parts[0])
+		if !strings.EqualFold(base, "交件箱.exe") && !strings.EqualFold(base, "JiaojianBox.exe") {
+			continue
+		}
+		executable := filepath.Join(target, "交件箱.exe")
+		if remove {
+			if strings.EqualFold(filepath.Clean(parts[0]), filepath.Clean(executable)) {
+				if err = key.DeleteValue(name); err != nil {
+					return err
+				}
+			}
+		} else {
+			if err = key.SetStringValue(name, `"`+executable+`" --silent`); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
 func Register(target, version string, desktop, startMenu bool) error {
 	script := `$s=New-Object -ComObject WScript.Shell
 $exe=Join-Path $env:JJB_INSTALL_DIR '交件箱.exe'
@@ -134,6 +173,12 @@ if($env:JJB_START_LINK -eq '1'){Link (Join-Path ([Environment]::GetFolderPath('P
 	}
 	key.SetDWordValue("NoModify", 1)
 	key.SetDWordValue("NoRepair", 1)
+	if startup, e := registry.OpenKey(registry.CURRENT_USER, `Software\Microsoft\Windows\CurrentVersion\Run`, registry.QUERY_VALUE|registry.SET_VALUE); e == nil {
+		defer startup.Close()
+		if err = migrateAutostart(startup, target, false); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 func bit(value bool) string {
@@ -159,6 +204,10 @@ foreach($folder in @([Environment]::GetFolderPath('Desktop'),(Join-Path ([Enviro
 	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
 	cmd.Run()
 	registry.DeleteKey(registry.CURRENT_USER, uninstallKey)
+	if startup, e := registry.OpenKey(registry.CURRENT_USER, `Software\Microsoft\Windows\CurrentVersion\Run`, registry.QUERY_VALUE|registry.SET_VALUE); e == nil {
+		defer startup.Close()
+		migrateAutostart(startup, target, true)
+	}
 }
 func Message(text string, confirm bool) bool {
 	caption, _ := windows.UTF16PtrFromString("交件箱")
