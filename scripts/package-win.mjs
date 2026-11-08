@@ -20,6 +20,7 @@ await fs.copyFile(path.join(root, 'node_modules', 'echarts', 'NOTICE'), path.joi
 
 const noCacheFilter = ['**/*', '!**/__pycache__/**'];
 await build({
+  publish: 'never',
   config: {
     electronVersion: packageJson.devDependencies.electron,
     directories: { output: outputRoot },
@@ -35,7 +36,6 @@ await build({
       ...['snow-loader.mjs', 'snow-bridge.mjs', 'drag-watch.exe', 'tray.png'].map(name => ({ from: path.join(root, 'desktop', name), to: `bridge/${name}` })),
     ],
     icon: path.join(root, 'build', 'installer.ico'),
-    publish: 'never',
     win: {
       target: [{ target: 'nsis', arch: ['x64'] }],
       icon: path.join(root, 'build', 'installer.ico'),
