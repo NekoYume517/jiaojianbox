@@ -8,10 +8,11 @@ window.jjbAdmin = (() => {
       $('#auth-title').textContent = '登录交件箱';
       $('#auth-submit').textContent = '登录';
     }
-    $('#auth-switch').hidden = closed;
+    $('#auth-switch').hidden = closed || !!window.desktop;
     $('#auth-switch').textContent = state.isRegister ? '已有账号？返回登录' : registration === 'invite' ? '使用邀请码创建账号' : '第一次使用？创建账号';
     $('#invitation-label').hidden = !state.isRegister || registration !== 'invite';
     $('#invitation-code').required = state.isRegister && registration === 'invite';
+    $('#username').type = state.isRegister ? 'email' : 'text';
     $('#password').autocomplete = state.isRegister ? 'new-password' : 'current-password';
   }
   async function loadRegistration() {

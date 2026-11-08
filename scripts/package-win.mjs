@@ -2,8 +2,11 @@ import { packager } from '@electron/packager';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import {execFileSync} from 'node:child_process';
 
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
+execFileSync(process.env.PYTHON || 'python',[path.join(root,'scripts','prepare-core-runtime.py')],{cwd:root,stdio:'inherit'});
+const coreRuntime=JSON.parse(await fs.readFile(path.join(root,'work','core-runtime.json'),'utf8')).python;
 const outArgument=process.argv.find(s=>s.startsWith('--out-dir='));
 const zipArgument=process.argv.find(s=>s.startsWith('--electron-zip-dir='));
 const bundleAvailable=await fs.access(path.join(root,'work','bundle','manifest.json')).then(()=>true,()=>false);
@@ -25,10 +28,13 @@ for(const output of results){
     await fs.copyFile(path.join(root,'work','bundle','manifest.json'),path.join(runtimeRoot,'manifest.json'));
   } else console.log('Skipping private runtime bundle (open-source build): QQ/微信采集 runtime 见 scripts/prepare-runtime.py');
   const bridgeRoot=path.join(output,'resources','bridge');await fs.mkdir(bridgeRoot,{recursive:true});
+  await fs.cp(coreRuntime,path.join(runtimeRoot,'python'),{recursive:true,filter:source=>!source.includes('__pycache__')});
   for(const name of ['snow-loader.mjs','snow-bridge.mjs','drag-watch.exe','tray.png'])await fs.copyFile(path.join(root,'desktop',name),path.join(bridgeRoot,name));
   const pythonRoot=path.join(output,'resources','python');
   await fs.mkdir(pythonRoot,{recursive:true});
   await fs.cp(path.join(root,'collector'),path.join(pythonRoot,'collector'),{recursive:true,filter:source=>!source.includes('__pycache__')});
+  await fs.cp(path.join(root,'server'),path.join(pythonRoot,'server'),{recursive:true,filter:source=>!source.includes('__pycache__')});
+  await fs.cp(path.join(root,'web'),path.join(pythonRoot,'web'),{recursive:true});
   await fs.copyFile(path.join(root,'requirements.txt'),path.join(pythonRoot,'requirements.txt'));
   await fs.copyFile(path.join(root,'README.md'),path.join(output,'使用说明.md'));
   await fs.copyFile(path.join(root,'THIRD_PARTY_NOTICES.md'),path.join(output,'THIRD_PARTY_NOTICES.md'));

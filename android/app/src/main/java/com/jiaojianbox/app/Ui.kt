@@ -92,9 +92,15 @@ fun MainScaffold(
     val snackbar = remember { SnackbarHostState() }
     var snapshot by remember { mutableStateOf<Snapshot?>(null) }
     var busy by remember { mutableStateOf(false) }
+    var connecting by remember { mutableStateOf(false) }
+    var uploadOnConnect by remember { mutableStateOf(false) }
+    var connectionError by remember { mutableStateOf("") }
+    var accountDialog by remember { mutableStateOf(false) }
+    var displayName by remember { mutableStateOf(session.username) }
     var calendarPickerFor by remember { mutableStateOf<Task?>(null) }
 
     suspend fun reload() {
+        if(!session.offline) runCatching {JjbApi(session).account("/api/auth/me")}.onSuccess {displayName=it.optString("nickname",session.username)}.onFailure {if(it is CancellationException)throw it}
         runCatching { JjbApi(session).snapshot() }
             .onSuccess { snapshot = it }
             .onFailure { if(it is CancellationException)throw it; snackbar.showSnackbar(it.message ?: "同步失败") }
@@ -144,6 +150,18 @@ fun MainScaffold(
         onUrisConsumed()
     }
 
+    if(connecting) {
+        LoginScreen(onLogin={ target -> scope.launch {
+            busy=true
+            try {
+                if(uploadOnConnect && !target.offline) withContext(Dispatchers.IO) { val archive=LocalWorkspace.exportZip();try{JjbApi(target).importWorkspace(archive)}finally{archive.delete()} }
+                store.saveSession(target)
+            } catch(e:Exception){if(e is CancellationException)throw e;connectionError="连接或导入未完成，本机数据已保留："+(e.message?:"")}
+            finally{busy=false}
+        }},onCancel={connecting=false},externalError=connectionError)
+        return
+    }
+    if(accountDialog) AccountDialog(session,onDismiss={accountDialog=false;scope.launch{reload()}},onPasswordChanged=onLogout)
     Scaffold(
         topBar = { CenterAlignedTopAppBar(title = { Text(tab.label) }, actions = {
             IconButton(onClick = { scope.launch { reload() } }, enabled = !busy) { Icon(Icons.Filled.Refresh,"刷新") }
@@ -185,9 +203,21 @@ fun MainScaffold(
                     },
                 )
                 Tab.Inbox -> InboxPage(snapshot) { selectedMessage = it }
-                Tab.More -> Column(Modifier.fillMaxSize().padding(16.dp)) {
-                    ListItem(headlineContent={Text(session.username)}, supportingContent={Text(session.server)}, leadingContent={Icon(Icons.Filled.AccountCircle,null)})
+                Tab.More -> Column(Modifier.fillMaxSize().verticalScroll(androidx.compose.foundation.rememberScrollState()).padding(16.dp)) {
+                    ListItem(headlineContent={Text(displayName)}, supportingContent={Text(if(session.offline) "离线使用 · 数据仅存本机" else "已连接服务器")}, leadingContent={Icon(Icons.Filled.AccountCircle,null)})
                     HorizontalDivider()
+                    if(!session.offline) {
+                        ListItem(headlineContent={Text("账号资料")},supportingContent={Text("昵称、邮箱和密码")},modifier=Modifier.clickable{accountDialog=true},trailingContent={Icon(Icons.Filled.ChevronRight,null)})
+                        ListItem(headlineContent={Text("复制到本机并离线使用")},supportingContent={Text("包括附件，云端数据保留")},modifier=Modifier.clickable(enabled=!busy){scope.launch {
+                            busy=true
+                            try {val data=JjbApi(session).exportWorkspace();try{withContext(Dispatchers.IO){LocalWorkspace.importZip(data)}}finally{data.delete()};store.saveSession(LocalWorkspace.session())}
+                            catch(e:Exception){if(e is CancellationException)throw e;snackbar.showSnackbar(e.message?:"复制失败，云端数据保持不变")}
+                            finally{busy=false}
+                        }})
+                    } else {
+                        ListItem(headlineContent={Text("连接服务器并上传本地数据")},supportingContent={Text("登录后复制导入，本机数据保留")},modifier=Modifier.clickable{uploadOnConnect=true;connecting=true})
+                    }
+                    ListItem(headlineContent={Text("切换连接方式")},supportingContent={Text("默认云端、自建服务器或离线")},modifier=Modifier.clickable{uploadOnConnect=false;connecting=true})
                     ListItem(headlineContent={Text("日历提醒")}, supportingContent={Text("授权后可将截止时间写入系统日历")}, modifier=Modifier.clickable(onClick=requestCalendar), trailingContent={Icon(Icons.Filled.ChevronRight,null)})
                     ListItem(headlineContent={Text("外观")}, supportingContent={Text("跟随系统深浅色模式")})
                     TextButton(onClick=onLogout) { Text("退出登录") }

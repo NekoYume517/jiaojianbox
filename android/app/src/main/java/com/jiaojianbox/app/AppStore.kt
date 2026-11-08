@@ -34,4 +34,7 @@ class AppStore(private val context: Context) {
     suspend fun sessionOnce(): Session? = session.first()
 }
 
-data class Session(val server: String, val token: String, val username: String)
+const val DEFAULT_SERVER = "https://jiaojianbox.bansonic.top"
+data class Session(val server: String, val token: String, val username: String) {
+    val offline: Boolean get() = server == "offline://local"
+}

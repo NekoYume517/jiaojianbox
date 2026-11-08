@@ -52,6 +52,7 @@ class JjbApi(private val session: Session) {
     }
 
     suspend fun snapshot(): Snapshot = withContext(Dispatchers.IO) {
+        if(session.offline) return@withContext LocalWorkspace.snapshot()
         http.newCall(request("/api/snapshot")).await().use { response ->
             val obj = response.jsonOrThrow()
             Snapshot(
@@ -63,6 +64,7 @@ class JjbApi(private val session: Session) {
     }
 
     suspend fun uploadShelf(name: String, bytes: ByteArray): ShelfItem = withContext(Dispatchers.IO) {
+        if(session.offline) return@withContext LocalWorkspace.upload(name,bytes)
         http.newCall(Request.Builder()
             .url(session.server.trimEnd('/') + "/api/shelf")
             .header("Authorization", "Bearer " + session.token)
@@ -73,17 +75,20 @@ class JjbApi(private val session: Session) {
     }
 
     suspend fun analyzeShelf(fileId: String, autoAssign: Boolean = true): ShelfItem = withContext(Dispatchers.IO) {
+        if(session.offline) throw IOException("离线模式已在本机保存文件，连接服务器后可使用 AI 整理")
         val payload = JSONObject().put("auto_assign", autoAssign).toString().toRequestBody("application/json".toMediaType())
         http.newCall(request("/api/shelf/$fileId/suggest").newBuilder().post(payload).build()).await().use { it.jsonOrThrow().toShelf() }
     }
 
     suspend fun setStatus(taskId: String, task: JSONObject, status: String): JSONObject = withContext(Dispatchers.IO) {
+        if(session.offline) return@withContext LocalWorkspace.setStatus(taskId,status)
         val updated = JSONObject(task.toString()).put("status", status)
         val payload = updated.toString().toRequestBody("application/json".toMediaType())
         http.newCall(request("/api/tasks/$taskId").newBuilder().put(payload).build()).await().use { it.jsonOrThrow() }
     }
 
     suspend fun createTask(title: String, description: String) = withContext(Dispatchers.IO) {
+        if(session.offline) return@withContext LocalWorkspace.createTask(title,description)
         val payload = JSONObject().put("title",title).put("description",description).toString().toRequestBody("application/json".toMediaType())
         http.newCall(request("/api/tasks").newBuilder().post(payload).build()).await().use { it.jsonOrThrow() }
     }
@@ -94,6 +99,31 @@ class JjbApi(private val session: Session) {
             val obj = response.jsonOrThrow()
             Session(server = server.trimEnd('/'), token = obj.getString("token"), username = obj.getString("username"))
         }
+    }
+
+    suspend fun exportWorkspace(): java.io.File = withContext(Dispatchers.IO) {
+        if(session.offline)return@withContext LocalWorkspace.exportZip()
+        http.newCall(request("/api/workspace/export")).await().use {
+            if(!it.isSuccessful)throw IOException(it.errorMessage())
+            val output=java.io.File.createTempFile("workspace-", ".zip", AppContext.context.cacheDir)
+            try {
+                it.body!!.byteStream().use { src -> output.outputStream().use { dst ->
+                    val buffer=ByteArray(65536);var total=0L
+                    while(true){val n=src.read(buffer);if(n<0)break;total+=n;require(total<=256L*1024*1024){"数据包超过手机迁移上限 256MB"};dst.write(buffer,0,n)}
+                }}
+                output
+            } catch(e:Exception){output.delete();throw e}
+        }
+    }
+    suspend fun importWorkspace(file: java.io.File) = withContext(Dispatchers.IO) {
+        if(session.offline) {LocalWorkspace.importZip(file);return@withContext JSONObject().put("imported",true)}
+        val body=okhttp3.MultipartBody.Builder().setType(okhttp3.MultipartBody.FORM).addFormDataPart("file","workspace.zip",file.asRequestBody("application/zip".toMediaType())).build()
+        http.newCall(request("/api/workspace/import").newBuilder().post(body).build()).await().use { it.jsonOrThrow() }
+    }
+    suspend fun account(route: String, method: String="GET", body: JSONObject?=null): JSONObject = withContext(Dispatchers.IO) {
+        val builder=request(route).newBuilder()
+        if(method!="GET")builder.method(method,(body?:JSONObject()).toString().toRequestBody("application/json".toMediaType()))
+        http.newCall(builder.build()).await().use { it.jsonOrThrow() }
     }
 }
 

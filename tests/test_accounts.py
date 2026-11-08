@@ -27,7 +27,7 @@ def test_registration_modes_and_permissions(tmp_path, monkeypatch):
         assert client.request(method, '/api/admin/' + route, headers=normal, json=data).status_code == 403
     assert client.get('/api/admin/users').status_code == 401
     assert client.put('/api/admin/registration', headers=admin, json={'mode': 'closed'}).status_code == 200
-    assert client.get('/api/auth/registration').json() == {'mode': 'closed'}
+    assert client.get('/api/auth/registration').json()['mode'] == 'closed'
     assert client.post('/api/auth/register', json={**body, 'username': 'second'}).status_code == 403
     assert client.put('/api/admin/registration', headers=admin, json={'mode': 'invalid'}).status_code == 422
     # Persisted policy and role survive recreation. Bootstrap never resets a password.

@@ -22,10 +22,11 @@ import kotlinx.coroutines.withContext
  * 也保留账号密码直接登录（兼容浏览器不可用的场景）。
  */
 @Composable
-fun LoginScreen(onLogin: (Session) -> Unit) {
+fun LoginScreen(onLogin: (Session) -> Unit, onCancel: (() -> Unit)? = null, externalError: String = "") {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    var server by remember { mutableStateOf("http://") }
+    var server by remember { mutableStateOf(DEFAULT_SERVER) }
+    var customServer by remember { mutableStateOf(false) }
     var browserBusy by remember { mutableStateOf(false) }
     var browserError by remember { mutableStateOf("") }
     var showPassword by remember { mutableStateOf(false) }
@@ -48,7 +49,8 @@ fun LoginScreen(onLogin: (Session) -> Unit) {
         Text("交件箱", style = MaterialTheme.typography.headlineLarge, color = MaterialTheme.colorScheme.primary)
         Text("消息很多，要交的事一件不漏。", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Spacer(Modifier.height(28.dp))
-        OutlinedTextField(server, { server = it }, label = { Text("服务端地址") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+        if(customServer) OutlinedTextField(server, { server = it }, label = { Text("自建服务器地址") }, singleLine = true, enabled = !browserBusy, modifier = Modifier.fillMaxWidth())
+        TextButton(enabled = !browserBusy, onClick = { customServer = !customServer; if(!customServer)server=DEFAULT_SERVER }) { Text(if(customServer) "使用默认服务器" else "连接其他自建服务器") }
         Spacer(Modifier.height(14.dp))
 
         Button(
@@ -92,7 +94,7 @@ fun LoginScreen(onLogin: (Session) -> Unit) {
         }
 
         if (showPassword) {
-            OutlinedTextField(username, { username = it }, label = { Text("用户名") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+            OutlinedTextField(username, { username = it }, label = { Text("邮箱 / 原有用户名") }, singleLine = true, modifier = Modifier.fillMaxWidth())
             Spacer(Modifier.height(10.dp))
             OutlinedTextField(password, { password = it }, label = { Text("密码") }, singleLine = true, visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(), modifier = Modifier.fillMaxWidth())
             if (pwError.isNotBlank()) {
@@ -115,6 +117,10 @@ fun LoginScreen(onLogin: (Session) -> Unit) {
             ) { Text(if (pwBusy) "登录中…" else "登录") }
         }
         Spacer(Modifier.height(10.dp))
-        Text("与电脑端/网页端同一账号。首次使用请先在网页端注册。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        TextButton(enabled = !browserBusy && !pwBusy, onClick = { onLogin(LocalWorkspace.session()) }) { Text("不连接服务器，离线使用") }
+        TextButton(onClick = { openBrowser(server.trimEnd('/') + "/?forgot=1") }) { Text("忘记密码") }
+        if(externalError.isNotBlank())Text(externalError,color=MaterialTheme.colorScheme.error)
+        if(onCancel!=null)TextButton(onClick=onCancel){Text("返回当前工作区")}
+        Text("首次使用可在浏览器中通过邮箱注册。离线数据只保存在本机。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }

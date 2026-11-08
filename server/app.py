@@ -30,6 +30,7 @@ from fastapi.staticfiles import StaticFiles
 
 from .stats import summarize
 from .accounts import Accounts
+from .transfer import install_transfer
 from .extract import extract
 from .llm import LlmConfig, analyze, endpoint, suggest_file
 from .file_content import read_text
@@ -43,7 +44,8 @@ def now() -> str:
 
 
 class Credentials(BaseModel):
-    username: str = Field(min_length=3, max_length=64, pattern=r"^[a-zA-Z0-9_.@-]+$")
+    username: str = Field(default='', max_length=254)
+    email: str = Field(default='', max_length=254)
     password: str = Field(min_length=10, max_length=256)
     invitation_code: str = Field(default='', max_length=128)
 
@@ -246,7 +248,7 @@ def create_app(data_dir: str | Path | None = None) -> FastAPI:
         worker.cancel()
         await asyncio.gather(worker, return_exceptions=True)
 
-    app = FastAPI(title="交件箱 API", version="0.4.1", docs_url="/docs", lifespan=lifespan)
+    app = FastAPI(title="交件箱 API", version="0.5.0", docs_url="/docs", lifespan=lifespan)
     app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["GET", "POST", "PUT", "DELETE"], allow_headers=["Authorization", "Content-Type"])
     app.state.database = database
     attempts = defaultdict(deque)
@@ -275,8 +277,9 @@ def create_app(data_dir: str | Path | None = None) -> FastAPI:
     def owner(authorization: str = Header(default="")):
         return user_for_token(authorization.removeprefix("Bearer ") if authorization.startswith("Bearer ") else "")
 
-    accounts = Accounts(db)
-    accounts.install(app, owner)
+    accounts = Accounts(db, cipher)
+    accounts.install(app, owner, limit_auth)
+    install_transfer(app, db, owner, blobs, event, now, cipher)
 
     def task_row(conn, user, task_id):
         row = conn.execute("SELECT * FROM tasks WHERE id=? AND user_id=?", (task_id, user)).fetchone()
@@ -540,20 +543,19 @@ def create_app(data_dir: str | Path | None = None) -> FastAPI:
 
     @app.get("/health")
     def health():
-        return {"status": "ok", "version": "0.4.1"}
+        return {"status": "ok", "version": "0.5.0"}
 
     @app.post("/api/auth/register", status_code=201)
     def register(body: Credentials, request: Request):
         limit_auth(request)
-        with db(True) as conn:
-            accounts.register(conn, body)
-        return {"registered": True}
+        return accounts.register(body)
 
     @app.post("/api/auth/login")
     def login(body: Credentials, request: Request):
         limit_auth(request)
         with db(True) as conn:
-            row = conn.execute("SELECT * FROM users WHERE username=?", (body.username,)).fetchone()
+            identity = (body.email or body.username).strip()
+            row = conn.execute("SELECT u.* FROM users u LEFT JOIN profiles p ON p.user_id=u.id WHERE u.username=? OR p.email=?", (identity, identity)).fetchone()
             salt = row["salt"] if row else "00" * 16
             candidate = hashlib.pbkdf2_hmac("sha256", body.password.encode(), bytes.fromhex(salt), 310000).hex()
             if not row or not hmac.compare_digest(candidate, row["password"]):

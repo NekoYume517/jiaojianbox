@@ -71,7 +71,7 @@ function online(value) {
   state.online = value;
   const el = $('#sync-state');
   el.classList.toggle('offline', !value);
-  el.innerHTML = `<i></i>${value ? '已同步' : '连接中'}${state.pending.length ? ` · ${state.pending.length} 项待同步` : ''}`;
+  el.innerHTML = `<i></i>${state.session?.mode==='offline'?'本机离线':value ? '已同步' : '连接中'}${state.pending.length ? ` · ${state.pending.length} 项待同步` : ''}`;
   $('#offline-banner').hidden = value;
 }
 function cacheSoon() {
@@ -164,19 +164,20 @@ async function flushOutbox() {
 }
 async function enter(session) {
   state.generation++; state.session = session;
-  const hash = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(session.server.replace(/\/$/, '') + '|' + session.user_id));
+  const hash = await crypto.subtle.digest('SHA-256', new TextEncoder().encode((session.mode==='offline'?'offline':session.server.replace(/\/$/, '')) + '|' + session.user_id));
   state.profile = [...new Uint8Array(hash)].map(x => x.toString(16).padStart(2, '0')).join('').slice(0, 24);
   const saved = await storeGet('cache-' + state.profile);
   state.pending = saved?.pending || []; state.snapshot = saved?.snapshot || { tasks: [], messages: [], cursor: 0 };
   state.sources = await storeGet('sources-' + state.profile) || { python_path: '', qq_http_url: 'http://127.0.0.1:3000', qq_ws_url: 'ws://127.0.0.1:3001', qq_token: '', qq_chats: [], wechat_chats: [], conversations: [] };
   $('#auth').hidden = true; $('#workspace').hidden = false;
-  $('#account-name').textContent = session.username; $('#avatar').textContent = session.username.slice(0, 1).toUpperCase();
-  $('#account-server').textContent = new URL(session.server).host;
+  $('#account-name').textContent = session.nickname || (session.mode==='offline'?'本机工作区':session.username); $('#avatar').textContent = session.username.slice(0, 1).toUpperCase();
+  $('#account-server').textContent = session.mode==='offline'?'离线使用 · 仅本机':new URL(session.server).host;
   state.page = 'inbox'; state.firstRenderDone = false; render(); await refresh(); syncSocket();
   applyHashRoute() || render();
   const settingsGeneration=state.generation;state.contextCount=undefined;api('/api/settings/llm').then(config=>{if(settingsGeneration!==state.generation)return;llmSettings=config;if(state.contextCount===undefined){state.contextCount=config.context_count;const input=$('#context-count');if(input&&document.activeElement!==input)input.value=config.context_count;}}).catch(()=>{});
   maybeOnboard();
   window.experience?.onSession();
+  await window.accountUI?.afterLogin();
 }
 const ONBOARD_STEPS = [
   { title: '欢迎来到交件箱', body: '把聊天里的通知整理成能交付的事：收通知、建任务、交材料、存回执，都在这里。', hint: '第一步 · 了解工作台' },
@@ -353,7 +354,8 @@ function render() {
   if(state.page==='stats')window.statistics?.mount();
   state.firstRenderDone = true;
   window.appearance?.refresh(); window.experience?.decorate(state.page);
-  window.jjbAdmin?.mount();
+  if(state.session?.mode!=='offline')window.jjbAdmin?.mount();
+  window.accountUI?.mount();
   if ($('#source-filter')) $('#source-filter').value = state.source;
   if ($('#category-filter')) $('#category-filter').value = state.category;
   if ($('#task-filter')) $('#task-filter').value = state.taskFilter;
@@ -864,7 +866,7 @@ $('#auth-form').addEventListener('submit', async event => {
       const response = await fetch(server + route, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(credentials), signal: AbortSignal.timeout(20000) });
       const data = await response.json(); if (!response.ok) throw new Error(typeof data.detail === 'string' ? data.detail : '请检查用户名与密码'); return data;
     }
-    if (state.isRegister) await call('/api/auth/register');
+    if (state.isRegister) {const registration=await call('/api/auth/register');if(registration.verification_required){$('#auth-error').textContent=registration.message;$('#password').value='';return;}}
     const result = await call('/api/auth/login'); const session = { ...result, server };
     if (window.desktop) await storeSet('session', session); else localStorage.setItem('jjb-session', JSON.stringify(session));
     $('#password').value = ''; await enter(session);
@@ -887,10 +889,10 @@ setInterval(() => { if (state.session) { refresh({ renderPage: false }); if (sta
 (async () => {
   hydrateIcons();
   if(window.desktop){const platform=await desktop.platform();document.body.classList.toggle('native-titlebar',!!platform.nativeTitlebar);$('#desktop-titlebar').hidden=!platform.nativeTitlebar;try{appearance.restore(await desktop.getAppearance());}catch{}}
-  $('#server-url').value = location.protocol === 'http:' || location.protocol === 'https:' ? location.origin : 'http://127.0.0.1:8765';
+  $('#server-url').value = window.desktop ? 'https://jiaojianbox.bansonic.top' : location.origin;
   try {
     const session = window.desktop ? await storeGet('session') : JSON.parse(localStorage.getItem('jjb-session') || 'null');
-    if (session) return await enter(session);
+    if (session) {if(session.mode==='offline'&&window.desktop){const current=await desktop.offlineStart();await storeSet('session',current);return await enter(current);}return await enter(session);}
   } catch (error) { toast(error.message); }
   $('#auth').hidden = false;
   window.experience?.prepareLogin();

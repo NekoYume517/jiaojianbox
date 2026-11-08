@@ -1,5 +1,6 @@
 const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('desktop', {
+  offlineStart:()=>ipcRenderer.invoke('offline-start'),
   quickGet:()=>ipcRenderer.invoke('quick-get'),quickSet:value=>ipcRenderer.invoke('quick-set',value),
   launcherGet:()=>ipcRenderer.invoke('launcher-get'),launcherSet:value=>ipcRenderer.invoke('launcher-set',value),
   get: key => ipcRenderer.invoke('local-get', key),

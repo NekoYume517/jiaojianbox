@@ -9,6 +9,7 @@ const { pipeline } = require('node:stream/promises');
 const { createWriteStream } = require('node:fs');
 const {EdgeWindow}=require('./edge-window.cjs');
 const {QQManager,READ_ACTIONS}=require('./qq-manager.cjs');
+const {LocalWorkspace}=require('./local-workspace.cjs');
 
 protocol.registerSchemesAsPrivileged([{ scheme: 'app', privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true } }]);
 if (process.env.JJB_USER_DATA) app.setPath('userData', process.env.JJB_USER_DATA);
@@ -18,9 +19,9 @@ let window, collector, collectorState = { state: 'stopped' };
 const storageWrites = new Map();
 const sourceRoot = path.resolve(__dirname, '..');
 const collectorRoot = app.isPackaged ? path.join(process.resourcesPath, 'python') : sourceRoot;
-const allowedAssets = new Set(['index.html', 'app.css', 'select-arrow.css', 'app.js', 'updater.js', 'analysis.js', 'statistics.js', 'vendor/echarts.min.js', 'theme.js', 'experience.js', 'shelf.js', 'icon.svg', 'edge.html', 'edge.css', 'edge.js']);
+const allowedAssets = new Set(['index.html', 'admin.js', 'account.js', 'app.css', 'select-arrow.css', 'app.js', 'updater.js', 'analysis.js', 'statistics.js', 'vendor/echarts.min.js', 'theme.js', 'experience.js', 'shelf.js', 'icon.svg', 'edge.html', 'edge.css', 'edge.js']);
 let appearance = { theme: 'system', density: 'comfortable', textSize: 'normal' };
-let qqManager,edgeWindow;
+let qqManager,edgeWindow,localWorkspace;
 const bridgeRoot=app.isPackaged?path.join(process.resourcesPath,"bridge"):path.join(sourceRoot,"desktop");
 function normalizeAppearance(value) {
   return {theme:['system','light','dark'].includes(value?.theme)?value.theme:'system', density:['comfortable','compact'].includes(value?.density)?value.density:'comfortable',textSize:['normal','large'].includes(value?.textSize)?value.textSize:'normal'};
@@ -103,6 +104,7 @@ function runPython(command, config, onEvent) {
 function installHandlers() {
   const handle = (name, fn) => ipcMain.handle(name, (event, ...args) => { validateSender(event); return fn(...args); });
   handle('local-get', get);
+  handle('offline-start',()=>localWorkspace.start());
   handle('local-set',async(key,value)=>{await put(key,value);if(key==='session')edgeWindow?.resetSession();});
   handle('local-remove',async key=>{await fs.rm(await storageFile(key),{force:true});if(key==='session')edgeWindow?.resetSession();});
   handle('platform', () => ({ platform: process.platform, version: app.getVersion(), nativeTitlebar:process.platform==='win32', silentStartup:!!window.__silentStartup }));
@@ -176,6 +178,7 @@ function installHandlers() {
 }
 
 app.whenReady().then(async () => {
+  localWorkspace=new LocalWorkspace({root:collectorRoot,userData:app.getPath('userData'),python:app.isPackaged?path.join(process.resourcesPath,'runtime','python','python.exe'):(process.env.JJB_PYTHON||'python'),get,put});
   try { appearance=normalizeAppearance(await get('appearance')); } catch {}
   nativeTheme.themeSource=appearance.theme;
   protocol.handle('app', request => {
@@ -196,8 +199,8 @@ app.whenReady().then(async () => {
     // 开机自启（openAsHidden）或静默启动参数时不显示主窗口，采集照常恢复。
     const silent = process.env.JJB_SILENT === '1' || app.getLoginItemSettings().wasOpenedAsHidden;
     if (process.env.JJB_TEST_OFFSCREEN === '1') return window.showInactive();
-    window.show();
     window.__silentStartup = !!silent;
+    if(!silent)window.show();
   });
   window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   window.webContents.on('will-navigate', event => event.preventDefault());
@@ -210,5 +213,5 @@ app.whenReady().then(async () => {
   await window.loadURL('app://jiaojianbox/index.html');
   edgeWindow=new EdgeWindow({root:sourceRoot,main:window,get,put,resources:bridgeRoot});await edgeWindow.start();
 });
-app.on('before-quit', () => { edgeWindow?.stop(); collector?.kill(); qqManager?.stop(); });
+app.on('before-quit', () => { edgeWindow?.stop(); collector?.kill(); qqManager?.stop(); localWorkspace?.stop(); });
 app.on('window-all-closed', () => {if(!edgeWindow)app.quit();});
