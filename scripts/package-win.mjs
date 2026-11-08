@@ -5,8 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-execFileSync(process.env.PYTHON || 'python', [path.join(root, 'scripts', 'prepare-core-runtime.py')], { cwd: root, stdio: 'inherit' });
-execFileSync(process.env.PYTHON || 'python', [path.join(root, 'scripts', 'prepare-runtime.py')], { cwd: root, stdio: 'inherit' });
+execFileSync(process.env.PYTHON || 'python', [path.join(root, 'scripts', 'build-helper.py')], { cwd: root, stdio: 'inherit' });
 const packageJson = JSON.parse(await fs.readFile(path.join(root, 'package.json'), 'utf8'));
 const outArgument = process.argv.find(item => item.startsWith('--out-dir='));
 const outputRoot = outArgument ? path.resolve(root, outArgument.slice(10)) : path.join(root, 'artifacts');
@@ -26,13 +25,9 @@ await build({
     directories: { output: outputRoot },
     files: ['desktop/**/*', 'web/**/*'],
     extraResources: [
-      { from: path.join(root, 'work', 'bundle', 'python'), to: 'runtime/python', filter: noCacheFilter },
-      { from: path.join(root, 'work', 'bundle', 'snowluma'), to: 'runtime/snowluma', filter: noCacheFilter },
-      { from: path.join(root, 'work', 'bundle', 'manifest.json'), to: 'runtime/manifest.json' },
-      { from: path.join(root, 'collector'), to: 'python/collector', filter: noCacheFilter },
-      { from: path.join(root, 'server'), to: 'python/server', filter: noCacheFilter },
-      { from: path.join(root, 'web'), to: 'python/web' },
-      { from: path.join(root, 'requirements.txt'), to: 'python/requirements.txt' },
+      { from: path.join(root, 'work', 'helper', 'collector-agent'), to: 'runtime/collector-agent' },
+      { from: path.join(root, 'work', 'helper', 'local-server'), to: 'runtime/local-server' },
+      { from: path.join(root, 'vendor', 'snowluma'), to: 'runtime/snowluma', filter: noCacheFilter },
       ...['snow-loader.mjs', 'snow-bridge.mjs', 'drag-watch.exe', 'tray.png'].map(name => ({ from: path.join(root, 'desktop', name), to: `bridge/${name}` })),
     ],
     icon: path.join(root, 'build', 'installer.ico'),

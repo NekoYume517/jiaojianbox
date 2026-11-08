@@ -11,7 +11,7 @@ class LocalWorkspace {
   async launch() {
     let credentials=await this.get('offline-credentials');
     if(!credentials){credentials={password:crypto.randomBytes(36).toString('base64url')};await this.put('offline-credentials',credentials);}
-    const child=spawn(this.python,['-u','-m','server.local'],{cwd:this.root,windowsHide:true,stdio:['pipe','pipe','pipe'],env:{...process.env,PYTHONIOENCODING:'utf-8'}});
+    const child=spawn(this.python,this.pythonArgs||['-u','-m','server.local'],{cwd:this.root,windowsHide:true,stdio:['pipe','pipe','pipe'],env:{...process.env,PYTHONIOENCODING:'utf-8'}});
     this.child=child;child.stderr.on('data',()=>{});child.stdin.on('error',()=>{});
     child.stdin.end(JSON.stringify({data_dir:path.join(this.userData,'offline-workspace'),password:credentials.password})+'\n');
     try {

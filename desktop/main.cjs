@@ -18,7 +18,7 @@ app.on('second-instance',()=>{window?.show();window?.focus();});
 let window, collector, collectorState = { state: 'stopped' };
 const storageWrites = new Map();
 const sourceRoot = path.resolve(__dirname, '..');
-const collectorRoot = app.isPackaged ? path.join(process.resourcesPath, 'python') : sourceRoot;
+const collectorRoot = app.isPackaged ? process.resourcesPath : sourceRoot;
 const allowedAssets = new Set(['index.html', 'admin.js', 'account.js', 'legacy-transfer.js', 'app.css', 'select-arrow.css', 'app.js', 'updater.js', 'analysis.js', 'statistics.js', 'vendor/echarts.min.js', 'theme.js', 'experience.js', 'shelf.js', 'icon.svg', 'edge.html', 'edge.css', 'edge.js']);
 let appearance = { theme: 'system', density: 'comfortable', textSize: 'normal' };
 let qqManager,edgeWindow,localWorkspace;
@@ -80,8 +80,11 @@ async function stopCollector() {
   publishState({ state: 'stopped', message: '采集已停止' });
 }
 function runPython(command, config, onEvent) {
-  const python = config.python_path || (app.isPackaged?path.join(process.resourcesPath,'runtime','python','python.exe'):null) || (process.platform === 'win32' ? 'python' : 'python3');
-  const child = spawn(python, ['-u', '-m', 'collector.agent', command, '--state-dir', path.join(app.getPath('userData'), 'collector')], {
+  const helper = app.isPackaged?path.join(process.resourcesPath,'runtime','collector-agent','collector-agent.exe'):null;
+  const python = config.python_path || (helper ? null : (process.platform === 'win32' ? 'python' : 'python3'));
+  const exe = config.python_path || helper;
+  const baseArgs = config.python_path ? ['-u', '-m', 'collector.agent'] : [];
+  const child = spawn(exe, [...baseArgs, command, '--state-dir', path.join(app.getPath('userData'), 'collector')], {
     cwd: collectorRoot, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'], env: { ...process.env, PYTHONIOENCODING: 'utf-8' },
   });
   child.stdin.on('error', () => {});
@@ -178,7 +181,7 @@ function installHandlers() {
 }
 
 app.whenReady().then(async () => {
-  localWorkspace=new LocalWorkspace({root:collectorRoot,userData:app.getPath('userData'),python:app.isPackaged?path.join(process.resourcesPath,'runtime','python','python.exe'):(process.env.JJB_PYTHON||'python'),get,put});
+  localWorkspace=new LocalWorkspace({root:collectorRoot,userData:app.getPath('userData'),python:app.isPackaged?path.join(process.resourcesPath,'runtime','local-server','local-server.exe'):(process.env.JJB_PYTHON||'python'),pythonArgs:app.isPackaged?[]:['-u','-m','server.local'],get,put});
   try { appearance=normalizeAppearance(await get('appearance')); } catch {}
   nativeTheme.themeSource=appearance.theme;
   protocol.handle('app', request => {

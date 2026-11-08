@@ -65,14 +65,6 @@ jobs:
         with:
           node-version: '22'
 
-      - uses: astral-sh/setup-uv@v5
-
-      - name: Prepare portable Python runtime
-        shell: pwsh
-        run: |
-          uv python install 3.13
-          $pythonHome = Split-Path -Parent (uv python find 3.13)
-          "JJB_PYTHON_HOME=$pythonHome" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
       - name: Install dependencies
         run: |

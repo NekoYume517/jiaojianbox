@@ -4,5 +4,7 @@ $('#tab').onclick=()=>{edge.expand(true);refresh();};$('#collapse').onclick=()=>
 $('#quick').onsubmit=async e=>{e.preventDefault();const buttons=[...$('#quick').querySelectorAll('button')];buttons.forEach(b=>b.disabled=true);try{await edge.note({text:$('#text').value,kind:e.submitter.value});$('#text').value='';$('#status').textContent='已保存并同步';refresh();}catch(e){$('#status').textContent=e.message;}finally{buttons.forEach(b=>b.disabled=false);}};
 edge.on('edge-expanded',v=>{$('#tab').hidden=v;$('#panel').hidden=!v;if(v)refresh();});edge.on('edge-status',v=>$('#status').textContent=v);edge.on('edge-refresh',refresh);window.addEventListener('edge-local-error',e=>$('#status').textContent=e.detail);document.addEventListener('keydown',e=>{if(e.key==='Escape')edge.expand(false);});
 
-edge.on('edge-preferences',p=>{document.querySelector('#choose').hidden=!p.drop;document.querySelector('#quick').hidden=!p.note;document.querySelector('#content').hidden=!p.files;requestAnimationFrame(()=>edge.resize(document.body.scrollHeight));});
-const resizeObserver=new ResizeObserver(()=>edge.resize(document.body.scrollHeight));resizeObserver.observe(document.body);
+edge.on('edge-preferences',p=>{document.querySelector('#choose').hidden=!p.drop;document.querySelector('#quick').hidden=!p.note;document.querySelector('#content').hidden=!p.files;});
+document.addEventListener('dragover',()=>document.body.classList.add('drag-active'));
+document.addEventListener('dragleave',e=>{if(!e.relatedTarget)document.body.classList.remove('drag-active');});
+document.addEventListener('drop',()=>document.body.classList.remove('drag-active'));

@@ -11,12 +11,11 @@ class EdgeWindow{
   this.win.on('close',e=>{if(!this.stopping){e.preventDefault();this.show(false);}});
   this.win.setAlwaysOnTop(true,'floating');this.win.webContents.setWindowOpenHandler(()=>({action:'deny'}));this.win.webContents.on('will-navigate',e=>e.preventDefault());this.win.webContents.session.setPermissionRequestHandler((w,p,cb)=>cb(false));
   const handle=(name,fn)=>ipcMain.handle(name,(e,...args)=>{if(e.senderFrame!==this.win.webContents.mainFrame||e.senderFrame.url!=='app://jiaojianbox/edge.html')throw Error('请求来源无效');return fn(...args);});
-  handle('edge-expand',v=>{this.auto=false;clearTimeout(this.releaseTimer);return this.show(!!v);});handle('edge-state',()=>this.snapshot());
+  handle('edge-expand',v=>{this.auto=false;this.dragging=false;clearTimeout(this.releaseTimer);return this.show(!!v);});handle('edge-state',()=>this.snapshot());
   handle('edge-upload',paths=>this.upload(paths));
   handle('edge-choose',async()=>{const r=await dialog.showOpenDialog(this.win,{properties:['openFile','multiSelections']});return r.canceled?[]:this.upload(r.filePaths);});
   handle('edge-note',async({text,kind})=>{text=String(text||'').trim();if(!text||text.length>2000)throw Error('请填写内容（最多2000字）');if(kind==='task')await this.api('/api/tasks','POST',{title:text.slice(0,200),description:text});else{const s=await this.get('session');await this.api('/api/messages','POST',{source:'manual',account_id:s.user_id,conversation_id:'quick',conversation_name:'快捷收集',external_id:require('node:crypto').randomUUID(),sender_name:s.username,text,sent_at:new Date().toISOString()});}return this.snapshot();});
   handle('edge-main',()=>{this.main.show();this.main.focus();});
-  handle('edge-resize',h=>this.resizeTo(Number(h)));
   this.win.on('moved',()=>{if(this.expanded&&process.env.JJB_TEST_OFFSCREEN!=='1'){const {x,y}=this.win.getBounds();this.position={x,y};clearTimeout(this.positionTimer);this.positionTimer=setTimeout(()=>this.put('quick-position',this.position).catch(()=>{}),250);}});
   await this.win.loadURL('app://jiaojianbox/edge.html');this.show(false);
   const svg='<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32"><rect width="32" height="32" rx="8" fill="#2b634a"/><path d="M7 8h18v17H7zM7 17h6l3 4 3-4h6" fill="none" stroke="white" stroke-width="2"/></svg>';
@@ -33,10 +32,12 @@ class EdgeWindow{
    let pending='';
    this.watcher.stdout.on('data',chunk=>{pending+=chunk;let n;while((n=pending.indexOf('\n'))>=0){const event=pending.slice(0,n).trim();pending=pending.slice(n+1);
     if(event==='drag'){
+      this.dragging=true;
       clearTimeout(this.releaseTimer);
       // 系统级拖动开始：始终弹出快捷窗（无论主窗口是否可见），由 hook 决定时机。
       if(!this.expanded&&!this.win.isDestroyed()){this.show(true);this.auto=true;}
     }else if(event==='release'&&this.auto){
+      this.dragging=false;
       // 松开鼠标：光标在窗口上或窗口在前台时不关（用户可能正要拖入/在操作）；未放入文件才收起。
       clearTimeout(this.releaseTimer);
       this.releaseTimer=setTimeout(()=>{
@@ -49,9 +50,7 @@ class EdgeWindow{
    this.watcher.on('error',()=>{});
   }
  }
- show(expand){if(expand&&!this.preferences.enabled)return;if(!this.win||this.win.isDestroyed())return;this.expanded=expand;if(!expand){this.auto=false;clearTimeout(this.releaseTimer);this.send('edge-expanded',false);this.win.hide();return;}const point=this.position&&Number.isFinite(this.position.x)&&Number.isFinite(this.position.y)?this.position:screen.getCursorScreenPoint();const a=screen.getDisplayNearestPoint(point).workArea;const width=360;const height=Math.max(190,Math.min(a.height,this.contentSize||300));const x=process.env.JJB_TEST_OFFSCREEN==='1'?-10000:this.position&&Number.isFinite(this.position.x)?Math.max(a.x,Math.min(a.x+a.width-width,this.position.x)):Math.max(a.x,Math.min(a.x+a.width-width,point.x));const y=process.env.JJB_TEST_OFFSCREEN==='1'?-10000:this.position&&Number.isFinite(this.position.y)?Math.max(a.y,Math.min(a.y+a.height-height,this.position.y)):Math.max(a.y,Math.min(a.y+a.height-height,point.y));this.win.setBounds({x,y,width,height},false);this.send('edge-preferences',this.preferences);this.send('edge-expanded',true);this.win.showInactive();this.win.moveTop();}
-
- resizeTo(height){if(!this.win||this.win.isDestroyed()||!this.expanded)return;const h=Math.max(190,Math.min(560,Math.round(height||300)));this.contentSize=h;const b=this.win.getBounds();const a=screen.getDisplayNearestPoint({x:b.x,y:b.y}).workArea;const y=Math.max(a.y,Math.min(a.y+a.height-h,b.y));this.win.setBounds({x:b.x,y,width:b.width,height:h},false);}
+ show(expand){if(expand&&!this.preferences.enabled)return;if(!this.win||this.win.isDestroyed())return;const wasExpanded=this.expanded;this.expanded=expand;if(!expand){this.auto=false;this.dragging=false;clearTimeout(this.releaseTimer);this.send('edge-expanded',false);this.win.hide();return;}if(wasExpanded&&(this.dragging||(typeof this.win.isVisible==='function'&&this.win.isVisible()))){this.send('edge-preferences',this.preferences);this.send('edge-expanded',true);this.win.showInactive();this.win.moveTop();return;}const point=this.position&&Number.isFinite(this.position.x)&&Number.isFinite(this.position.y)?this.position:screen.getCursorScreenPoint();const a=screen.getDisplayNearestPoint(point).workArea;const width=360;const height=Math.min(a.height,460);const x=process.env.JJB_TEST_OFFSCREEN==='1'?-10000:this.position&&Number.isFinite(this.position.x)?Math.max(a.x,Math.min(a.x+a.width-width,this.position.x)):Math.max(a.x,Math.min(a.x+a.width-width,point.x));const y=process.env.JJB_TEST_OFFSCREEN==='1'?-10000:this.position&&Number.isFinite(this.position.y)?Math.max(a.y,Math.min(a.y+a.height-height,this.position.y)):Math.max(a.y,Math.min(a.y+a.height-height,point.y));this.win.setBounds({x,y,width,height},false);this.send('edge-preferences',this.preferences);this.send('edge-expanded',true);this.win.showInactive();this.win.moveTop();}
  isCursorOver(){if(!this.win||this.win.isDestroyed())return false;const b=this.win.getBounds();const p=screen.getCursorScreenPoint();return p.x>=b.x&&p.x<=b.x+b.width&&p.y>=b.y&&p.y<=b.y+b.height;}
  send(...args){if(this.win&&!this.win.isDestroyed()&&!this.win.webContents.isDestroyed())this.win.webContents.send(...args);}
  async snapshot(){try{const s=await this.api('/api/snapshot');return{files:(s.shelf||[]).slice(0,15).map(f=>({name:f.name,reason:f.suggestion?.reason||'',task:s.tasks.find(t=>t.id===f.task_id)?.title||''})),tasks:s.tasks.filter(t=>!['submitted','archived'].includes(t.status)).slice(0,8).map(t=>({title:t.title,due:t.due_at}))};}catch(e){return{error:e.message,files:[],tasks:[]};}}
