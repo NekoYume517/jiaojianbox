@@ -41,16 +41,16 @@ window.jjbAdmin = (() => {
       if (!$('#registration-mode') || generation !== state.generation) return;
       $('#registration-mode').value = policy.mode;
       $('#registration-form').addEventListener('submit', async e => {
-        e.preventDefault(); const button = e.submitter; button.disabled = true;
-        try { await api('/api/admin/registration', 'PUT', {mode: $('#registration-mode').value}); $('#registration-status').textContent = '已保存，立即生效'; }
-        catch (error) { $('#registration-status').textContent = error.message; }
+        e.preventDefault(); const button = e.submitter, status = $('#registration-status'); button.disabled = true;
+        try { await api('/api/admin/registration', 'PUT', {mode: $('#registration-mode').value}); status.textContent = '已保存，立即生效'; }
+        catch (error) { status.textContent = error.message; }
         finally { button.disabled = false; }
       });
       $('#invitation-form').addEventListener('submit', async e => {
         e.preventDefault(); const button = e.submitter; button.disabled = true;
         try {
           const item = await api('/api/admin/invitations', 'POST', {label: $('#invitation-note').value, max_uses: Number($('#invitation-uses').value), expires_days: Number($('#invitation-days').value)});
-          if (!$('#new-invitation')) return;
+          if (generation !== state.generation || !$('#new-invitation')) return;
           $('#new-invitation-label').hidden = false; $('#new-invitation').value = item.code;
           $('#invitation-status').textContent = '已生成，请复制保存'; await invitations();
         } catch (error) { if ($('#invitation-status')) $('#invitation-status').textContent = error.message; }
