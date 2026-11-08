@@ -13,8 +13,9 @@ window.accountUI = (() => {
     const ownsActive=state.session?.server===source.server&&state.session?.user_id===source.user_id;
     if(ownsActive&&state.pending.length)await flushOutbox();
     const response=await fetch(source.server+'/api/workspace/export',{headers:headers(source),signal:AbortSignal.timeout(300000)});
-    if(!response.ok)throw Error('无法导出来源工作区，请确认已连接来源服务');
-    const form=new FormData();form.append('file',await response.blob(),'workspace.zip');
+    if(!response.ok&&response.status!==404)throw Error('无法导出来源工作区，请确认已连接来源服务');
+    const archive=response.status===404?await legacyTransfer.archive(source):await response.blob();
+    const form=new FormData();form.append('file',archive,'workspace.zip');
     const result=await fetch(target.server+'/api/workspace/import',{method:'POST',headers:headers(target),body:form,signal:AbortSignal.timeout(300000)});
     const data=await result.json();if(!result.ok)throw Error(data.detail||'导入失败，来源数据未改变');if(ownsActive&&state.pending.length)await copyCached(source,target,true);return data;
   }
