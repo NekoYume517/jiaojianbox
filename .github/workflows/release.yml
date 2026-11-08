@@ -57,9 +57,11 @@ jobs:
           ./gradlew assembleDebug
 
       - name: Rename APK
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
         run: |
           mkdir -p dist
-          cp android/app/build/outputs/apk/debug/app-debug.apk "dist/JiaojianBox-${GITHUB_REF_NAME}-android-debug.apk"
+          cp android/app/build/outputs/apk/debug/app-debug.apk "dist/JiaojianBox-${RELEASE_TAG}-android-debug.apk"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4

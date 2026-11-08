@@ -13,3 +13,10 @@ work
 artifacts*
 docs/verification*
 .env
+runtime-vendor
+android
+desktop
+collector
+server
+docs
+scripts

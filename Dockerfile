@@ -1,4 +1,4 @@
-FROM golang:1.26.10-bookworm AS build
+FROM golang:1.26.10-alpine AS build
 WORKDIR /src
 ARG GOPROXY=https://goproxy.cn,direct
 ENV CGO_ENABLED=0 GOPROXY=$GOPROXY
