@@ -1,8 +1,9 @@
 FROM python:3.11-slim
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 JJB_DATA_DIR=/data
 WORKDIR /app
+ARG PIP_INDEX_URL=https://pypi.org/simple
 COPY requirements.txt ./
-RUN pip install --no-cache-dir -r requirements.txt && useradd --create-home app && mkdir /data && chown app:app /data
+RUN pip install --no-cache-dir --index-url "$PIP_INDEX_URL" -r requirements.txt && useradd --create-home app && mkdir /data && chown app:app /data
 COPY server ./server
 COPY web ./web
 USER app
