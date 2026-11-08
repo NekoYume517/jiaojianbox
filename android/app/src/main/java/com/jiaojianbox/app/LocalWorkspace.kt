@@ -72,8 +72,12 @@ object LocalWorkspace {
         val taskIds=mutableMapOf<String,String>();val staged=mutableListOf<File>()
         fun map(kind: String,id: String): Pair<String,Boolean> {UUID.fromString(id);val key="$origin:$kind:$id";if(imports.has(key))return imports.getString(key) to false;val result=UUID.randomUUID().toString();imports.put(key,result);return result to true}
         try {
-            for (item in rows(source,"tasks")) {val (id,fresh)=map("tasks",item.getString("id"));taskIds[item.getString("id")]=id;if(fresh)value.getJSONArray("tasks").put(JSONObject(item.toString()).put("id",id).put("version",1).put("source_message_id",JSONObject.NULL))}
             for (item in rows(source,"messages")) {val (id,fresh)=map("messages",item.getString("id"));if(fresh)value.getJSONArray("messages").put(JSONObject(item.toString()).put("id",id))}
+            for (item in rows(source,"tasks")) {
+                val (id,fresh)=map("tasks",item.getString("id"));taskIds[item.getString("id")]=id
+                val linked=imports.optString("$origin:messages:"+item.optString("source_message_id")).takeIf { it.isNotBlank() }
+                if(fresh)value.getJSONArray("tasks").put(JSONObject(item.toString()).put("id",id).put("version",1).put("source_message_id",linked?:JSONObject.NULL))
+            }
             for (item in rows(source,"files")) {
                 val old=item.getString("id");val (id,fresh)=map("files",old);if(!fresh)continue
                 val entry=zip.getEntry("files/$old")?:error("附件不完整")
@@ -88,6 +92,9 @@ object LocalWorkspace {
                 val task=taskIds[item.optString("task_id")];value.getJSONArray("files").put(JSONObject(item.toString()).put("id",id).put("task_id",task?:JSONObject.NULL))
                 val meta=rows(source,"shelf").find { it.optString("file_id")==old }
                 value.getJSONArray("shelf").put(JSONObject().put("file_id",id).put("category",meta?.optString("category")?:"inbox"))
+            }
+            if(!value.has("llm_settings") && source.has("llm_settings")) {
+                val config=JSONObject(source.getJSONObject("llm_settings").toString());config.remove("api_key");value.put("llm_settings",config)
             }
             save(value);staged.clear()
         } finally {staged.forEach { it.delete() }}
