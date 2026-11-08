@@ -7,6 +7,8 @@ import { execFileSync } from 'node:child_process';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 execFileSync(process.env.PYTHON || 'python', [path.join(root, 'scripts', 'build-helper.py')], { cwd: root, stdio: 'inherit' });
 const packageJson = JSON.parse(await fs.readFile(path.join(root, 'package.json'), 'utf8'));
+const installedElectron = path.join(root, 'node_modules', 'electron', 'dist');
+const electronDist = await fs.access(path.join(installedElectron, 'electron.exe')).then(() => installedElectron).catch(() => undefined);
 const outArgument = process.argv.find(item => item.startsWith('--out-dir='));
 const outputRoot = outArgument ? path.resolve(root, outArgument.slice(10)) : path.join(root, 'artifacts');
 process.env.ELECTRON_MIRROR ||= 'https://npmmirror.com/mirrors/electron/';
@@ -22,7 +24,7 @@ await build({
   publish: 'never',
   config: {
     electronVersion: packageJson.devDependencies.electron,
-    electronDist: path.join(root, 'node_modules', 'electron', 'dist'),
+    electronDist,
     directories: { output: outputRoot },
     files: ['desktop/**/*', 'web/**/*'],
     extraResources: [

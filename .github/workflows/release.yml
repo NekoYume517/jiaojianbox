@@ -5,6 +5,11 @@ on:
     tags:
       - 'v*'
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: 'Optional existing version tag to publish after a packaging retry'
+        required: false
+        type: string
 
 permissions:
   contents: write
@@ -92,7 +97,7 @@ jobs:
     name: Publish GitHub Release
     needs: [android, windows]
     runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: startsWith(github.ref, 'refs/tags/v') || inputs.release_tag != ''
     steps:
       - name: Download windows artifact
         uses: actions/download-artifact@v4
@@ -109,6 +114,7 @@ jobs:
       - name: Create release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ inputs.release_tag || github.ref_name }}
           generate_release_notes: true
           overwrite_files: false
           files: |
