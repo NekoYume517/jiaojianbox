@@ -134,7 +134,7 @@ data class Task(
     val dueAt: String?, val version: Int, val materialCount: Int, val raw: JSONObject,
 )
 
-data class Message(val id: String, val text: String, val conversationName: String, val sentAt: String, val source: String, val classification: String?, val confidence: Double?)
+data class Message(val id: String, val text: String, val conversationName: String, val sentAt: String, val source: String, val classification: String?, val confidence: Double?, val analysisPending: Boolean = false, val analysisState: String = "", val analysisError: String? = null)
 
 data class ShelfItem(val id: String, val name: String, val size: Long, val taskId: String?, val kind: String, val category: String, val reason: String?, val version: Int)
 
@@ -157,6 +157,9 @@ fun JSONObject.toMessage() = Message(
     source = optString("source", "manual"),
     classification = optJSONObject("analysis")?.optString("classification")?.ifEmpty { null },
     confidence = optJSONObject("analysis")?.optDouble("confidence")?.takeIf { !it.isNaN() },
+    analysisPending = optBoolean("analysis_pending"),
+    analysisState = optString("analysis_state"),
+    analysisError = optString("analysis_error").takeUnless { isNull("analysis_error") || it.isBlank() },
 )
 
 fun JSONObject.toShelf() = ShelfItem(

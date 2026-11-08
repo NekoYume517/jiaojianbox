@@ -371,11 +371,13 @@ fun InboxPage(snapshot: Snapshot?, onOpen: (Message) -> Unit) {
                         }
                         Spacer(Modifier.height(6.dp))
                         Text(message.text, style = MaterialTheme.typography.bodySmall, maxLines = 3, overflow = TextOverflow.Ellipsis)
-                        message.classification?.let {
+                        if (message.analysisPending || message.analysisError != null || message.classification != null) {
                             Spacer(Modifier.height(8.dp))
-                            when (it) {
-                                "actionable" -> AssistChip(onClick = {}, label = { Text("交件通知") })
-                                "chatting" -> AssistChip(onClick = {}, label = { Text("普通聊天") })
+                            when {
+                                message.analysisPending -> AssistChip(onClick = {}, label = { Text(if (message.analysisState == "retrying") "等待重试" else "分析中") })
+                                message.classification == null && message.analysisError != null -> AssistChip(onClick = {}, label = { Text("分析失败") })
+                                message.classification == "actionable" -> AssistChip(onClick = {}, label = { Text("交件通知") })
+                                message.classification == "chatting" -> AssistChip(onClick = {}, label = { Text("普通聊天") })
                                 else -> AssistChip(onClick = {}, label = { Text("其他信息") })
                             }
                         }

@@ -32,7 +32,7 @@ from .stats import summarize
 from .accounts import Accounts
 from .transfer import install_transfer
 from .extract import extract
-from .llm import LlmConfig, analyze, endpoint, suggest_file
+from .llm import LlmConfig, analyze, endpoint, suggest_file, tool_result_tasks
 from .file_content import read_text
 from .vision import IMAGE_EXTENSIONS,prepare_image
 from cryptography.fernet import Fernet
@@ -248,7 +248,7 @@ def create_app(data_dir: str | Path | None = None) -> FastAPI:
         worker.cancel()
         await asyncio.gather(worker, return_exceptions=True)
 
-    app = FastAPI(title="交件箱 API", version="0.5.0", docs_url="/docs", lifespan=lifespan)
+    app = FastAPI(title="交件箱 API", version="0.5.3", docs_url="/docs", lifespan=lifespan)
     app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["GET", "POST", "PUT", "DELETE"], allow_headers=["Authorization", "Content-Type"])
     app.state.database = database
     attempts = defaultdict(deque)
@@ -390,7 +390,7 @@ def create_app(data_dir: str | Path | None = None) -> FastAPI:
                     user_tasks.append(task_obj | {"conversation": conversation})
             result = await analyze(config, [target], contexts, key, progress=progress, user_tasks=user_tasks, tool_executor=readonly_tool_executor(user))
             # 再通过任务数据契约校验模型推断，避免不合法日期/链接进入任务。
-            validated = TaskInput.model_validate({**result, "title": result.get("title") or target["draft"]["title"]})
+            validated = TaskInput.model_validate({**result, "title": result.get("title") or target["draft"]["title"], "reminders": result.get("reminder_suggestions") or []})
             for k in ("due_at", "requirements", "max_total_bytes", "naming_hint", "submit_url", "urgency", "reminders"):
                 result[k] = validated.model_dump()[k]
         except asyncio.CancelledError as exc:
@@ -439,6 +439,8 @@ def create_app(data_dir: str | Path | None = None) -> FastAPI:
             obj = json.loads(current[0])
             obj["analysis"] = result
             obj.pop("analysis_error", None)
+            obj.pop("analysis_pending", None)
+            obj.pop("analysis_state", None)
             if created_task:
                 obj["auto_task_id"] = created_task["id"]
                 if created_task.get("duplicate_of"):
@@ -455,20 +457,25 @@ def create_app(data_dir: str | Path | None = None) -> FastAPI:
                 row = conn.execute("SELECT * FROM analysis_jobs WHERE state='queued' AND next_at<=? ORDER BY id LIMIT 1", (time.time(),)).fetchone()
                 if row:
                     conn.execute("UPDATE analysis_jobs SET state='running',attempts=attempts+1 WHERE id=?", (row["id"],))
+                    event(conn, row["user_id"], "message.upsert", row["message_id"])
             if not row:
                 await asyncio.sleep(1)
                 continue
             try:
-                result = await run_analysis(row["user_id"], AnalyzeInput(message_id=row["message_id"]))
+                async with asyncio.timeout(180):
+                    result = await run_analysis(row["user_id"], AnalyzeInput(message_id=row["message_id"]))
                 state, error, retry = "done", "", 0
-            except (HTTPException, ValueError, httpx.HTTPError):
-                state, error, retry = ("failed" if row["attempts"] >= 2 else "queued"), "自动分析失败，将在消息页显示重试入口", time.time() + 20
+            except (HTTPException, ValueError, httpx.HTTPError, TimeoutError):
+                state = "failed" if row["attempts"] >= 2 else "queued"
+                error = "自动分析失败，请检查模型设置后重试" if state == "failed" else "本次分析未完成，稍后自动重试"
+                retry = time.time() + 20
             with db(True) as conn:
                 conn.execute("UPDATE analysis_jobs SET state=?,error=?,next_at=? WHERE id=?", (state, error, retry, row["id"]))
                 if error:
                     message_row = conn.execute("SELECT payload FROM messages WHERE id=? AND user_id=?", (row["message_id"], row["user_id"])).fetchone()
                     if message_row:
                         obj = json.loads(message_row[0]) | {"analysis_error": error}
+                        obj.pop("analysis_pending", None)
                         conn.execute("UPDATE messages SET payload=? WHERE id=?", (json.dumps(obj, ensure_ascii=False), row["message_id"]))
                         event(conn, row["user_id"], "message.upsert", row["message_id"])
 
@@ -543,7 +550,7 @@ def create_app(data_dir: str | Path | None = None) -> FastAPI:
 
     @app.get("/health")
     def health():
-        return {"status": "ok", "version": "0.5.0"}
+        return {"status": "ok", "version": "0.5.3"}
 
     @app.post("/api/auth/register", status_code=201)
     def register(body: Credentials, request: Request):
@@ -619,13 +626,34 @@ def create_app(data_dir: str | Path | None = None) -> FastAPI:
     def authorize_page():
         return FileResponse(Path(__file__).resolve().parents[1]/'web/index.html')
 
+    def messages_with_status(conn, rows):
+        """队列为状态来源，兼容升级前入库的消息及服务重启后的队列。"""
+        messages = [json.loads(r[0]) for r in rows]
+        if not messages: return messages
+        placeholders = ','.join('?' for _ in messages)
+        jobs = {r['message_id']: r for r in conn.execute(
+            f'SELECT message_id,state,attempts,error FROM analysis_jobs WHERE message_id IN ({placeholders})',
+            [m['id'] for m in messages])}
+        for message in messages:
+            message.pop('analysis_pending', None)
+            message.pop('analysis_state', None)
+            job = jobs.get(message['id'])
+            if message.get('analysis'):
+                message['analysis_state'] = 'done'
+                message.pop('analysis_error', None)
+            elif job and message.get('triage') != 'ignored':
+                message['analysis_state'] = 'retrying' if job['state'] == 'queued' and job['attempts'] else job['state']
+                message['analysis_pending'] = job['state'] in ('queued', 'running')
+                if job['error']: message['analysis_error'] = job['error']
+        return messages
+
     @app.get("/api/snapshot")
     def snapshot(user=Depends(owner)):
         with db() as conn:
             conn.execute("BEGIN")
             cursor = conn.execute("SELECT COALESCE(MAX(seq),0) FROM events WHERE user_id=?", (user,)).fetchone()[0]
             tasks = [task_object(conn, r) for r in conn.execute("SELECT * FROM tasks WHERE user_id=? ORDER BY rowid DESC", (user,))]
-            messages = [json.loads(r[0]) for r in conn.execute("SELECT payload FROM messages WHERE user_id=? ORDER BY rowid DESC LIMIT 200", (user,))]
+            messages = messages_with_status(conn, conn.execute("SELECT payload FROM messages WHERE user_id=? ORDER BY rowid DESC LIMIT 200", (user,)))
             shelf=[dict(r) for r in conn.execute('SELECT a.id,a.name,a.size,a.sha256,a.kind,a.task_id,s.category,s.suggestion,s.created_at,s.version FROM attachments a JOIN shelf_meta s ON s.file_id=a.id WHERE a.user_id=? ORDER BY s.created_at DESC LIMIT 200',(user,))]
         for item in shelf:item['suggestion']=json.loads(item['suggestion']) if item['suggestion'] else None
         return {"cursor": cursor, "tasks": tasks, "messages": messages, 'shelf':shelf}
@@ -674,7 +702,7 @@ def create_app(data_dir: str | Path | None = None) -> FastAPI:
         with db(True) as conn:
             old = conn.execute("SELECT payload FROM messages WHERE user_id=? AND dedup=?", (user, dedup)).fetchone()
             if old:
-                return json.loads(old[0])
+                return messages_with_status(conn, [old])[0]
             # 内容级去重：同一账号、同会话、同发送者，60 秒内相同正文且原始时间戳相同 → 采集抖动。
             # 不同账号/群收到同文通知是常态，不归为重复。
             window = (datetime.now(timezone.utc) - timedelta(seconds=60)).isoformat()
@@ -688,11 +716,10 @@ def create_app(data_dir: str | Path | None = None) -> FastAPI:
                     same_text = re.sub(r"\s+", "", candidate.get("text") or "")[:500] == text_key
                     same_origin = candidate.get("sent_at") == body.sent_at or abs((datetime.fromisoformat(candidate["sent_at"].replace("Z", "+00:00")) - datetime.fromisoformat(body.sent_at.replace("Z", "+00:00"))).total_seconds()) < 5
                     if same_text and same_origin:
-                        return candidate
+                        return messages_with_status(conn, [row])[0]
             message = body.model_dump() | {"id": str(uuid.uuid4()), "created_at": now()}
             message["draft"] = extract(body.text, body.sent_at)
-            conn.execute("INSERT INTO messages VALUES(?,?,?,?,?)", (message["id"], user, dedup, json.dumps(message, ensure_ascii=False), message["created_at"]))
-            event(conn, user, "message.upsert", message["id"])
+            should_analyze = False
             # 配置读取沿用同一事务；避免另开连接读取尚未提交状态。
             settings_row = conn.execute("SELECT payload FROM llm_settings WHERE user_id=?", (user,)).fetchone()
             if settings_row:
@@ -700,7 +727,13 @@ def create_app(data_dir: str | Path | None = None) -> FastAPI:
                 include = [s.strip() for s in config.get("include_keywords", "").split(",") if s.strip()]
                 exclude = [s.strip() for s in config.get("exclude_keywords", "").split(",") if s.strip()]
                 if config.get("auto_analyze") and (not include or any(s in body.text for s in include)) and not any(s in body.text for s in exclude):
-                    conn.execute("INSERT OR IGNORE INTO analysis_jobs(user_id,message_id) VALUES(?,?)", (user, message["id"]))
+                    should_analyze = True
+            conn.execute("INSERT INTO messages VALUES(?,?,?,?,?)", (message["id"], user, dedup, json.dumps(message, ensure_ascii=False), message["created_at"]))
+            if should_analyze:
+                conn.execute("INSERT OR IGNORE INTO analysis_jobs(user_id,message_id) VALUES(?,?)", (user, message["id"]))
+                message['analysis_pending'] = True
+                message['analysis_state'] = 'queued'
+            event(conn, user, "message.upsert", message["id"])
         return message
 
     @app.get("/api/messages")
@@ -712,7 +745,7 @@ def create_app(data_dir: str | Path | None = None) -> FastAPI:
                 sql += " AND rowid<(SELECT rowid FROM messages WHERE id=? AND user_id=?)"
                 params += [before, user]
             rows = conn.execute(sql + " ORDER BY rowid DESC LIMIT ?", params + [limit]).fetchall()
-        return [json.loads(r[0]) for r in rows]
+            return messages_with_status(conn, rows)
 
     @app.put("/api/messages/{message_id}/triage")
     def triage(message_id: str, body: TriageInput, user=Depends(owner)):
@@ -721,9 +754,11 @@ def create_app(data_dir: str | Path | None = None) -> FastAPI:
             if not row:
                 raise HTTPException(404, "消息不存在")
             obj = json.loads(row[0]) | {"triage": body.state}
-            conn.execute("UPDATE messages SET payload=? WHERE id=? AND user_id=?", (json.dumps(obj, ensure_ascii=False), message_id, user))
             if body.state == "ignored":
                 conn.execute("UPDATE analysis_jobs SET state='ignored' WHERE message_id=? AND state='queued'", (message_id,))
+                obj.pop("analysis_pending", None)
+                obj.pop("analysis_state", None)
+            conn.execute("UPDATE messages SET payload=? WHERE id=? AND user_id=?", (json.dumps(obj, ensure_ascii=False), message_id, user))
             event(conn, user, "message.upsert", message_id)
         return obj
 

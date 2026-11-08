@@ -1,6 +1,9 @@
 """用户自带 API：结构化分类与交件要求提取。"""
 import json
+import math
+import re
 import time
+from datetime import datetime, timezone, timedelta
 from urllib.parse import urlsplit
 
 import httpx
@@ -102,9 +105,150 @@ def robust_json(text):
         elif ch == '}':
             depth -= 1
             if depth == 0:
-                return json.loads(text[start:i + 1])
+                candidate = text[start:i + 1]
+                try:
+                    return json.loads(candidate)
+                except json.JSONDecodeError:
+                    # 仅移除字符串以外的尾随逗号，不补造截断的 JSON 或改动正文。
+                    cleaned = []; quoted = False; escaped = False
+                    for pos, char in enumerate(candidate):
+                        if not quoted and char == ',' and candidate[pos + 1:].lstrip().startswith(('}', ']')):
+                            continue
+                        cleaned.append(char)
+                        if quoted:
+                            if escaped: escaped = False
+                            elif char == '\\': escaped = True
+                            elif char == '"': quoted = False
+                        elif char == '"': quoted = True
+                    return json.loads(''.join(cleaned))
     raise ValueError('unbalanced json')
 
+CLASS_ALIASES = {
+    'actionable': 'actionable', 'action': 'actionable', 'task': 'actionable', 'todo': 'actionable',
+    'job': 'actionable', 'submission': 'actionable', 'assignment': 'actionable',
+    '交件': 'actionable', '任务': 'actionable', '待办': 'actionable', '交件通知': 'actionable', '待办事项': 'actionable',
+    'chatting': 'chatting', 'chat': 'chatting', 'conversation': 'chatting', 'normal': 'chatting',
+    'daily': 'chatting', '聊天': 'chatting', '闲聊': 'chatting', '日常': 'chatting', '普通聊天': 'chatting',
+    'irrelevant': 'irrelevant', 'spam': 'irrelevant', 'ad': 'irrelevant', 'advertisement': 'irrelevant',
+    'noise': 'irrelevant', 'ignore': 'irrelevant', 'system': 'irrelevant',
+    '无关': 'irrelevant', '广告': 'irrelevant', '垃圾': 'irrelevant', '无关信息': 'irrelevant', '其他信息': 'irrelevant',
+}
+URGENCY_ALIASES = {'high': 'high', 'urgent': 'high', 'critical': 'high', '高': 'high', '紧急': 'high',
+                   'normal': 'normal', 'medium': 'normal', 'mid': 'normal', '中': 'normal', '一般': 'normal',
+                   'low': 'low', '低': 'low', '不急': 'low'}
+CATEGORY_ALIASES = {'material': 'material', 'materials': 'material', '材料': 'material', '素材': 'material',
+                    'receipt': 'receipt', 'proof': 'receipt', '回执': 'receipt', '凭证': 'receipt',
+                    'reference': 'reference', '参考': 'reference', '资料': 'reference',
+                    'other': 'other', '其他': 'other'}
+
+
+def _lenient(raw, kind='analysis'):
+    """宽容清洗模型输出：同义词、类型偏差、超长列表都修复，而不是让整体校验失败。"""
+    if not isinstance(raw, dict):
+        raise ValueError('模型结果不是对象')
+    obj = dict(raw)
+    # 外层无关键键时，尝试解开一层嵌套（如 {"result": {...}}）。
+    keys = ('category', 'task_id') if kind == 'file' else ('classification',)
+    for _ in range(3):
+        if any(k in obj for k in keys): break
+        nested = [value for value in obj.values() if isinstance(value, dict)]
+        if len(nested) != 1: break
+        obj = dict(nested[0])
+    if not any(k in obj for k in keys):
+        raise ValueError('模型结果缺少分类')
+
+    def as_float(value, fallback=.5):
+        try:
+            value = str(value).strip()
+            percent = value.endswith(('%', '％'))
+            number = float(value.rstrip('%％'))
+        except (TypeError, ValueError):
+            return fallback
+        if not math.isfinite(number): return fallback
+        if percent or (number > 1 and number <= 100):
+            number /= 100
+        return min(1., max(0., number))
+
+    def as_str(value, limit):
+        return '' if value is None else str(value)[:limit]
+
+    def as_bool(value):
+        if isinstance(value, bool):
+            return value
+        return str(value).strip().lower() in ('true', '1', 'yes', '是')
+
+    def clamp(items, limit):
+        if isinstance(items, (str, dict)): items = [items]
+        return items[:limit] if isinstance(items, list) else []
+
+    def date(value):
+        if not isinstance(value, str) or not value.strip(): return None
+        try:
+            parsed = datetime.fromisoformat(value.strip().replace('Z', '+00:00'))
+            if not parsed.tzinfo: parsed = parsed.replace(tzinfo=timezone(timedelta(hours=8)))
+            return parsed.isoformat()
+        except ValueError:
+            return None
+
+    if kind == 'file':
+        category = CATEGORY_ALIASES.get(str(obj.get('category') or '').strip().lower())
+        if not category:
+            category = 'material' if obj.get('task_id') else 'other'
+        obj['category'] = category
+        if obj.get('task_id') is not None:
+            obj['task_id'] = str(obj['task_id'])
+        obj['confidence'] = as_float(obj.get('confidence'))
+        obj['reason'] = as_str(obj.get('reason'), 2000)
+        obj['evidence'] = as_str(obj.get('evidence'), 4000)
+        return obj
+
+    label = str(obj.get('classification') or '').strip().lower()
+    if label not in CLASS_ALIASES:
+        raise ValueError('模型返回了无法识别的分类')
+    obj['classification'] = CLASS_ALIASES[label]
+    obj['confidence'] = as_float(obj.get('confidence'))
+    obj['reason'] = as_str(obj.get('reason'), 2000)
+    obj['summary'] = as_str(obj.get('summary'), 4000)
+    obj['title'] = as_str(obj.get('title'), 200)
+    obj['due_at'] = date(obj.get('due_at'))
+    obj['urgency'] = URGENCY_ALIASES.get(str(obj.get('urgency') or '').strip().lower(), 'normal')
+    obj['reminder_suggestions'] = list(dict.fromkeys(d for x in clamp(obj.get('reminder_suggestions'), 20) if (d := date(x))))[:3]
+    requirements = []
+    for item in clamp(obj.get('requirements') or [], 50):
+        if isinstance(item, str):
+            item = {'label': item}
+        if isinstance(item, dict):
+            extensions = item.get('extensions')
+            try:
+                count = min(50, max(1, int(item.get('min_count'))))
+            except (TypeError, ValueError, OverflowError):
+                count = 1
+            label = as_str(item.get('label'), 100).strip()
+            if not label: continue
+            if isinstance(extensions, str): extensions = re.split(r'[,，、;；\s/]+', extensions)
+            normalized = []
+            for extension in extensions if isinstance(extensions, list) else []:
+                extension = str(extension).strip().lower().removeprefix('*.').lstrip('.')
+                if re.fullmatch(r'[a-z0-9]{1,10}', extension) and extension not in normalized: normalized.append(extension)
+            requirements.append({'label': label,
+                                 'extensions': normalized[:12],
+                                 'min_count': count})
+    obj['requirements'] = requirements
+    total = obj.get('max_total_bytes')
+    if isinstance(total, str):
+        try:
+            total = int(total.strip())
+        except ValueError:
+            total = None
+    obj['max_total_bytes'] = total if isinstance(total, int) and not isinstance(total, bool) and 0 < total <= 10**12 else None
+    obj['naming_hint'] = as_str(obj.get('naming_hint'), 300)
+    obj['submit_url'] = as_str(obj.get('submit_url'), 2000)
+    if not obj['submit_url'].startswith(('http://', 'https://')): obj['submit_url'] = ''
+    obj['evidence'] = [as_str(x, 500) for x in clamp(obj.get('evidence') or [], 6)]
+    obj['duplicate'] = as_bool(obj.get('duplicate'))
+    obj['duplicate_of'] = str(obj['duplicate_of']) if obj.get('duplicate_of') else None
+    obj['notes'] = [as_str(x, 400) for x in clamp(obj.get('notes') or [], 20)]
+    return obj
 class LlmFailure(ValueError):
     def __init__(self,message,metrics=None):
         super().__init__(message);self.metrics=metrics or {}
@@ -114,10 +258,16 @@ async def _chat(config, key, messages, max_tokens, transport=None, progress=None
     # 思考型模型（如 GLM）整段生成常超过 90 秒；始终用流式接收，
     # 首字后的持续数据会不断重置读超时，避免后台队列整段等待时被掐断。
     started=time.perf_counter();first=None;text="";usage={};http_status=None;streamed=False
+    def metrics():
+        def number(name):
+            value=usage.get(name);return value if isinstance(value,int) and not isinstance(value,bool) and value>=0 else None
+        prompt_tokens,completion_tokens,total_tokens=number('prompt_tokens'),number('completion_tokens'),number('total_tokens')
+        if total_tokens is None and prompt_tokens is not None and completion_tokens is not None:total_tokens=prompt_tokens+completion_tokens
+        return {'streamed':streamed,'http_status':http_status,'prompt_tokens':prompt_tokens,'completion_tokens':completion_tokens,'total_tokens':total_tokens,'usage_reported':total_tokens is not None,'elapsed_ms':round((time.perf_counter()-started)*1000),'first_token_ms':round((first-started)*1000) if first else None,'input_chars':input_chars,'image_count':image_count,'output_chars':len(text)}
     async def notify(value):
         if progress:await progress(value)
     stream_always=progress or config.get('stream_background',True)
-    input_chars=sum(len(m['content']) if isinstance(m['content'],str) else sum(len(p.get('text','')) for p in m['content'] if p.get('type')=='text') for m in messages)
+    input_chars=sum(len(m['content']) if isinstance(m.get('content'),str) else sum(len(p.get('text','')) for p in (m.get('content') or []) if p.get('type')=='text') for m in messages)
     image_count=sum(sum(p.get('type')=='image_url' for p in m['content']) for m in messages if isinstance(m['content'],list))
     await notify({'stage':'request','input_chars':input_chars,'image_count':image_count})
     headers={"Authorization":f"Bearer {key}"} if key else {}
@@ -128,14 +278,26 @@ async def _chat(config, key, messages, max_tokens, transport=None, progress=None
     async with httpx.AsyncClient(timeout=httpx.Timeout(90,connect=15,read=300),transport=transport,follow_redirects=False) as client:
         async with client.stream('POST',endpoint(config['base_url']),headers=headers,json=body) as response:
             http_status=response.status_code
-            if response.status_code==400 and stream_always and usage_option:
+            if response.status_code==400:
                 error_body=(await response.aread()).lower()
-                if b'stream_options' in error_body or b'include_usage' in error_body:
+                retry=None
+                if stream_always and usage_option and (b'stream_options' in error_body or b'include_usage' in error_body):
+                    retry='usage'
+                elif config.get('json_mode',True) and (b'response_format' in error_body or b'json_object' in error_body or b'json mode' in error_body):
+                    retry='json_mode'
+                elif tools and b'tool' in error_body and any(word in error_body for word in (b'unsupported', b'not support', b'unknown', b'invalid parameter')):
+                    retry='tools'
+                if retry:
                     spent=round((time.perf_counter()-started)*1000);await response.aclose()
-                    value,metrics=await _chat(config,key,messages,max_tokens,transport,progress,False)
-                    metrics['elapsed_ms']+=spent
-                    if metrics.get('first_token_ms') is not None:metrics['first_token_ms']+=spent
-                    return value,metrics
+                    if retry=='usage':
+                        value,retried_metrics=await _chat(config,key,messages,max_tokens,transport,progress,False,tools,tool_executor)
+                    elif retry=='json_mode':
+                        value,retried_metrics=await _chat({**config,'json_mode':False},key,messages,max_tokens,transport,progress,usage_option,tools,tool_executor)
+                    else:
+                        value,retried_metrics=await _chat(config,key,messages,max_tokens,transport,progress,usage_option)
+                    retried_metrics['elapsed_ms']+=spent
+                    if retried_metrics.get('first_token_ms') is not None:retried_metrics['first_token_ms']+=spent
+                    return value,retried_metrics
             if response.status_code>=400:raise LlmFailure('LLM 接口返回 HTTP '+str(response.status_code),{'http_status':response.status_code,'elapsed_ms':round((time.perf_counter()-started)*1000)})
             if stream_always and 'text/event-stream' in response.headers.get('content-type',''):
                 streamed=True
@@ -181,7 +343,7 @@ async def _chat(config, key, messages, max_tokens, transport=None, progress=None
                         except ValueError:args={}
                         result=tool_executor(slot['name'],args)
                         messages.append({'role':'tool','tool_call_id':slot['id'] or 'call_'+str(i),'content':json.dumps(result,ensure_ascii=False)})
-                    return '',metrics
+                    return '',metrics()
             else:
                 raw=await response.aread()
                 if len(raw)>1024*1024:raise ValueError('模型响应过大')
@@ -195,14 +357,10 @@ async def _chat(config, key, messages, max_tokens, transport=None, progress=None
                         except ValueError:args={}
                         result=tool_executor(call['function']['name'],args)
                         messages.append({'role':'tool','tool_call_id':call.get('id',''),'content':json.dumps(result,ensure_ascii=False)})
-                    return '',metrics
+                    return '',metrics()
                 await notify({'stage':'receiving','delta':text,'received_chars':len(text),'elapsed_ms':round((time.perf_counter()-started)*1000)})
     await notify({'stage':'validating','received_chars':len(text)})
-    def number(name):
-        value=usage.get(name);return value if isinstance(value,int) and not isinstance(value,bool) and value>=0 else None
-    prompt_tokens,completion_tokens,total_tokens=number('prompt_tokens'),number('completion_tokens'),number('total_tokens')
-    if total_tokens is None and prompt_tokens is not None and completion_tokens is not None:total_tokens=prompt_tokens+completion_tokens
-    return text,{'streamed':streamed,'http_status':http_status,'prompt_tokens':prompt_tokens,'completion_tokens':completion_tokens,'total_tokens':total_tokens,'usage_reported':total_tokens is not None,'elapsed_ms':round((time.perf_counter()-started)*1000),'first_token_ms':round((first-started)*1000) if first else None,'input_chars':input_chars,'image_count':image_count,'output_chars':len(text)}
+    return text,metrics()
 
 
 async def analyze(config: dict, targets: list[dict], context: list[dict], key: str, transport=None, progress=None, user_tasks=None, tool_executor=None) -> dict:
@@ -220,13 +378,21 @@ async def analyze(config: dict, targets: list[dict], context: list[dict], key: s
         # 工具循环：模型信息不足时调 list_recent_tasks 补全，最多 2 轮防失控。
         conversation=[{'role':'system','content':prompt},{'role':'user','content':content}]
         for _round in range(3):
-            text,metrics=await _chat(config,key,conversation,6000,transport,progress,tools=TOOLS,
-                tool_executor=lambda name,args: tool_result_tasks(user_tasks or []))
+            text,current_metrics=await _chat(config,key,conversation,6000,transport,progress,tools=TOOLS,
+                tool_executor=tool_executor or (lambda name,args: tool_result_tasks(user_tasks or []) if name == 'list_recent_tasks' else {'error':'工具暂不可用'}))
+            previous = metrics
+            metrics = dict(current_metrics)
+            metrics['elapsed_ms'] += previous.get('elapsed_ms', 0)
+            if previous.get('first_token_ms') is not None: metrics['first_token_ms'] = previous['first_token_ms']
+            elif metrics.get('first_token_ms') is not None: metrics['first_token_ms'] += previous.get('elapsed_ms', 0)
+            if previous:
+                for name in ('prompt_tokens', 'completion_tokens', 'total_tokens'):
+                    metrics[name] = previous[name] + current_metrics[name] if previous.get(name) is not None and current_metrics.get(name) is not None else None
+                metrics['usage_reported'] = metrics['total_tokens'] is not None
             if text.strip():break
             # 无文本输出 = 模型只发了工具调用；工具结果已由 _chat 追加进 conversation，继续下一轮。
         text=text.strip()
-        if text.startswith('```'):text=text.split('\n',1)[1].rsplit('```',1)[0].strip()
-        result=Analysis.model_validate(robust_json(text)).model_dump()
+        result=Analysis.model_validate(_lenient(robust_json(text))).model_dump()
         result['performance']=metrics
         return result
     except LlmFailure:raise
@@ -273,10 +439,13 @@ async def suggest_file(config,key,file,content,tasks,progress=None,image=None):
     try:
         text,metrics=await _chat(config,key,[{'role':'system','content':instruction},{'role':'user','content':user_content}],4000,progress=progress)
         text=text.strip()
-        if text.startswith('```'):text=text.split('\n',1)[1].rsplit('```',1)[0].strip()
-        result=FileSuggestion.model_validate(robust_json(text)).model_dump()
-        if result['task_id'] and result['task_id'] not in {t['id'] for t in tasks}:raise ValueError('模型返回了无效任务')
-        if result['task_id'] and result['category'] not in ('material','receipt'):raise ValueError('待办内用途无效')
+        result=FileSuggestion.model_validate(_lenient(robust_json(text), kind='file')).model_dump()
+        # 关联到列表外的任务时置空而不是整体失败；模型选错待办内用途时按材料兜底。
+        if result['task_id'] and result['task_id'] not in {t['id'] for t in tasks}:
+            result['task_id']=None
+            result['category']='other'
+            result['confidence']=min(result['confidence'], .5)
+        if result['task_id'] and result['category'] not in ('material','receipt'):result['category']='material'
         result['performance']=metrics
         return result
     except LlmFailure:raise

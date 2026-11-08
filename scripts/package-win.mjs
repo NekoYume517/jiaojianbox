@@ -22,6 +22,7 @@ await build({
   publish: 'never',
   config: {
     electronVersion: packageJson.devDependencies.electron,
+    electronDist: path.join(root, 'node_modules', 'electron', 'dist'),
     directories: { output: outputRoot },
     files: ['desktop/**/*', 'web/**/*'],
     extraResources: [
