@@ -18,7 +18,7 @@ let window, collector, collectorState = { state: 'stopped' };
 const storageWrites = new Map();
 const sourceRoot = path.resolve(__dirname, '..');
 const collectorRoot = app.isPackaged ? path.join(process.resourcesPath, 'python') : sourceRoot;
-const allowedAssets = new Set(['index.html', 'app.css', 'select-arrow.css', 'app.js', 'analysis.js', 'statistics.js', 'vendor/echarts.min.js', 'theme.js', 'experience.js', 'shelf.js', 'icon.svg', 'edge.html', 'edge.css', 'edge.js']);
+const allowedAssets = new Set(['index.html', 'app.css', 'select-arrow.css', 'app.js', 'updater.js', 'analysis.js', 'statistics.js', 'vendor/echarts.min.js', 'theme.js', 'experience.js', 'shelf.js', 'icon.svg', 'edge.html', 'edge.css', 'edge.js']);
 let appearance = { theme: 'system', density: 'comfortable', textSize: 'normal' };
 let qqManager,edgeWindow;
 const bridgeRoot=app.isPackaged?path.join(process.resourcesPath,"bridge"):path.join(sourceRoot,"desktop");
@@ -105,8 +105,15 @@ function installHandlers() {
   handle('local-get', get);
   handle('local-set',async(key,value)=>{await put(key,value);if(key==='session')edgeWindow?.resetSession();});
   handle('local-remove',async key=>{await fs.rm(await storageFile(key),{force:true});if(key==='session')edgeWindow?.resetSession();});
-  handle('platform', () => ({ platform: process.platform, version: app.getVersion(), nativeTitlebar:process.platform==='win32' }));
+  handle('platform', () => ({ platform: process.platform, version: app.getVersion(), nativeTitlebar:process.platform==='win32', silentStartup:!!window.__silentStartup }));
   handle('quick-get',()=>edgeWindow.preferences);handle('quick-set',value=>edgeWindow.configure(value));
+  handle('launcher-get',()=>({openAtLogin:app.getLoginItemSettings().openAtLogin}));
+  handle('launcher-set',value=>{
+    const open=!!value?.openAtLogin;
+    // openAsHidden：登录后静默启动（无窗口干扰），由主进程按「启动即恢复采集」逻辑继续工作。
+    app.setLoginItemSettings({openAtLogin:open,openAsHidden:open,path:process.execPath});
+    return {openAtLogin:app.getLoginItemSettings().openAtLogin};
+  });
   handle('appearance-get',()=>appearance);
   handle('appearance-set',async value=>{
     appearance=normalizeAppearance(value);
@@ -185,7 +192,13 @@ app.whenReady().then(async () => {
     ...(process.platform==='win32'?{titleBarStyle:'hidden',titleBarOverlay:{color:nativeTheme.shouldUseDarkColors?'#141f19':'#eff3ed',symbolColor:nativeTheme.shouldUseDarkColors?'#dce9df':'#34483a',height:40}}:{}),
     webPreferences: { preload: path.join(__dirname, 'preload.cjs'), contextIsolation: true, sandbox: true, nodeIntegration: false },
   });
-  window.once('ready-to-show', () => process.env.JJB_TEST_OFFSCREEN==='1'?window.showInactive():window.show());
+  window.once('ready-to-show', () => {
+    // 开机自启（openAsHidden）或静默启动参数时不显示主窗口，采集照常恢复。
+    const silent = process.env.JJB_SILENT === '1' || app.getLoginItemSettings().wasOpenedAsHidden;
+    if (process.env.JJB_TEST_OFFSCREEN === '1') return window.showInactive();
+    window.show();
+    window.__silentStartup = !!silent;
+  });
   window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   window.webContents.on('will-navigate', event => event.preventDefault());
   window.webContents.session.setPermissionRequestHandler((_web, _permission, callback) => callback(false));

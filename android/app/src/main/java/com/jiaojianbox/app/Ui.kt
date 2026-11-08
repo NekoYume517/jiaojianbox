@@ -359,11 +359,29 @@ fun InboxPage(snapshot: Snapshot?, onOpen: (Message) -> Unit) {
 @Composable
 fun RemindersPage(snapshot: Snapshot?, requestCalendar: () -> Unit, store: AppStore) {
     val tasks = snapshot?.tasks.orEmpty().filter { it.status == "collecting" || it.status == "ready" }
+    val context = LocalContext.current
+    var updateText by remember { mutableStateOf("") }
+    var checking by remember { mutableStateOf(false) }
     Column(Modifier.fillMaxSize().padding(16.dp)) {
         Text("定时提醒", style = MaterialTheme.typography.headlineSmall)
         Text("提醒写入系统日历：App 不在后台也准时响。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Spacer(Modifier.height(12.dp))
-        Button(onClick = requestCalendar) { Text("检查日历权限") }
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            Button(onClick = requestCalendar) { Text("检查日历权限") }
+            OutlinedButton(enabled = !checking, onClick = {
+                checking = true; updateText = "检查中…"
+                lifecycleDispatch {
+                    runCatching { Updater.check("0.1.0") }
+                        .onSuccess { result -> updateText = if (result.updatable) "发现新版本 v${result.latest}，请在浏览器打开更新" else "已是最新版本" }
+                        .onFailure { updateText = it.message ?: "检查失败" }
+                    checking = false
+                }
+            }) { Text(if (checking) "检查中…" else "检查更新") }
+        }
+        if (updateText.isNotBlank()) {
+            Spacer(Modifier.height(8.dp))
+            Text(updateText, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
         Spacer(Modifier.height(12.dp))
         if (tasks.isEmpty()) EmptyHint("没有进行中的任务", "任务创建后可一键写入日历提醒")
         else LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp),contentPadding=PaddingValues(bottom=96.dp)) {
