@@ -35,6 +35,7 @@ await build({
       ...['snow-loader.mjs', 'snow-bridge.mjs', 'drag-watch.exe', 'tray.png'].map(name => ({ from: path.join(root, 'desktop', name), to: `bridge/${name}` })),
     ],
     icon: path.join(root, 'build', 'installer.ico'),
+    publish: 'never',
     win: {
       target: [{ target: 'nsis', arch: ['x64'] }],
       icon: path.join(root, 'build', 'installer.ico'),
