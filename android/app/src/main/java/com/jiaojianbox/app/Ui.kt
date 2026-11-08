@@ -227,7 +227,7 @@ fun MainScaffold(
     }
 
     if(creating) AlertDialog(onDismissRequest={if(!busy)creating=false}, title={Text("新建待办")}, text={Column {
-        OutlinedTextField(title,{title=it},label={Text("任务名称")},singleLine=true)
+        OutlinedTextField(title,{title=it},label={Text("待办名称")},singleLine=true)
         Spacer(Modifier.height(12.dp));OutlinedTextField(description,{description=it},label={Text("说明")},minLines=3)
     }}, confirmButton={TextButton(enabled=!busy && title.isNotBlank() && title.length<=200,onClick={scope.launch {
         busy=true
@@ -299,7 +299,7 @@ fun ShelfPage(snapshot: Snapshot?, busy: Boolean) {
                         Column(Modifier.padding(14.dp)) {
                             Text(file.name, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
                             Text(
-                                text = file.taskId?.let { "已归入待办 · ${if (file.kind == "receipt") "提交回执" else "任务材料"}" } ?: file.reason ?: "待整理",
+                                text = file.taskId?.let { "已归入待办 · ${if (file.kind == "receipt") "提交回执" else "待办材料"}" } ?: file.reason ?: "待整理",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
@@ -415,7 +415,7 @@ fun RemindersPage(snapshot: Snapshot?, requestCalendar: () -> Unit, store: AppSt
             Text(updateText, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         Spacer(Modifier.height(12.dp))
-        if (tasks.isEmpty()) EmptyHint("没有进行中的任务", "任务创建后可一键写入日历提醒")
+        if (tasks.isEmpty()) EmptyHint("没有进行中的待办", "待办创建后可一键写入日历提醒")
         else LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp),contentPadding=PaddingValues(bottom=96.dp)) {
             items(tasks, key = { it.id }) { task ->
                 ElevatedCard(Modifier.fillMaxWidth()) {

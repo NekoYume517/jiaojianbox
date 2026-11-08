@@ -39,7 +39,7 @@ object LocalWorkspace {
         value.getJSONArray("tasks").put(task);save(value);return task
     }
     @Synchronized fun setStatus(id: String, status: String): JSONObject {
-        val value=read();val task=rows(value,"tasks").find { it.getString("id")==id } ?: error("任务不存在")
+        val value=read();val task=rows(value,"tasks").find { it.getString("id")==id } ?: error("待办不存在")
         task.put("status",status).put("version",task.optInt("version",1)+1);save(value);return task
     }
     @Synchronized fun upload(name: String, bytes: ByteArray): ShelfItem {

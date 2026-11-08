@@ -1,13 +1,15 @@
 /* 在样式表前应用外观，避免深色模式启动时先闪过白色页面。 */
 (() => {
   const key = 'jjb-appearance';
-  const defaults = { theme: 'system', density: 'comfortable', textSize: 'normal' };
+  const defaults = { theme: 'system', density: 'compact', textSize: 'normal', palette: 'tokyo-night' };
   const normalize = input => ({
     theme: ['system', 'light', 'dark'].includes(input?.theme) ? input.theme : defaults.theme,
     density: ['comfortable', 'compact'].includes(input?.density) ? input.density : defaults.density,
     textSize: ['normal', 'large'].includes(input?.textSize) ? input.textSize : defaults.textSize,
+    palette: ['tokyo-night', 'nord', 'graphite'].includes(input?.palette) ? input.palette : defaults.palette,
   });
   let settings;
+  let writes=Promise.resolve(), pending=0;
   try { settings = normalize(JSON.parse(localStorage.getItem(key))); } catch { settings = { ...defaults }; }
   const query = matchMedia('(prefers-color-scheme: dark)');
   const shapes = {
@@ -23,6 +25,7 @@
     document.documentElement.dataset.themeMode = settings.theme;
     document.documentElement.dataset.density = settings.density;
     document.documentElement.dataset.textSize = settings.textSize;
+    document.documentElement.dataset.palette = settings.palette;
     document.querySelectorAll('[data-theme-picker]').forEach(container => {
       if (container.children.length) return;
       container.className = 'theme-picker'; container.setAttribute('role', 'group'); container.setAttribute('aria-label', '颜色模式');
@@ -32,7 +35,7 @@
       const active = button.dataset.themeMode === settings.theme;
       button.setAttribute('aria-pressed', String(active)); button.classList.toggle('active', active);
     });
-    for (const [id, name] of [['appearance-density', 'density'], ['appearance-text-size', 'textSize']]) {
+    for (const [id, name] of [['appearance-density', 'density'], ['appearance-text-size', 'textSize'], ['appearance-palette', 'palette']]) {
       const input = document.getElementById(id); if (input) input.value = settings[name];
     }
     return resolved;
@@ -42,8 +45,10 @@
     try { localStorage.setItem(key, JSON.stringify(settings)); } catch { /* 无法持久化时仍保留本次选择。 */ }
     paint();
     if (window.desktop?.setAppearance) {
-      try { await window.desktop.setAppearance(settings); }
+      const value={...settings};pending++;
+      try { writes=writes.catch(()=>{}).then(()=>window.desktop.setAppearance(value));await writes; }
       catch { window.dispatchEvent(new CustomEvent('appearance-error')); }
+      finally { pending--;paint(); }
     }
     window.dispatchEvent(new CustomEvent('appearance-changed', { detail: { ...settings } }));
   }
@@ -52,7 +57,7 @@
     update,
     refresh: paint,
     icon: svg,
-    restore: value => { settings = normalize(value); try { localStorage.setItem(key, JSON.stringify(settings)); } catch {} paint(); },
+    restore: value => { if(pending)return;settings = normalize(value); try { localStorage.setItem(key, JSON.stringify(settings)); } catch {} paint(); },
   };
   paint();
   query.addEventListener('change', paint);
@@ -67,5 +72,6 @@
   document.addEventListener('change', event => {
     if (event.target.id === 'appearance-density') update({ density: event.target.value });
     if (event.target.id === 'appearance-text-size') update({ textSize: event.target.value });
+    if (event.target.id === 'appearance-palette') update({ palette: event.target.value });
   });
 })();

@@ -1,13 +1,14 @@
+import {createInterface} from 'node:readline';
 const READ_ACTIONS=new Set(['get_login_info','get_group_list','get_friend_list','get_group_msg_history','get_friend_msg_history','get_msg','get_status','get_version_info']);
 export async function start({hookManager,oneBotManager}){
   const subscriptions=new Map();
-  const send=value=>{if(process.connected)process.send(value);};
+  const send=value=>{if(process.env.JJB_SNOW_STDIO==='1')process.stdout.write(JSON.stringify(value)+'\n');else if(process.connected)process.send(value);};
   const timer=setInterval(()=>{
     for(const instance of oneBotManager.getInstances())if(!subscriptions.has(instance.uin)){
       subscriptions.set(instance.uin,instance.subscribeDebugEvents(event=>send({kind:'event',uin:instance.uin,event})));
     }
   },250);timer.unref();
-  process.on('message',async request=>{
+  const receive=async request=>{
     if(!request?.id)return;
     try{
       let data;
@@ -33,6 +34,7 @@ export async function start({hookManager,oneBotManager}){
       }else throw new Error('不支持的运行时操作');
       send({kind:'reply',id:request.id,ok:true,data});
     }catch(error){send({kind:'reply',id:request.id,ok:false,error:String(error.message||'QQ 连接失败')});}
-  });
+  };
+  if(process.env.JJB_SNOW_STDIO==='1')createInterface({input:process.stdin}).on('line',line=>{try{receive(JSON.parse(line));}catch{}});else process.on('message',receive);
   send({kind:'ready'});
 }

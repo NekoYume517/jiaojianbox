@@ -1,12 +1,21 @@
-FROM python:3.11-slim
-ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 JJB_DATA_DIR=/data
-WORKDIR /app
-ARG PIP_INDEX_URL=https://pypi.org/simple
-COPY requirements.txt ./
-RUN pip install --no-cache-dir --index-url "$PIP_INDEX_URL" -r requirements.txt && useradd --create-home app && mkdir /data && chown app:app /data
-COPY server ./server
+FROM golang:1.26.10-bookworm AS build
+WORKDIR /src
+ARG GOPROXY=https://goproxy.cn,direct
+ENV CGO_ENABLED=0 GOPROXY=$GOPROXY
+COPY go.mod go.sum ./
+RUN go mod download
+COPY internal ./internal
+COPY cmd/jiaojianbox-server ./cmd/jiaojianbox-server
 COPY web ./web
+ARG VERSION=0.6.0
+RUN go build -trimpath -ldflags="-s -w -X main.version=$VERSION" -o /jiaojianbox-server ./cmd/jiaojianbox-server
+
+FROM debian:bookworm-slim
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates tzdata && rm -rf /var/lib/apt/lists/* && useradd --uid 1000 --create-home app && mkdir /data && chown app:app /data
+ENV JJB_DATA_DIR=/data JJB_LISTEN=0.0.0.0:8765
+WORKDIR /app
+COPY --from=build /jiaojianbox-server ./jiaojianbox-server
 USER app
 EXPOSE 8765
-HEALTHCHECK --interval=30s --timeout=5s --start-period=15s CMD ["python", "-m", "server.healthcheck"]
-CMD ["python", "-m", "uvicorn", "server.app:app", "--host", "0.0.0.0", "--port", "8765"]
+HEALTHCHECK --interval=30s --timeout=5s --start-period=30s CMD ["/app/jiaojianbox-server", "--healthcheck", "http://127.0.0.1:8765/health"]
+CMD ["/app/jiaojianbox-server"]

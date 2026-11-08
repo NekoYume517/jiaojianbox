@@ -312,9 +312,21 @@ async def run(config, state_dir):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("command", choices=["run", "list-wechat", "list-qq"])
+    parser.add_argument("command", choices=["run", "list-wechat", "list-qq", "self-test"])
     parser.add_argument("--state-dir", default="data/collector")
     args = parser.parse_args()
+    if args.command == "self-test":
+        import sqlite3
+        import psutil
+        from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+        from wechatauto.db import WeChatDB
+        db = sqlite3.connect(":memory:")
+        assert db.execute("select 1").fetchone() == (1,)
+        db.close()
+        Cipher(algorithms.AES(bytes(32)), modes.CBC(bytes(16))).encryptor().finalize()
+        assert psutil.Process().pid > 0 and WeChatDB
+        emit(state="ready", dependencies="ok", bundled=bool(getattr(sys, "frozen", False)))
+        return
     config = json.loads(sys.stdin.readline())
     config["_wechat_cache_root"]=str(Path(args.state_dir).resolve()/"wechat-cache")
     config["_wechat_purpose"]="live" if args.command=="run" else "list"

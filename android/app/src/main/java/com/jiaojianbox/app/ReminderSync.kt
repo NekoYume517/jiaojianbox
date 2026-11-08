@@ -14,14 +14,14 @@ import java.time.ZonedDateTime
 import java.time.format.DateTimeFormatter
 
 /**
- * 日历提醒自动同步：App 每次打开（以及日历数据变化时）把云端任务的提醒时间
+ * 日历提醒自动同步：App 每次打开（以及日历数据变化时）把云端待办的提醒时间
  * 同步到系统日历。云端是唯一事实源；本模块只做「按云端修正日历」这一件事。
  *
- * 识别规则：事件 DESCRIPTION 含「任务 <taskId>」（与 CalendarReminders.upsert 写入格式一致）。
+ * 识别规则：事件 DESCRIPTION 含「待办 <taskId>」（与 CalendarReminders.upsert 写入格式一致）。
  * 同步策略：
  *  - 云端有提醒、日历缺失/时间不同 → 重写（upsert 内部先清旧事件）
- *  - 云端无提醒、日历有该任务事件 → 删除（用户在网页端移除了提醒）
- *  - 云端任务已 submitted/archived → 不再写新提醒，已有事件保留由用户在日历处理
+ *  - 云端无提醒、日历有该待办事件 → 删除（用户在网页端移除了提醒）
+ *  - 云端待办已 submitted/archived → 不再写新提醒，已有事件保留由用户在日历处理
  */
 object ReminderSync {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -39,7 +39,7 @@ object ReminderSync {
         }
     }
 
-    /** 核心：把任务提醒时间对齐到系统日历。需要已授予日历权限。 */
+    /** 核心：把待办提醒时间对齐到系统日历。需要已授予日历权限。 */
     fun syncAll(context: Context, tasks: List<Task>) {
         if (!CalendarReminders.available(context)) return
         val calendars = CalendarReminders.list(context)
@@ -76,7 +76,7 @@ object ReminderSync {
                 val result = mutableMapOf<String, Long>()
                 while (cursor.moveToNext()) {
                     val desc = cursor.getString(2) ?: continue
-                    val match = Regex("任务 ([0-9a-f-]{36})").find(desc) ?: continue
+                    val match = Regex("待办 ([0-9a-f-]{36})").find(desc) ?: continue
                     result[match.groupValues[1]] = cursor.getLong(3)
                 }
                 result

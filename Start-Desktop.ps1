@@ -1,4 +1,3 @@
 $ErrorActionPreference='Stop'
 Set-Location -LiteralPath $PSScriptRoot
-if(-not(Test-Path -LiteralPath 'node_modules/electron')){npm install}
-npm start
+go run ./cmd/jiaojianbox
