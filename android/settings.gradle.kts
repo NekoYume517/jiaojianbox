@@ -14,6 +14,9 @@ dependencyResolutionManagement {
     repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
     repositories {
         google()
+        maven("https://maven.aliyun.com/repository/central") {
+            content { includeModule("org.jetbrains.kotlin", "kotlin-compiler-embeddable") }
+        }
         mavenCentral()
     }
 }
