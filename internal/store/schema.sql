@@ -16,7 +16,7 @@
         CREATE TABLE IF NOT EXISTS analysis_jobs(id INTEGER PRIMARY KEY AUTOINCREMENT, user_id TEXT, message_id TEXT UNIQUE, state TEXT DEFAULT 'queued', attempts INTEGER DEFAULT 0, next_at REAL DEFAULT 0, error TEXT DEFAULT '');
         CREATE TABLE IF NOT EXISTS device_auth(device_hash TEXT PRIMARY KEY, user_code TEXT UNIQUE, expires REAL, state TEXT DEFAULT 'pending', user_id TEXT, token TEXT);
         CREATE TABLE IF NOT EXISTS shelf_meta(file_id TEXT PRIMARY KEY REFERENCES attachments(id) ON DELETE CASCADE, user_id TEXT REFERENCES users(id), category TEXT, suggestion TEXT, created_at TEXT, version INTEGER DEFAULT 1);
-        
+
 
                 CREATE TABLE IF NOT EXISTS user_roles(user_id TEXT PRIMARY KEY REFERENCES users(id), role TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS site_settings(key TEXT PRIMARY KEY, value TEXT NOT NULL);
@@ -25,4 +25,3 @@
                 CREATE TABLE IF NOT EXISTS invitations(id TEXT PRIMARY KEY, code_hash TEXT UNIQUE NOT NULL,
                     prefix TEXT, label TEXT, max_uses INTEGER, uses INTEGER DEFAULT 0,
                     expires REAL, revoked INTEGER DEFAULT 0, created_by TEXT REFERENCES users(id));
-            

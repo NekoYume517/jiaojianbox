@@ -326,7 +326,7 @@ func (s *Store) Backup(ctx context.Context, destination string) error {
 
 // BackupVersion keeps a consistent SQLite snapshot, its encryption key and the
 // workspace identity on the persistent data volume before each code upgrade.
-// Attachments retain their IDs and paths; deployment backups copy them separately.
+// Attachments are copied from this exact snapshot and verified against their hashes.
 func (s *Store) BackupVersion(ctx context.Context, version string) error {
 	if version == "" {
 		return errors.New("备份版本标识不能为空")

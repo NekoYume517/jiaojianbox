@@ -88,7 +88,27 @@ func EnsureVC(ctx context.Context, p *Payload) error {
 	return runtimeDependency(ctx, p, "vcredist")
 }
 func DefaultDirectory() string {
+	if key, err := registry.OpenKey(registry.CURRENT_USER, uninstallKey, registry.QUERY_VALUE); err == nil {
+		location, _, e := key.GetStringValue("InstallLocation")
+		key.Close()
+		if e == nil && filepath.IsAbs(location) {
+			if _, e = os.Stat(filepath.Join(location, Marker)); e == nil {
+				return location
+			}
+		}
+	}
 	return filepath.Join(os.Getenv("LOCALAPPDATA"), "Programs", "交件箱")
+}
+
+func powershellEnv(extra ...string) []string {
+	values := []string{}
+	for _, value := range os.Environ() {
+		if !strings.HasPrefix(strings.ToUpper(value), "PSMODULEPATH=") {
+			values = append(values, value)
+		}
+	}
+	values = append(values, "PSModulePath="+filepath.Join(os.Getenv("SystemRoot"), "System32", "WindowsPowerShell", "v1.0", "Modules"))
+	return append(values, extra...)
 }
 func Register(target, version string, desktop, startMenu bool) error {
 	script := `$s=New-Object -ComObject WScript.Shell
@@ -97,7 +117,7 @@ function Link($folder){New-Item -ItemType Directory -Force -Path $folder | Out-N
 if($env:JJB_DESKTOP_LINK -eq '1'){Link ([Environment]::GetFolderPath('Desktop'))}
 if($env:JJB_START_LINK -eq '1'){Link (Join-Path ([Environment]::GetFolderPath('Programs')) '交件箱')}`
 	cmd := exec.Command("powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script)
-	cmd.Env = append(os.Environ(), "JJB_INSTALL_DIR="+target, "JJB_DESKTOP_LINK="+bit(desktop), "JJB_START_LINK="+bit(startMenu))
+	cmd.Env = powershellEnv("JJB_INSTALL_DIR="+target, "JJB_DESKTOP_LINK="+bit(desktop), "JJB_START_LINK="+bit(startMenu))
 	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
 	if err := cmd.Run(); err != nil {
 		return errors.New("快捷方式创建失败，可直接打开安装目录中的交件箱")
@@ -135,7 +155,7 @@ func Unregister(target string) {
 	script := `$s=New-Object -ComObject WScript.Shell
 foreach($folder in @([Environment]::GetFolderPath('Desktop'),(Join-Path ([Environment]::GetFolderPath('Programs')) '交件箱'))){$p=Join-Path $folder '交件箱.lnk';if(Test-Path -LiteralPath $p){$l=$s.CreateShortcut($p);if($l.TargetPath -eq (Join-Path $env:JJB_INSTALL_DIR '交件箱.exe')){Remove-Item -LiteralPath $p}}}`
 	cmd := exec.Command("powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script)
-	cmd.Env = append(os.Environ(), "JJB_INSTALL_DIR="+target)
+	cmd.Env = powershellEnv("JJB_INSTALL_DIR=" + target)
 	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
 	cmd.Run()
 	registry.DeleteKey(registry.CURRENT_USER, uninstallKey)

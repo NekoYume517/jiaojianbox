@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"log"
@@ -20,9 +21,18 @@ var version = "0.6.0-dev"
 
 func main() {
 	health := flag.String("healthcheck", "", "probe a running server")
+	verify := flag.String("verify-backup", "", "verify existing records against an upgrade backup")
 	root := flag.String("data", env("JJB_DATA_DIR", "data"), "workspace directory")
 	address := flag.String("listen", env("JJB_LISTEN", "127.0.0.1:8765"), "HTTP listening address")
 	flag.Parse()
+	if *verify != "" {
+		result, err := store.VerifyBackup(context.Background(), *root, *verify)
+		if err != nil {
+			log.Fatal(err)
+		}
+		json.NewEncoder(os.Stdout).Encode(result)
+		return
+	}
 	if *health != "" {
 		response, err := (&http.Client{Timeout: 4 * time.Second}).Get(*health)
 		if err != nil {

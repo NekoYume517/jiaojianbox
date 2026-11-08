@@ -55,6 +55,12 @@ func TestPythonCredentialsAndImmutableUpgradeBackup(t *testing.T) {
 	if count != 1 {
 		t.Fatal("existing users lost")
 	}
+	if _, err = s.DB.Exec("INSERT INTO users VALUES(?,?,?,?)", "new-user", "new-student", fixture["salt"], fixture["digest"]); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.BackupVersion(context.Background(), "v0.6.0"); err != nil {
+		t.Fatal(err)
+	}
 	original, err := os.ReadFile(blob)
 	if err != nil || string(original) != "original attachment" {
 		t.Fatal("attachment changed")
@@ -70,6 +76,9 @@ func TestPythonCredentialsAndImmutableUpgradeBackup(t *testing.T) {
 	_, err = os.Stat(filepath.Join(root, "backups", "v0.6.0", "master.key"))
 	if err != nil {
 		t.Fatal(err)
+	}
+	if report, err := VerifyBackup(context.Background(), root, "v0.6.0"); err != nil || Number(report, "preserved_records") != 1 {
+		t.Fatal(report, err)
 	}
 }
 func TestMissingLegacyEncryptionKeyStopsWithoutChangingDatabase(t *testing.T) {
