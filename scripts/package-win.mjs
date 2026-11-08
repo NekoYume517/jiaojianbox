@@ -18,8 +18,12 @@ const results=await packager({dir:root,name:'JiaojianBox',platform:'win32',arch:
 });
 for(const output of results){
   const runtimeRoot=path.join(output,'resources','runtime');
-  for(const name of ['python','snowluma'])await fs.cp(path.join(root,'work','bundle',name),path.join(runtimeRoot,name),{recursive:true,filter:source=>!source.includes('__pycache__')});
-  await fs.copyFile(path.join(root,'work','bundle','manifest.json'),path.join(runtimeRoot,'manifest.json'));
+  const bundleAvailable=await fs.access(path.join(root,'work','bundle','manifest.json')).then(()=>true,()=>false);
+  if(bundleAvailable){
+    // 私有 runtime（wechatauto-replica 数据读取 + SnowLuma）：本机执行 scripts/prepare-runtime.py 后才有。
+    for(const name of ['python','snowluma'])await fs.cp(path.join(root,'work','bundle',name),path.join(runtimeRoot,name),{recursive:true,filter:source=>!source.includes('__pycache__')});
+    await fs.copyFile(path.join(root,'work','bundle','manifest.json'),path.join(runtimeRoot,'manifest.json'));
+  } else console.log('Skipping private runtime bundle (open-source build): QQ/微信采集 runtime 见 scripts/prepare-runtime.py');
   const bridgeRoot=path.join(output,'resources','bridge');await fs.mkdir(bridgeRoot,{recursive:true});
   for(const name of ['snow-loader.mjs','snow-bridge.mjs','drag-watch.exe','tray.png'])await fs.copyFile(path.join(root,'desktop',name),path.join(bridgeRoot,name));
   const pythonRoot=path.join(output,'resources','python');
