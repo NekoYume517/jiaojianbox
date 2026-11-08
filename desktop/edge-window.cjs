@@ -37,17 +37,22 @@ class EdgeWindow{
       // 系统级拖动开始：始终弹出快捷窗（无论主窗口是否可见），由 hook 决定时机。
       if(!this.expanded&&!this.win.isDestroyed()){this.show(true);this.auto=true;}
     }else if(event==='release'&&this.auto){
-      // 松开鼠标：未放入文件（busy）则收起；拖进窗口放下后 upload() 已置 auto=false，保持打开。
+      // 松开鼠标：光标在窗口上或窗口在前台时不关（用户可能正要拖入/在操作）；未放入文件才收起。
       clearTimeout(this.releaseTimer);
-      this.releaseTimer=setTimeout(()=>{if(!this.busy&&this.auto){this.show(false);this.auto=false;}},900);
+      this.releaseTimer=setTimeout(()=>{
+        if(this.busy||!this.auto)return;
+        const onWindow=this.isCursorOver()||this.win.isFocused();
+        if(!onWindow){this.show(false);this.auto=false;}
+      },900);
     }
    }});
    this.watcher.on('error',()=>{});
   }
  }
- show(expand){if(expand&&!this.preferences.enabled)return;if(!this.win||this.win.isDestroyed())return;this.expanded=expand;if(!expand){this.auto=false;clearTimeout(this.releaseTimer);this.send('edge-expanded',false);this.win.hide();return;}const point=this.position&&Number.isFinite(this.position.x)&&Number.isFinite(this.position.y)?this.position:screen.getCursorScreenPoint();const a=screen.getDisplayNearestPoint(point).workArea;const width=360,height=Math.min(a.height,560);this.win.setBounds({x:process.env.JJB_TEST_OFFSCREEN==='1'?-10000:Math.max(a.x,Math.min(a.x+a.width-width,this.position?.x??a.x+a.width-width)),y:process.env.JJB_TEST_OFFSCREEN==='1'?-10000:Math.max(a.y,Math.min(a.y+a.height-height,this.position?.y??a.y+Math.max(0,Math.round((a.height-height)/2)))),width,height},false);this.send('edge-preferences',this.preferences);this.send('edge-expanded',true);this.win.showInactive();this.win.moveTop();}
+ show(expand){if(expand&&!this.preferences.enabled)return;if(!this.win||this.win.isDestroyed())return;this.expanded=expand;if(!expand){this.auto=false;clearTimeout(this.releaseTimer);this.send('edge-expanded',false);this.win.hide();return;}const point=this.position&&Number.isFinite(this.position.x)&&Number.isFinite(this.position.y)?this.position:screen.getCursorScreenPoint();const a=screen.getDisplayNearestPoint(point).workArea;const width=360;const height=Math.max(190,Math.min(a.height,this.contentSize||300));const x=process.env.JJB_TEST_OFFSCREEN==='1'?-10000:this.position&&Number.isFinite(this.position.x)?this.position.x:Math.max(a.x,Math.min(a.x+a.width-width,point.x));const y=process.env.JJB_TEST_OFFSCREEN==='1'?-10000:this.position&&Number.isFinite(this.position.y)?Math.max(a.y,Math.min(a.y+a.height-60,this.position.y)):Math.max(a.y,Math.min(a.y+a.height-height,point.y));this.win.setBounds({x,y,width,height},false);this.send('edge-preferences',this.preferences);this.send('edge-expanded',true);this.win.showInactive();this.win.moveTop();}
 
- resizeTo(height){if(!this.win||this.win.isDestroyed()||!this.expanded)return;const h=Math.max(190,Math.min(560,Math.round(height||300)));const b=this.win.getBounds();const a=screen.getDisplayNearestPoint({x:b.x,y:b.y}).workArea;const y=Math.max(a.y,Math.min(a.y+a.height-h,b.y));this.win.setBounds({x:b.x,y,width:b.width,height:h},false);}
+ resizeTo(height){if(!this.win||this.win.isDestroyed()||!this.expanded)return;const h=Math.max(190,Math.min(560,Math.round(height||300)));this.contentSize=h;const b=this.win.getBounds();const a=screen.getDisplayNearestPoint({x:b.x,y:b.y}).workArea;const y=Math.max(a.y,Math.min(a.y+a.height-h,b.y));this.win.setBounds({x:b.x,y,width:b.width,height:h},false);}
+ isCursorOver(){if(!this.win||this.win.isDestroyed())return false;const b=this.win.getBounds();const p=screen.getCursorScreenPoint();return p.x>=b.x&&p.x<=b.x+b.width&&p.y>=b.y&&p.y<=b.y+b.height;}
  send(...args){if(this.win&&!this.win.isDestroyed()&&!this.win.webContents.isDestroyed())this.win.webContents.send(...args);}
  async snapshot(){try{const s=await this.api('/api/snapshot');return{files:(s.shelf||[]).slice(0,15).map(f=>({name:f.name,reason:f.suggestion?.reason||'',task:s.tasks.find(t=>t.id===f.task_id)?.title||''})),tasks:s.tasks.filter(t=>!['submitted','archived'].includes(t.status)).slice(0,8).map(t=>({title:t.title,due:t.due_at}))};}catch(e){return{error:e.message,files:[],tasks:[]};}}
  async upload(paths){if(this.busy)throw Error('正在收纳，请稍候');if(!Array.isArray(paths)||paths.length>30)throw Error('每次最多30个文件');this.busy=true;this.auto=false;clearTimeout(this.releaseTimer);this.show(true);const results=[];
