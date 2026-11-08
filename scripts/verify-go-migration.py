@@ -16,7 +16,7 @@ scratch=Path(tempfile.mkdtemp(prefix='go-migration-',dir=ROOT/'work'))
 os.environ.update(JJB_DATA_DIR=str(scratch/'workspace'),JJB_REQUIRE_EMAIL='false',JJB_ALLOW_REGISTRATION='true',JJB_BOOTSTRAP_ADMIN_USERNAME='')
 from fastapi.testclient import TestClient
 from server.app import create_app
-import requests
+import httpx as requests
 
 credentials={'username':'migration-fixture','password':'fixture-password-2026'}
 def ok(response):
@@ -45,7 +45,7 @@ try:
  for _ in range(100):
   try:
    if requests.get(base+'/health',timeout=.3).status_code==200:break
-  except requests.RequestException:pass
+  except requests.HTTPError:pass
   if process.poll() is not None:raise AssertionError('Go server exited')
   time.sleep(.1)
  else:raise AssertionError('Go server did not start')
