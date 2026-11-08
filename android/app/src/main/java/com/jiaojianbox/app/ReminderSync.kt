@@ -86,7 +86,7 @@ object ReminderSync {
 
     /** 日历被用户改动时也自动再对齐一次（去抖 5 秒）。 */
     private fun registerObserver(context: Context, store: AppStore) {
-        if (registered) return
+        if (registered || !CalendarReminders.available(context)) return
         registered = true
         val handler = Handler(Looper.getMainLooper())
         var pending = false

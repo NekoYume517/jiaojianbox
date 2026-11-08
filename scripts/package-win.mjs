@@ -13,7 +13,7 @@ await fs.copyFile(path.join(root,'node_modules','echarts','LICENSE'),path.join(r
 await fs.copyFile(path.join(root,'node_modules','echarts','NOTICE'),path.join(root,'web','vendor','echarts.NOTICE'));
 const results=await packager({dir:root,name:'JiaojianBox',platform:'win32',arch:'x64',out:outArgument?path.resolve(root,outArgument.slice(10)):path.join(root,'artifacts'),overwrite:true,asar:true,
   // Let electron-packager prune devDependencies while keeping runtime deps (e.g. ws).
-  ignore:[/^\/(data|tests|artifacts[^/]*|\.venv|\.pytest_cache|work|docs\/verification)($|\/)/,/__pycache__/],
+  ignore:[/^\/(android|data|tests|artifacts[^/]*|\.venv|\.pytest_cache|work|docs\/verification)($|\/)/,/__pycache__/],
   ...(zipArgument?{electronZipDir:path.resolve(root,zipArgument.split('=').slice(1).join('='))}:{}),
 });
 for(const output of results){

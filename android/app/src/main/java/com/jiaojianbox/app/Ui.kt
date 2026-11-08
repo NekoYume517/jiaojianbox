@@ -1,6 +1,14 @@
 package com.jiaojianbox.app
 
 import android.net.Uri
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.CancellationException
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.activity.compose.BackHandler
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -15,6 +23,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.Lifecycle
@@ -34,7 +43,7 @@ enum class Tab(val label: String, val icon: ImageVector) {
     Shelf("收纳", Icons.Filled.Inbox),
     Tasks("待办", Icons.Filled.CheckCircle),
     Inbox("通知", Icons.Filled.MailOutline),
-    More("提醒", Icons.Filled.Notifications),
+    More("我的", Icons.Filled.Person),
 }
 
 /** 根路由：未登录 → 登录页；已登录 → 主脚手架。 */
@@ -50,11 +59,12 @@ fun JjbApp(
     var loaded by remember { mutableStateOf(false) }
     LaunchedEffect(session) { sessionState = session; loaded = true }
     if (!loaded) return
+    val scope = rememberCoroutineScope()
     val current = sessionState
     if (current == null) {
-        LoginScreen(onLogin = { session -> lifecycleDispatch { store.saveSession(session) } })
+        LoginScreen(onLogin = { session -> scope.launch { store.saveSession(session) } })
     } else {
-        MainScaffold(store, current, pendingUris, onUrisConsumed, requestCalendar, onLogout = { lifecycleDispatch { store.clearSession() } })
+        key(current.token, current.server) { MainScaffold(store, current, pendingUris, onUrisConsumed, requestCalendar, onLogout = { scope.launch { store.clearSession() } }) }
     }
 }
 
@@ -68,7 +78,17 @@ fun MainScaffold(
     requestCalendar: () -> Unit,
     onLogout: () -> Unit,
 ) {
-    var tab by remember { mutableStateOf(Tab.Shelf) }
+    var tab by rememberSaveable { mutableStateOf(Tab.Tasks) }
+    val scope = rememberCoroutineScope()
+    var selectedTask by remember { mutableStateOf<Task?>(null) }
+    var selectedMessage by remember { mutableStateOf<Message?>(null) }
+    var creating by rememberSaveable { mutableStateOf(false) }
+    var title by rememberSaveable { mutableStateOf("") }
+    var description by rememberSaveable { mutableStateOf("") }
+    var localUris by remember { mutableStateOf<List<Uri>>(emptyList()) }
+    val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { localUris = it }
+    BackHandler(tab != Tab.Tasks) { tab = Tab.Tasks }
+
     val snackbar = remember { SnackbarHostState() }
     var snapshot by remember { mutableStateOf<Snapshot?>(null) }
     var busy by remember { mutableStateOf(false) }
@@ -77,7 +97,7 @@ fun MainScaffold(
     suspend fun reload() {
         runCatching { JjbApi(session).snapshot() }
             .onSuccess { snapshot = it }
-            .onFailure { snackbar.showSnackbar(it.message ?: "同步失败") }
+            .onFailure { if(it is CancellationException)throw it; snackbar.showSnackbar(it.message ?: "同步失败") }
     }
 
     LaunchedEffect(session) { reload() }
@@ -88,35 +108,46 @@ fun MainScaffold(
         ReminderSync.syncOnStart(context, store)
     }
     val lifecycleOwner = LocalLifecycleOwner.current
-    DisposableEffect(lifecycleOwner) {
+    DisposableEffect(lifecycleOwner, session) {
         val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_RESUME) ReminderSync.syncOnStart(context, store)
+            if (event == Lifecycle.Event.ON_RESUME) { ReminderSync.syncOnStart(context, store); scope.launch { reload() } }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
     // 分享/拖进来的文件：上传收纳 → 自动 AI 归类
-    LaunchedEffect(pendingUris) {
-        if (pendingUris.isEmpty()) return@LaunchedEffect
+    LaunchedEffect(pendingUris, localUris) {
+        val incoming = (pendingUris + localUris).distinct()
+        if (incoming.isEmpty()) return@LaunchedEffect
+        tab = Tab.Shelf
         val api = JjbApi(session)
         val context = store.context()
-        for (uri in pendingUris) {
+        for (uri in incoming) {
             runCatching {
-                val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() } ?: return@runCatching
+                val bytes = withContext(Dispatchers.IO) { context.contentResolver.openInputStream(uri)?.use {
+                    val data = java.io.ByteArrayOutputStream().use { output ->
+                        val buffer = ByteArray(8192); var total = 0
+                        while (true) { val count = it.read(buffer); if (count < 0) break; total += count; require(total <= 50 * 1024 * 1024) { "文件不能超过 50MB" }; output.write(buffer,0,count) }; output.toByteArray() }
+                    require(data.size <= 50 * 1024 * 1024) { "文件不能超过 50MB" }; data
+                } ?: error("无法读取文件") }
                 val name = queryDisplayName(context, uri) ?: "分享文件"
                 busy = true
                 val saved = api.uploadShelf(name, bytes)
                 snackbar.showSnackbar("已收纳 $name，AI 整理中…")
-                runCatching { api.analyzeShelf(saved.id) }
+                runCatching { api.analyzeShelf(saved.id) }.onFailure { if(it is CancellationException)throw it; snackbar.showSnackbar("文件已保存，AI 整理失败：${it.message}") }
                 reload()
-            }.onFailure { snackbar.showSnackbar(it.message ?: "收纳失败") }
+            }.onFailure { if(it is CancellationException)throw it; snackbar.showSnackbar(it.message ?: "收纳失败") }
         }
         busy = false
+        localUris = emptyList()
         onUrisConsumed()
     }
 
     Scaffold(
+        topBar = { CenterAlignedTopAppBar(title = { Text(tab.label) }, actions = {
+            IconButton(onClick = { scope.launch { reload() } }, enabled = !busy) { Icon(Icons.Filled.Refresh,"刷新") }
+        }) },
         snackbarHost = { SnackbarHost(snackbar) },
         bottomBar = {
             NavigationBar {
@@ -131,9 +162,9 @@ fun MainScaffold(
             }
         },
         floatingActionButton = {
-            if (tab == Tab.Tasks) {
-                // FAB 占位：创建任务后续接
-            }
+            if (tab == Tab.Tasks || tab == Tab.Shelf) ExtendedFloatingActionButton(
+                onClick = { if(tab == Tab.Tasks) creating=true else picker.launch(arrayOf("*/*")) },
+                icon = { Icon(Icons.Filled.Add,null) }, text = { Text(if(tab==Tab.Tasks) "新建待办" else "收纳文件") })
         },
     ) { padding ->
         Box(Modifier.padding(padding)) {
@@ -141,23 +172,56 @@ fun MainScaffold(
                 Tab.Shelf -> ShelfPage(snapshot, busy)
                 Tab.Tasks -> TasksPage(
                     snapshot = snapshot,
+                    onOpen = { selectedTask = it },
                     onStatusChange = { task, status ->
-                        lifecycleDispatch {
+                        scope.launch {
                             runCatching { JjbApi(session).setStatus(task.id, task.raw, status) }
                                 .onSuccess { reload() }
-                                .onFailure { snackbar.showSnackbar(it.message ?: "更新失败") }
+                                .onFailure { if(it is CancellationException)throw it; snackbar.showSnackbar(it.message ?: "更新失败") }
                         }
                     },                    onRemind = {
                         if (CalendarReminders.available(store.context())) calendarPickerFor = it
                         else requestCalendar()
                     },
                 )
-                Tab.Inbox -> InboxPage(snapshot)
-                Tab.More -> RemindersPage(snapshot, requestCalendar, store)
+                Tab.Inbox -> InboxPage(snapshot) { selectedMessage = it }
+                Tab.More -> Column(Modifier.fillMaxSize().padding(16.dp)) {
+                    ListItem(headlineContent={Text(session.username)}, supportingContent={Text(session.server)}, leadingContent={Icon(Icons.Filled.AccountCircle,null)})
+                    HorizontalDivider()
+                    ListItem(headlineContent={Text("日历提醒")}, supportingContent={Text("授权后可将截止时间写入系统日历")}, modifier=Modifier.clickable(onClick=requestCalendar), trailingContent={Icon(Icons.Filled.ChevronRight,null)})
+                    ListItem(headlineContent={Text("外观")}, supportingContent={Text("跟随系统深浅色模式")})
+                    TextButton(onClick=onLogout) { Text("退出登录") }
+                }
             }
         }
     }
 
+    if(creating) AlertDialog(onDismissRequest={if(!busy)creating=false}, title={Text("新建待办")}, text={Column {
+        OutlinedTextField(title,{title=it},label={Text("任务名称")},singleLine=true)
+        Spacer(Modifier.height(12.dp));OutlinedTextField(description,{description=it},label={Text("说明")},minLines=3)
+    }}, confirmButton={TextButton(enabled=!busy && title.isNotBlank() && title.length<=200,onClick={scope.launch {
+        busy=true
+        try { JjbApi(session).createTask(title.trim(),description);creating=false;title="";description="";reload() }
+        catch(e:Exception){if(e is CancellationException)throw e;snackbar.showSnackbar(e.message?:"创建失败")}
+        finally {busy=false}
+    }}){Text("创建")}},dismissButton={TextButton(onClick={creating=false},enabled=!busy){Text("取消")}})
+    selectedMessage?.let { message -> ModalBottomSheet(onDismissRequest={selectedMessage=null}) {
+        Column(Modifier.fillMaxWidth().padding(24.dp).verticalScroll(androidx.compose.foundation.rememberScrollState())) {
+            Text(message.conversationName,style=MaterialTheme.typography.titleLarge);Text(fmtDate(message.sentAt),style=MaterialTheme.typography.labelMedium)
+            Spacer(Modifier.height(16.dp));Text(message.text);Spacer(Modifier.height(32.dp))
+        }
+    } }
+    selectedTask?.let { task -> ModalBottomSheet(onDismissRequest={selectedTask=null}) {
+        Column(Modifier.fillMaxWidth().padding(24.dp).verticalScroll(androidx.compose.foundation.rememberScrollState())) {
+            Text(task.title,style=MaterialTheme.typography.headlineSmall);Text("截止 "+fmtDate(task.dueAt),style=MaterialTheme.typography.labelLarge)
+            Spacer(Modifier.height(16.dp));Text(task.description.ifBlank {"暂无说明"});Spacer(Modifier.height(16.dp))
+            Text("${task.materialCount} 份材料",style=MaterialTheme.typography.titleMedium)
+            val attachments=task.raw.optJSONArray("attachments")
+            if(attachments!=null) for(i in 0 until attachments.length()) Text(attachments.getJSONObject(i).optString("name"),Modifier.padding(vertical=8.dp))
+            FilledTonalButton(onClick={selectedTask=null; if(task.dueAt!=null)calendarPickerFor=task else scope.launch {snackbar.showSnackbar("请先设置截止时间")}}){Text("设置日历提醒")}
+            Spacer(Modifier.height(32.dp))
+        }
+    } }
     calendarPickerFor?.let { task ->
         val context = store.context()
         val calendars = remember(task) { CalendarReminders.list(context) }
@@ -174,9 +238,9 @@ fun MainScaffold(
                             modifier = Modifier.clickable {
                                 val due = task.dueAt?.let { runCatching { ZonedDateTime.parse(it).toInstant().toEpochMilli() }.getOrNull() }
                                     ?: return@clickable
-                                CalendarReminders.upsert(context, calendar.id, task.id, task.title, due)
+                                val eventId = CalendarReminders.upsert(context, calendar.id, task.id, task.title, due)
                                 calendarPickerFor = null
-                                lifecycleDispatch { snackbar.showSnackbar("已写入日历提醒") }
+                                scope.launch { snackbar.showSnackbar(if(eventId!=null) "已写入日历提醒" else "写入失败，请检查日历权限和账户") }
                             },
                         )
                     }
@@ -199,7 +263,7 @@ fun ShelfPage(snapshot: Snapshot?, busy: Boolean) {
         if (files.isEmpty()) {
             EmptyHint("还没有收纳的文件", "在文件管理器里选中文件 → 分享 → 交件箱")
         } else {
-            LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp),contentPadding=PaddingValues(bottom=96.dp)) {
                 items(files, key = { it.id }) { file ->
                     ElevatedCard(Modifier.fillMaxWidth()) {
                         Column(Modifier.padding(14.dp)) {
@@ -217,24 +281,30 @@ fun ShelfPage(snapshot: Snapshot?, busy: Boolean) {
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
-fun TasksPage(snapshot: Snapshot?, onStatusChange: (Task, String) -> Unit, onRemind: (Task) -> Unit) {
-    val tasks = snapshot?.tasks.orEmpty().filter { it.status != "archived" }
+fun TasksPage(snapshot: Snapshot?, onOpen: (Task) -> Unit, onStatusChange: (Task, String) -> Unit, onRemind: (Task) -> Unit) {
+    var query by rememberSaveable { mutableStateOf("") }
+    var filter by rememberSaveable { mutableStateOf("active") }
+    val tasks = snapshot?.tasks.orEmpty().filter { (if(filter=="archived") it.status=="archived" else if(filter=="submitted") it.status=="submitted" else it.status in listOf("collecting","ready")) && (it.title+it.description).contains(query,true) }
     Column(Modifier.fillMaxSize().padding(16.dp)) {
-        Text("交件任务", style = MaterialTheme.typography.headlineSmall)
+        OutlinedTextField(query,{query=it},modifier=Modifier.fillMaxWidth(),singleLine=true,placeholder={Text("搜索待办")},leadingIcon={Icon(Icons.Filled.Search,null)})
+        FlowRow(horizontalArrangement=Arrangement.spacedBy(8.dp)) {
+            listOf("active" to "进行中","submitted" to "已提交","archived" to "已归档").forEach { (value,label) -> FilterChip(selected=filter==value,onClick={filter=value},label={Text(label)}) }
+        }
         Spacer(Modifier.height(12.dp))
         if (tasks.isEmpty()) EmptyHint("还没有待办", "在电脑/网页端确认通知后会同步到这里")
-        else LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        else LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp),contentPadding=PaddingValues(bottom=96.dp)) {
             items(tasks, key = { it.id }) { task ->
-                ElevatedCard(Modifier.fillMaxWidth()) {
+                ElevatedCard(onClick={onOpen(task)},modifier=Modifier.fillMaxWidth()) {
                     Column(Modifier.padding(14.dp)) {
                         Text(task.title, style = MaterialTheme.typography.titleMedium)
                         if (task.description.isNotBlank()) Text(task.description, style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         Spacer(Modifier.height(8.dp))
-                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        FlowRow(verticalArrangement=Arrangement.Center, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             AssistChip(onClick = {}, label = { Text(fmtDate(task.dueAt), style = MaterialTheme.typography.labelSmall) })
-                            AssistChip(onClick = { onRemind(task) }, label = { Text("日历提醒", style = MaterialTheme.typography.labelSmall) }, leadingIcon = { Icon(Icons.Filled.Notifications, null, Modifier.height(16.dp)) })
-                            Spacer(Modifier.weight(1f))
+                            AssistChip(onClick = { if(task.dueAt!=null)onRemind(task) }, enabled=task.dueAt!=null, label = { Text("日历提醒", style = MaterialTheme.typography.labelSmall) }, leadingIcon = { Icon(Icons.Filled.Notifications, null, Modifier.height(16.dp)) })
+
                             Text("${task.materialCount} 份材料", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                         Spacer(Modifier.height(8.dp))
@@ -255,15 +325,15 @@ fun TasksPage(snapshot: Snapshot?, onStatusChange: (Task, String) -> Unit, onRem
 }
 
 @Composable
-fun InboxPage(snapshot: Snapshot?) {
+fun InboxPage(snapshot: Snapshot?, onOpen: (Message) -> Unit) {
     val messages = snapshot?.messages.orEmpty().take(100)
     Column(Modifier.fillMaxSize().padding(16.dp)) {
-        Text("通知", style = MaterialTheme.typography.headlineSmall)
+        Text("来自你在电脑端选择的聊天", style = MaterialTheme.typography.bodyMedium,color=MaterialTheme.colorScheme.onSurfaceVariant)
         Spacer(Modifier.height(12.dp))
         if (messages.isEmpty()) EmptyHint("还没有同步的通知", "桌面端连接 QQ/微信后自动同步")
-        else LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        else LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp),contentPadding=PaddingValues(bottom=96.dp)) {
             items(messages, key = { it.id }) { message ->
-                ElevatedCard(Modifier.fillMaxWidth()) {
+                ElevatedCard(onClick={onOpen(message)},modifier=Modifier.fillMaxWidth()) {
                     Column(Modifier.padding(14.dp)) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Text(message.conversationName, style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -296,7 +366,7 @@ fun RemindersPage(snapshot: Snapshot?, requestCalendar: () -> Unit, store: AppSt
         Button(onClick = requestCalendar) { Text("检查日历权限") }
         Spacer(Modifier.height(12.dp))
         if (tasks.isEmpty()) EmptyHint("没有进行中的任务", "任务创建后可一键写入日历提醒")
-        else LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        else LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp),contentPadding=PaddingValues(bottom=96.dp)) {
             items(tasks, key = { it.id }) { task ->
                 ElevatedCard(Modifier.fillMaxWidth()) {
                     Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {

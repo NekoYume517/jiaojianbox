@@ -27,7 +27,7 @@ class MainActivity : ComponentActivity() {
         AppContext.init(this)
         handleIncoming(intent)
         setContent {
-            MaterialTheme(colorScheme = JjbTheme.light()) {
+            MaterialTheme(colorScheme = if (androidx.compose.foundation.isSystemInDarkTheme()) JjbTheme.dark() else JjbTheme.light()) {
                 Surface {
                     JjbApp(
                         store = store,

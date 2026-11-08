@@ -498,7 +498,7 @@ async function loadLlm() {
     if (!$('#llm-form')) return;
     $('#llm-url').value = llmSettings.base_url; $('#llm-model').value = llmSettings.model;
     $('#llm-vision').checked=!!llmSettings.vision_enabled;$('#llm-context').value = llmSettings.context_count; $('#llm-auto').checked = llmSettings.auto_analyze; $('#llm-auto-task').checked=!!llmSettings.auto_task&&llmSettings.auto_analyze;
-    $('#auto-task-line').style.display=llmSettings.auto_analyze?'':'none';
+    $('#auto-task-line').hidden=!llmSettings.auto_analyze;
     $('#llm-include').value = llmSettings.include_keywords; $('#llm-exclude').value = llmSettings.exclude_keywords;
     $('#llm-instruction').value = llmSettings.instruction;
     $('#llm-key-note').textContent = llmSettings.has_key ? '已保存 Key，留空即可沿用。' : '尚未保存 Key，本地免鉴权模型可留空。';

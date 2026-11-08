@@ -107,7 +107,7 @@ MERGED from [androidx.startup:startup-runtime:1.1.1] E:\gradle-home\caches\9.3.1
 	tools:targetApi
 		ADDED from C:\Users\zzy\Documents\Codex\2026-11-07\jie-h\outputs\jiaojianbox\android\app\src\main\AndroidManifest.xml:17:9-29
 	android:allowBackup
-		ADDED from C:\Users\zzy\Documents\Codex\2026-11-07\jie-h\outputs\jiaojianbox\android\app\src\main\AndroidManifest.xml:12:9-35
+		ADDED from C:\Users\zzy\Documents\Codex\2026-11-07\jie-h\outputs\jiaojianbox\android\app\src\main\AndroidManifest.xml:12:9-36
 	android:theme
 		ADDED from C:\Users\zzy\Documents\Codex\2026-11-07\jie-h\outputs\jiaojianbox\android\app\src\main\AndroidManifest.xml:16:9-49
 	android:networkSecurityConfig

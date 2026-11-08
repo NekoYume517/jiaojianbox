@@ -1,5 +1,6 @@
 const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('desktop', {
+  quickGet:()=>ipcRenderer.invoke('quick-get'),quickSet:value=>ipcRenderer.invoke('quick-set',value),
   get: key => ipcRenderer.invoke('local-get', key),
   set: (key, value) => ipcRenderer.invoke('local-set', key, value),
   remove: key => ipcRenderer.invoke('local-remove', key),

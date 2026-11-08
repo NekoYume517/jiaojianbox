@@ -35,7 +35,7 @@ class JjbApi(private val session: Session) {
     private suspend fun Call.await(): Response = suspendCancellableCoroutine { cont ->
         enqueue(object : Callback {
             override fun onFailure(call: Call, e: IOException) { if (cont.isActive) cont.resumeWithException(e) }
-            override fun onResponse(call: Call, response: Response) { if (cont.isActive) cont.resume(response) }
+            override fun onResponse(call: Call, response: Response) { if (cont.isActive) cont.resume(response) else response.close() }
         })
         cont.invokeOnCancellation { runCatching { cancel() } }
     }
@@ -66,7 +66,7 @@ class JjbApi(private val session: Session) {
         http.newCall(Request.Builder()
             .url(session.server.trimEnd('/') + "/api/shelf")
             .header("Authorization", "Bearer " + session.token)
-            .post(bytes.toRequestBody("application/octet-stream".toMediaType()))
+            .post(okhttp3.MultipartBody.Builder().setType(okhttp3.MultipartBody.FORM).addFormDataPart("file", name, bytes.toRequestBody("application/octet-stream".toMediaType())).build())
             .build()).await().use { response ->
             response.jsonOrThrow().toShelf()
         }
@@ -78,9 +78,14 @@ class JjbApi(private val session: Session) {
     }
 
     suspend fun setStatus(taskId: String, task: JSONObject, status: String): JSONObject = withContext(Dispatchers.IO) {
-        task.put("status", status)
-        val payload = task.toString().toRequestBody("application/json".toMediaType())
+        val updated = JSONObject(task.toString()).put("status", status)
+        val payload = updated.toString().toRequestBody("application/json".toMediaType())
         http.newCall(request("/api/tasks/$taskId").newBuilder().put(payload).build()).await().use { it.jsonOrThrow() }
+    }
+
+    suspend fun createTask(title: String, description: String) = withContext(Dispatchers.IO) {
+        val payload = JSONObject().put("title",title).put("description",description).toString().toRequestBody("application/json".toMediaType())
+        http.newCall(request("/api/tasks").newBuilder().post(payload).build()).await().use { it.jsonOrThrow() }
     }
 
     suspend fun login(server: String, username: String, password: String): Session = withContext(Dispatchers.IO) {
@@ -108,7 +113,7 @@ fun JSONObject.toTask() = Task(
     title = getString("title"),
     description = optString("description"),
     status = optString("status", "collecting"),
-    dueAt = optString("due_at").ifEmpty { null },
+    dueAt = optString("due_at").takeUnless { isNull("due_at") || it.isBlank() },
     version = optInt("version", 1),
     materialCount = optJSONArray("attachments")?.let { arr -> (0 until arr.length()).count { arr.getJSONObject(it).optString("kind") == "material" } } ?: 0,
     raw = this,
@@ -128,7 +133,7 @@ fun JSONObject.toShelf() = ShelfItem(
     id = getString("id"),
     name = getString("name"),
     size = optLong("size"),
-    taskId = optString("task_id").ifEmpty { null },
+    taskId = optString("task_id").takeUnless { isNull("task_id") || it.isBlank() },
     kind = optString("kind", "material"),
     category = optString("category", "inbox"),
     reason = optJSONObject("suggestion")?.optString("reason")?.ifEmpty { null },

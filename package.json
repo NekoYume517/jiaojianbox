@@ -1,7 +1,7 @@
 {
   "name": "jiaojianbox",
   "productName": "交件箱",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "消息归集、LLM 通知筛选与交件管理",
   "main": "desktop/main.cjs",
   "private": true,

@@ -12,6 +12,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 
@@ -22,6 +24,7 @@ import kotlinx.coroutines.withContext
 @Composable
 fun LoginScreen(onLogin: (Session) -> Unit) {
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     var server by remember { mutableStateOf("http://") }
     var browserBusy by remember { mutableStateOf(false) }
     var browserError by remember { mutableStateOf("") }
@@ -34,11 +37,11 @@ fun LoginScreen(onLogin: (Session) -> Unit) {
     fun openBrowser(url: String) {
         runCatching {
             context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-        }.onFailure { browserError = "未找到可用的浏览器应用" }
+        }.onFailure { if(it is CancellationException)throw it; browserError = "未找到可用的浏览器应用" }
     }
 
     Column(
-        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(28.dp),
+        Modifier.fillMaxSize().safeDrawingPadding().imePadding().verticalScroll(rememberScrollState()).padding(28.dp),
         verticalArrangement = Arrangement.Center,
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
@@ -51,19 +54,19 @@ fun LoginScreen(onLogin: (Session) -> Unit) {
         Button(
             onClick = {
                 browserBusy = true; browserError = ""
-                lifecycleDispatch {
+                scope.launch {
                     var resultSession: Session? = null
                     runCatching {
                         val base = server.trim().trimEnd('/')
-                        val start = DeviceFlow.start(base)
+                        val start = withContext(Dispatchers.IO) { DeviceFlow.start(base) }
                         withContext(Dispatchers.Main) { openBrowser(start.verificationUrl) }
                         val deadline = System.currentTimeMillis() + start.expiresIn * 1000L
                         while (System.currentTimeMillis() < deadline) {
                             delay(2000)
-                            when (val status = DeviceFlow.poll(base, start.deviceCode)) {
+                            when (val status = withContext(Dispatchers.IO) { DeviceFlow.poll(base, start.deviceCode) }) {
                                 is DeviceFlow.PollResult.Approved -> {
                                     resultSession = Session(base.trimEnd('/'), status.token, status.username)
-                                    return@lifecycleDispatch
+                                    return@runCatching
                                 }
                                 is DeviceFlow.PollResult.Denied -> throw IllegalStateException("授权已取消")
                                 is DeviceFlow.PollResult.Expired -> throw IllegalStateException("授权已过期，请重试")
@@ -73,7 +76,7 @@ fun LoginScreen(onLogin: (Session) -> Unit) {
                         throw IllegalStateException("授权超时，请重试")
                     }.onSuccess {
                         resultSession?.let { onLogin(it) }
-                    }.onFailure { browserError = it.message ?: "授权失败"; browserBusy = false }
+                    }.onFailure { if(it is CancellationException)throw it; browserError = it.message ?: "授权失败"; browserBusy = false }
                 }
             },
             enabled = !browserBusy && server.startsWith("http"),
@@ -100,10 +103,10 @@ fun LoginScreen(onLogin: (Session) -> Unit) {
             Button(
                 onClick = {
                     pwBusy = true; pwError = ""
-                    lifecycleDispatch {
+                    scope.launch {
                         runCatching { JjbApi(Session(server, "", "")).login(server, username, password) }
                             .onSuccess { session -> onLogin(session) }
-                            .onFailure { pwError = it.message ?: "登录失败" }
+                            .onFailure { if(it is CancellationException)throw it; pwError = it.message ?: "登录失败" }
                         pwBusy = false
                     }
                 },

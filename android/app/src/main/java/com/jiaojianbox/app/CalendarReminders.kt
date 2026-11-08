@@ -42,8 +42,8 @@ object CalendarReminders {
             put(CalendarContract.Events.CALENDAR_ID, calendarId)
             put(CalendarContract.Events.TITLE, "交件：$title")
             put(CalendarContract.Events.DESCRIPTION, "由交件箱创建 · 任务 $taskId")
-            put(CalendarContract.Events.DTSTART, dueAtMillis - TimeUnit.HOURS.toMillis(1))
-            put(CalendarContract.Events.DTEND, dueAtMillis)
+            put(CalendarContract.Events.DTSTART, dueAtMillis)
+            put(CalendarContract.Events.DTEND, dueAtMillis + TimeUnit.MINUTES.toMillis(15))
             put(CalendarContract.Events.EVENT_TIMEZONE, java.util.TimeZone.getDefault().id)
             location?.takeIf { it.startsWith("http") }?.let { put(CalendarContract.Events.EVENT_LOCATION, it) }
             put(CalendarContract.Events.AVAILABILITY, CalendarContract.Events.AVAILABILITY_FREE)

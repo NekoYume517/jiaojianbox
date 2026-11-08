@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<incidents format="6" by="lint 8.13.1" type="conditional_incidents">
+
+    <incident
+        id="DuplicatePlatformClasses"
+        severity="fatal"
+        message="`json` defines classes that conflict with classes now provided by Android. Solutions include finding newer versions or alternative libraries that don&apos;t have the same problem (for example, for `httpclient` use `HttpUrlConnection` or `okhttp` instead), or repackaging the library using something like `jarjar`.">
+        <fix-replace
+            description="Delete dependency"
+            replacement=""
+            priority="0"/>
+        <location
+            file="${:app*projectDir}/build.gradle.kts"
+            line="45"
+            column="5"
+            startOffset="1518"
+            endLine="45"
+            endColumn="45"
+            endOffset="1558"/>
+    </incident>
+
+    <incident
+        id="ObsoleteSdkInt"
+        severity="warning"
+        message="Unnecessary; `SDK_INT` is always >= 34">
+        <fix-replace
+            description="Delete tools:targetApi"
+            replacement=""
+            priority="0">
+            <range
+                file="${:app*debug*MAIN*sourceProvider*0*manifest*0}"
+                startOffset="769"
+                endOffset="789"/>
+        </fix-replace>
+        <location
+            file="${:app*debug*MAIN*sourceProvider*0*manifest*0}"
+            line="17"
+            column="9"
+            startOffset="769"
+            endLine="17"
+            endColumn="29"
+            endOffset="789"/>
+        <map>
+            <condition minGE="34-∞"/>
+        </map>
+    </incident>
+
+</incidents>

@@ -106,6 +106,7 @@ function installHandlers() {
   handle('local-set',async(key,value)=>{await put(key,value);if(key==='session')edgeWindow?.resetSession();});
   handle('local-remove',async key=>{await fs.rm(await storageFile(key),{force:true});if(key==='session')edgeWindow?.resetSession();});
   handle('platform', () => ({ platform: process.platform, version: app.getVersion(), nativeTitlebar:process.platform==='win32' }));
+  handle('quick-get',()=>edgeWindow.preferences);handle('quick-set',value=>edgeWindow.configure(value));
   handle('appearance-get',()=>appearance);
   handle('appearance-set',async value=>{
     appearance=normalizeAppearance(value);
@@ -194,7 +195,7 @@ app.whenReady().then(async () => {
   }});
   nativeTheme.on('updated',updateNativeAppearance);
   await window.loadURL('app://jiaojianbox/index.html');
-  edgeWindow=new EdgeWindow({root:sourceRoot,main:window,get,resources:bridgeRoot});await edgeWindow.start();
+  edgeWindow=new EdgeWindow({root:sourceRoot,main:window,get,put,resources:bridgeRoot});await edgeWindow.start();
 });
 app.on('before-quit', () => { edgeWindow?.stop(); collector?.kill(); qqManager?.stop(); });
 app.on('window-all-closed', () => {if(!edgeWindow)app.quit();});
