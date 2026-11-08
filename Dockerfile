@@ -8,5 +8,5 @@ COPY server ./server
 COPY web ./web
 USER app
 EXPOSE 8765
-HEALTHCHECK --interval=30s --timeout=5s --start-period=15s CMD python -c "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8765/health',timeout=3)"
+HEALTHCHECK --interval=30s --timeout=5s --start-period=15s CMD ["python", "-m", "server.healthcheck"]
 CMD ["python", "-m", "uvicorn", "server.app:app", "--host", "0.0.0.0", "--port", "8765"]
