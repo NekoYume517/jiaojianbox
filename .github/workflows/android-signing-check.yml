@@ -1,0 +1,24 @@
+name: Android signing identity
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  identity:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Verify stored signing certificate
+        env:
+          SIGNING_KEY: ${{ secrets.JJB_ANDROID_DEBUG_KEYSTORE }}
+        shell: bash
+        run: |
+          test -n "$SIGNING_KEY"
+          key="$RUNNER_TEMP/signing.keystore"
+          trap 'rm -f "$key"' EXIT
+          printf '%s' "$SIGNING_KEY" | base64 --decode > "$key"
+          chmod 600 "$key"
+          keytool -list -keystore "$key" -storepass android -alias androiddebugkey
