@@ -1,3 +1,209 @@
-<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>安装交件箱</title><style>
-:root{color-scheme:dark;--bg:#1a1b26;--panel:#24283b;--ink:#c0caf5;--muted:#a9b1d6;--accent:#7aa2f7;--line:#414868;font:14px/1.6 'Segoe UI','Microsoft YaHei UI',sans-serif}*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink)}header{height:48px;padding:0 22px;display:flex;align-items:center;border-bottom:1px solid var(--line);--wails-draggable:drag;font-size:12px;gap:10px}header img{width:20px;height:20px}button{font:inherit;cursor:pointer;border:1px solid var(--line);background:transparent;color:var(--ink);padding:8px 16px}button:disabled{opacity:.5;cursor:default}button:focus-visible,input:focus-visible{outline:2px solid var(--accent);outline-offset:3px}header button{margin-left:auto;border:0;padding:5px 9px;--wails-draggable:no-drag}main{padding:34px 40px}h1{font-weight:550;font-size:30px;line-height:1.4;margin:0 0 12px}p{color:var(--muted);font-size:13px;margin:0 0 28px}.version{font-size:11px;color:var(--accent);letter-spacing:.08em;margin-bottom:12px}.path{display:flex;gap:8px;margin:8px 0 18px}input[type=text]{flex:1;min-width:0;background:var(--panel);border:1px solid var(--line);padding:10px;color:var(--ink);font:inherit}label{font-size:12px}input[type=checkbox]{accent-color:var(--accent)}.options{display:flex;gap:24px}.foot{position:absolute;bottom:0;left:0;right:0;border-top:1px solid var(--line);padding:20px 40px;display:flex;justify-content:space-between;align-items:center;font-size:11px;color:var(--muted)}.primary{background:var(--accent);border-color:var(--accent);color:#1a1b26;font-weight:600;min-width:120px}progress{width:100%;height:5px;appearance:none;margin:25px 0 12px}progress::-webkit-progress-bar{background:var(--line)}progress::-webkit-progress-value{background:var(--accent)}#error{color:#f7768e;font-size:12px;white-space:pre-wrap;margin-top:15px}#progress-text{font-size:12px;color:var(--muted)}[hidden]{display:none!important}@media(prefers-color-scheme:light){:root{color-scheme:light;--bg:#f4f5fa;--panel:#e9edf7;--ink:#303854;--muted:#5b6480;--accent:#315bba;--line:#ccd2e2}.primary{color:white}}
-</style></head><body><header><img src="icon.png" alt="">交件箱安装<button id="close" aria-label="关闭">×</button></header><main><div class="version" id="version">交件箱</div><h1 id="heading">通知、待办与文件，一处整理。</h1><p id="intro">安装后即可离线使用，也可以登录账号同步到其他设备。</p><section id="options"><label for="directory">安装位置</label><div class="path"><input id="directory" type="text" spellcheck="false"><button id="choose">浏览</button></div><div class="options"><label><input type="checkbox" id="desktop" checked> 创建桌面快捷方式</label><label><input type="checkbox" id="start-menu" checked> 添加到开始菜单</label></div></section><section id="status" hidden><progress id="progress" value="0" max="100"></progress><div id="progress-text">正在准备安装…</div></section><div id="error" role="alert"></div></main><footer class="foot"><span id="footnote">完整离线安装包 · QQ 与微信采集组件已内置</span><button class="primary" id="install">开始安装</button></footer><script type="module" src="setup.js"></script></body></html>
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>安装交件箱</title>
+  <style>
+    :root{
+      color-scheme:dark;
+      --canvas:#1a1a1e;
+      --sidebar:#131317;
+      --panel:#1f1f24;
+      --surface:#26262c;
+      --input:#17171b;
+      --ink:#ececf0;
+      --text:#c4c6ce;
+      --muted:#888a92;
+      --line:#333339;
+      --soft-line:#292930;
+      --selected:#2f2f38;
+      --hover:#26262d;
+      --accent:#7aa2f7;
+      --accent-hover:#7da6ff;
+      --accent-ink:#171a20;
+      --success:#7fd88f;
+      --danger:#f7768e;
+      --motion-ease:cubic-bezier(.2,.8,.2,1);
+      --motion-out:cubic-bezier(.23,1,.32,1);
+      font:14px/1.6 "Segoe UI Variable Text","Segoe UI","Microsoft YaHei UI",system-ui,sans-serif;
+    }
+    @media(prefers-color-scheme:light){
+      :root{
+        color-scheme:light;
+        --canvas:#f4f4f6;
+        --sidebar:#fbfbfc;
+        --panel:#fff;
+        --surface:#f4f4f6;
+        --input:#fff;
+        --ink:#1e1f24;
+        --text:#43454d;
+        --muted:#767880;
+        --line:#d9dae0;
+        --soft-line:#e6e7ec;
+        --selected:#e8ecf8;
+        --hover:#eceef2;
+        --accent:#315bba;
+        --accent-hover:#2c51a5;
+        --accent-ink:#fff;
+        --success:#207944;
+        --danger:#b3261e;
+      }
+    }
+    *{box-sizing:border-box}
+    html,body{height:100%}
+    body{
+      margin:0;overflow:hidden;background:var(--canvas);
+      color:var(--ink);
+      transition:background-color 250ms var(--motion-ease),color 250ms var(--motion-ease);
+    }
+    button,input{font:inherit}
+    button{
+      cursor:pointer;border:1px solid var(--line);border-radius:8px;
+      background:var(--panel);color:var(--ink);padding:8px 14px;
+      transition:background-color 160ms var(--motion-ease),color 160ms var(--motion-ease),border-color 160ms var(--motion-ease),transform 160ms var(--motion-ease),opacity 160ms var(--motion-ease);
+    }
+    button:hover:not(:disabled){background:var(--hover);border-color:var(--line)}
+    button:active:not(:disabled){transform:scale(.96)}
+    button:disabled{opacity:.45;cursor:default}
+    button:focus-visible,input:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+    .shell{display:grid;grid-template-rows:56px 64px minmax(0,1fr) 74px;height:100%}
+    header{
+      display:flex;align-items:center;gap:10px;padding:0 16px;
+      background:var(--sidebar);border-bottom:1px solid var(--soft-line);
+      --wails-draggable:drag;
+    }
+    header img{width:24px;height:24px;border-radius:6px}
+    .brand{display:flex;align-items:center;gap:10px;font-size:13px;font-weight:600;color:var(--ink)}
+    .state-chip{
+      margin-left:6px;padding:4px 8px;border:1px solid var(--line);border-radius:999px;
+      background:var(--panel);color:var(--muted);font-size:11px;letter-spacing:.03em;
+    }
+    header button{
+      margin-left:auto;border:0;background:transparent;color:var(--muted);
+      width:32px;height:32px;min-width:32px;padding:0;font-size:18px;--wails-draggable:no-drag;
+    }
+    header button:hover{background:var(--hover);color:var(--ink)}
+    main{min-height:0;overflow-y:auto;padding:20px 40px 16px}
+    .views{position:relative;min-height:0}
+    .view{animation:none}
+    .badge{
+      display:inline-flex;align-items:center;gap:7px;margin-bottom:14px;
+      padding:5px 9px;border:1px solid var(--line);border-radius:999px;
+      background:var(--panel);color:var(--muted);font-size:11px;letter-spacing:.05em;
+    }
+    .badge.update{color:var(--accent);border-color:color-mix(in srgb,var(--accent) 38%,var(--line))}
+    h1{margin:0 0 8px;font-size:28px;line-height:1.35;font-weight:650;letter-spacing:-.4px}
+    .intro{max-width:480px;margin:0 0 24px;color:var(--muted);font-size:13px;line-height:1.75}
+    .panel{
+      max-width:620px;padding:22px;border:1px solid var(--line);border-radius:12px;
+      background:color-mix(in srgb,var(--panel) 88%,transparent);
+      box-shadow:0 10px 30px rgba(0,0,0,.06);
+    }
+    .field-label{display:block;margin-bottom:8px;color:var(--text);font-size:12px;font-weight:600}
+    .path{display:flex;align-items:center;gap:8px}
+    input[type=text]{
+      flex:1;min-width:0;height:38px;padding:0 11px;color:var(--ink);
+      background:var(--input);border:1px solid var(--line);border-radius:8px;
+      transition:border-color 160ms var(--motion-ease),background-color 160ms var(--motion-ease);
+    }
+    input[type=text]:hover{border-color:color-mix(in srgb,var(--line) 75%,var(--ink) 25%)}
+    .hint{min-height:18px;margin:8px 0 16px;color:var(--muted);font-size:12px}
+    .hint.result{color:var(--accent)}
+    .hint.error{color:var(--danger)}
+    .switches{display:flex;gap:24px;padding-top:14px;border-top:1px solid var(--soft-line)}
+    label.switch{display:flex;align-items:center;gap:8px;color:var(--text);font-size:12px}
+    input[type=checkbox]{width:16px;height:16px;margin:0;accent-color:var(--accent)}
+    .progress-wrap{max-width:620px;padding:24px;border:1px solid var(--line);border-radius:12px;background:var(--panel);box-shadow:0 10px 30px rgba(0,0,0,.06)}
+    .progress-top{display:flex;justify-content:space-between;gap:16px;margin-bottom:18px}
+    .progress-top strong{font-size:15px;font-weight:600}
+    .progress-top span{color:var(--muted);font-size:12px;font-variant-numeric:tabular-nums}
+    .progress{position:relative;height:5px;overflow:hidden;border-radius:99px;background:var(--selected)}
+    .progress-fill{
+      position:absolute;inset:0;transform:scaleX(0);transform-origin:left;
+      background:var(--accent);border-radius:99px;
+      transition:transform 420ms var(--motion-ease),background-color 250ms var(--motion-ease);
+    }
+    .progress-wrap.completed .progress-fill{background:var(--success)}
+    .progress-message{margin:16px 0 0;min-height:20px;color:var(--muted);font-size:12px;white-space:pre-wrap;word-break:break-all}
+    .error{
+      max-width:620px;min-height:20px;margin-top:12px;color:var(--danger);
+      font-size:12px;white-space:pre-wrap;
+    }
+    footer{
+      display:flex;align-items:center;justify-content:space-between;gap:20px;
+      padding:0 40px;background:var(--sidebar);border-top:1px solid var(--soft-line);
+      color:var(--muted);font-size:11px;
+    }
+    #install{min-width:128px;min-height:36px;background:var(--accent);border-color:transparent;color:var(--accent-ink);font-weight:600}
+    #install:hover:not(:disabled){background:var(--accent-hover)}
+    .stepper{margin:14px 40px 4px;padding:4px;position:relative;isolation:isolate;border:1px solid var(--line);border-radius:9px;background:var(--surface)}
+    .stepper ol{list-style:none;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));padding:0;margin:0;height:100%}
+    .stepper li{display:flex;align-items:center;justify-content:center;gap:7px;color:var(--muted);font-size:12px;position:relative;z-index:1;transition:color 160ms var(--motion-ease);white-space:nowrap}
+    .stepper li[aria-current=step]{color:var(--ink);font-weight:600}
+    .stepper .step-highlight{position:absolute;top:4px;bottom:4px;left:4px;width:calc((100% - 8px)/4);border-radius:6px;background:var(--selected);transition:transform 280ms var(--motion-ease);pointer-events:none}
+    html[data-input=keyboard] .step-highlight{transition:none}
+    .footer-actions{display:flex;align-items:center;gap:8px}
+    .feature-list{margin:0;padding:0;list-style:none;display:grid;gap:12px;color:var(--text);font-size:13px}
+    .complete-path{word-break:break-all;color:var(--muted);font-size:12px}
+    [hidden]{display:none!important}
+    @media(prefers-reduced-motion:reduce){
+      *,*::before,*::after{animation:none!important;transition:none!important;scroll-behavior:auto!important}
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <header>
+      <img src="icon.png" alt="">
+      <div class="brand"><span id="window-label">交件箱安装</span><span class="state-chip" id="state-chip">准备中</span></div>
+      <button id="close" type="button" aria-label="关闭">×</button>
+    </header>
+    <nav class="stepper" aria-label="安装步骤（仅显示进度）">
+      <span class="step-highlight" aria-hidden="true"></span>
+      <ol><li aria-current="step"><span>1</span><span class="step-label">欢迎</span></li><li><span>2</span><span class="step-label">安装位置</span></li><li><span>3</span><span class="step-label">安装</span></li><li><span>4</span><span class="step-label">完成</span></li></ol>
+    </nav>
+    <main>
+      <div class="views">
+        <section class="view" id="welcome-view">
+          <div class="badge" id="welcome-version">交件箱</div>
+          <h1 id="welcome-heading">欢迎使用交件箱</h1>
+          <p class="intro" id="welcome-intro">通知、待办与文件，一处整理。</p>
+          <div class="panel"><ul class="feature-list" id="welcome-features"><li>QQ 与微信采集组件随安装包提供</li><li>可以离线使用，也能登录账号同步</li><li>更新时保留账号和本机工作空间</li></ul></div>
+        </section>
+        <section class="view" id="options-view" hidden>
+          <div class="badge" id="version-badge">完整离线安装包</div>
+          <h1 id="heading">选择安装位置</h1>
+          <p class="intro" id="intro">确认安装位置和快捷方式。</p>
+          <div class="panel">
+            <label class="field-label" for="directory">安装位置</label>
+            <div class="path">
+              <input id="directory" type="text" spellcheck="false" autocomplete="off">
+              <button id="choose" type="button">浏览</button>
+            </div>
+            <p class="hint" id="path-hint">选择空文件夹会直接安装；已有内容的文件夹会使用其中的 jiaojianbox。</p>
+            <div class="switches">
+              <label class="switch"><input id="desktop" type="checkbox" checked> 创建桌面快捷方式</label>
+              <label class="switch"><input id="start-menu" type="checkbox" checked> 添加到开始菜单</label>
+            </div>
+          </div>
+        </section>
+        <section class="view" id="status-view" hidden><h1 id="operation-heading">正在安装交件箱</h1><p class="intro">请稍候，完成后即可继续。</p>
+          <div class="progress-wrap" id="progress-wrap">
+            <div class="progress-top"><strong id="progress-title">正在安装</strong><span id="progress-percent">1%</span></div>
+            <div class="progress" role="progressbar" aria-label="安装进度" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><div class="progress-fill" id="progress-fill"></div></div>
+            <p class="progress-message" id="progress-text" role="status">正在准备安装…</p>
+          </div>
+        </section>
+        <section class="view" id="complete-view" hidden><div class="badge">已完成</div><h1 id="complete-heading">交件箱已准备好</h1><p class="intro" id="complete-intro">安装已完成，可以打开交件箱。</p><div class="panel"><strong>本机数据已保留</strong><p class="complete-path" id="complete-path"></p></div><label class="switch" id="launch-option" style="margin-top:20px"><input id="launch-app" type="checkbox" checked> 打开交件箱</label></section>
+        <div class="error" id="error" role="alert"></div>
+      </div>
+    </main>
+    <footer>
+      <span id="footnote">完整离线安装包 · QQ 与微信采集组件已内置</span>
+      <div class="footer-actions"><button id="previous" type="button" hidden>上一步</button><button class="primary" id="install" type="button" disabled>下一步</button></div>
+    </footer>
+  </div>
+  <script type="module" src="setup.js"></script>
+</body>
+</html>

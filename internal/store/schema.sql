@@ -25,3 +25,4 @@
                 CREATE TABLE IF NOT EXISTS invitations(id TEXT PRIMARY KEY, code_hash TEXT UNIQUE NOT NULL,
                     prefix TEXT, label TEXT, max_uses INTEGER, uses INTEGER DEFAULT 0,
                     expires REAL, revoked INTEGER DEFAULT 0, created_by TEXT REFERENCES users(id));
+

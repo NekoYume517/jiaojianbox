@@ -11,6 +11,7 @@ const paths = {
   chart: '<path d="M4 3v17h17M8 16v-5M13 16V6M18 16V9"/>',
   settings: '<path d="M9 3h6l1 3 3 1 2 5-2 5-3 1-1 3H9l-1-3-3-1-2-5 2-5 3-1Z"/><circle cx="12" cy="12" r="3"/>',
   refresh: '<path d="M20 10a8 8 0 1 0-2 8M20 4v6h-6"/>',
+  sidebar: '<rect x="3" y="4" width="18" height="16" rx="3"/><path d="M9 4v16"/>',
   logout: '<path d="M10 4H4v16h6M12 12h9m-4-4 4 4-4 4"/>',
   search: '<circle cx="10" cy="10" r="6"/><path d="m15 15 5 5"/>',
   plus: '<path d="M12 5v14M5 12h14"/>',
@@ -55,9 +56,12 @@ function hideToast(){ clearTimeout(toastAutoTimer); const el = $('#toast'); el.c
 function hydrateIcons() { $$('[data-icon]').forEach(el => { el.innerHTML = icon(el.dataset.icon); }); }
 function apiUrl(route) { return state.session.server.replace(/\/$/, '') + route; }
 async function api(route, method = 'GET', body) {
+  let request = { route, method, body };
+  if (window.pluginUI) request = await window.pluginUI.beforeRequest(request);
   const headers = { Authorization: 'Bearer ' + state.session.token };
-  if (body !== undefined && !(body instanceof FormData)) headers['Content-Type'] = 'application/json';
-  const response = await fetch(apiUrl(route), { method, headers, body: body instanceof FormData ? body : body === undefined ? undefined : JSON.stringify(body), signal: AbortSignal.timeout((route === '/api/analyze'||route.endsWith('/suggest')) ? 100000 : 45000) });
+  if (request.body !== undefined && !(request.body instanceof FormData)) headers['Content-Type'] = 'application/json';
+  const timeoutRoute = route === '/api/analyze' || route.endsWith('/suggest') ? route : request.route;
+  const response = await fetch(apiUrl(request.route), { method: request.method, headers, body: request.body instanceof FormData ? request.body : request.body === undefined ? undefined : JSON.stringify(request.body), signal: AbortSignal.timeout((timeoutRoute === '/api/analyze'||timeoutRoute.endsWith('/suggest')) ? 100000 : 45000) });
   if (!response.ok) {
     let detail;
     try { detail = (await response.json()).detail; } catch { detail = '服务端返回错误'; }
@@ -65,7 +69,8 @@ async function api(route, method = 'GET', body) {
     error.status = response.status; error.detail = detail;
     throw error;
   }
-  return response.json();
+  const result = await response.json();
+  return window.pluginUI ? await window.pluginUI.afterResponse(request, response, result) : result;
 }
 function online(value) {
   state.online = value;
@@ -106,8 +111,9 @@ async function refresh({ renderPage = true } = {}) {
     state.snapshot.messages.push(...previousMessages.filter(m => !latestIds.has(m.id)));
     for (const m of state.snapshot.messages) if (!knownIds.has(m.id) && state.firstRenderDone) m.isNew = true;
     online(true); cacheSoon();
-    if (renderPage && contentChanged && !uploading && !['settings', 'sources','stats'].includes(state.page)) render();
-    window.dispatchEvent(new CustomEvent('snapshot-updated'));
+    if (renderPage && contentChanged && !uploading && !['settings', 'sources','stats','plugins'].includes(state.page) && !state.page.startsWith('plugin:')) render();
+    window.dispatchEvent(new CustomEvent('snapshot-updated', { detail: state.snapshot }));
+ window.pluginUI?.sync();
     updateCounts();
   } catch (error) {
     if (generation !== state.generation) return;
@@ -356,11 +362,11 @@ function render() {
   const sameView = $('#view').dataset.viewKey === viewKey;
   const scrollTop = sameView ? $('#view').scrollTop : 0;
   const pageScroll = sameView ? document.scrollingElement.scrollTop : 0;
-  const titles = { files:'文件', inbox: '通知', tasks: '待办', sources: '消息来源', settings: '设置',stats:'统计' };
-  $('#breadcrumb').textContent = titles[state.page];
+  const titles = { files:'文件', inbox: '通知', tasks: '待办', sources: '消息来源', settings: '设置',stats:'统计',plugins:'插件' };
+  $('#breadcrumb').textContent = titles[state.page]||window.pluginUI?.title(state.page)||'插件';
   $$('[data-nav]').forEach(button => button.classList.toggle('active', button.dataset.nav === state.page));
   window.statistics?.unmount();
-  $('#view').innerHTML = state.page === 'sources' && window.experience ? experience.sourcesView() : ({ files:()=>window.shelf?.page()||'', inbox: inboxView, tasks: tasksView, sources: sourcesView, settings: settingsView,stats:()=>window.statistics.page() })[state.page]();
+  $('#view').innerHTML = state.page.startsWith('plugin:') ? '<div id=plugin-page></div>' : state.page === 'sources' && window.experience ? experience.sourcesView() : ({ files:()=>window.shelf?.page()||'', inbox: inboxView, tasks: tasksView, sources: sourcesView, settings: settingsView,plugins:()=>window.pluginUI?.page()||'',stats:()=>window.statistics.page() })[state.page]();
   hydrateIcons(); updateCounts(); syncLocationHash();
   $('#view').dataset.viewKey = viewKey;
   $('#view').scrollTop = scrollTop;
@@ -370,7 +376,9 @@ function render() {
   window.appearance?.refresh(); window.experience?.decorate(state.page);
   if(state.session?.mode!=='offline')window.jjbAdmin?.mount();
   window.accountUI?.mount();
+ window.pluginUI?.mount();
   window.pageNavigation?.sync();
+  window.dispatchEvent(new CustomEvent('workspace-render', { detail: { page: state.page } }));
   document.scrollingElement.scrollTop = pageScroll;
   if ($('#source-filter')) $('#source-filter').value = state.source;
   if ($('#category-filter')) $('#category-filter').value = state.category;
@@ -391,8 +399,12 @@ function renderDetailOnly(messageId) {
 }
 async function navigate(page) {
   const changed=state.page!==page;
-  state.page = page; state.search = ''; state.taskId = null; render();
-  if(changed)uiMotion.transitionPage($('#view'));
+  state.page = page; state.search = ''; state.taskId = null;
+  if(changed){
+    $$('[data-nav]').forEach(button=>{const active=button.dataset.nav===page;button.classList.toggle('active',active);if(active)button.setAttribute('aria-current','page');else button.removeAttribute('aria-current');});
+    uiMotion.syncNavigation();
+    await uiMotion.swapPage($('#view'),render);
+  }else render();
   if (page === 'settings') await loadLlm();
   if(page === 'sources')window.experience?.detect(false);
 }
@@ -745,7 +757,8 @@ const CMDK_COMMANDS = [
 let cmdkOpen = false, cmdkItems = [], cmdkReturnFocus = null;
 function cmdkFilter(query) {
   const q = query.trim().toLowerCase();
-  return !q ? CMDK_COMMANDS : CMDK_COMMANDS.filter(c => c.label.toLowerCase().includes(q) || c.kbd.toLowerCase().includes(q));
+  const all = [...CMDK_COMMANDS, ...window.pluginUI?.commands() || []];
+  return !q ? all : all.filter(c => c.label.toLowerCase().includes(q) || c.kbd.toLowerCase().includes(q));
 }
 function cmdkRender() {
   const list = $('#cmdk-list');
@@ -905,7 +918,7 @@ $('#logout').addEventListener('click', async () => {
   try { await api('/api/auth/logout', 'POST'); } catch { /* 离线仍可退出本机。 */ }
   state.generation++;window.liveAnalysis?.cancelAll();window.statistics?.unmount();window.shelf?.reset();clearTimeout(reconnectTimer); clearTimeout(cacheTimer); state.socket?.close();
   if (window.desktop) { await desktop.stopCollector(); await desktop.remove('session'); } else localStorage.removeItem('jjb-session');
-  state.session = null; state.selected = null; state.contexts.clear(); state.pending = []; state.snapshot = { tasks: [], messages: [], cursor: 0 };
+  window.pluginUI?.stop();state.session = null; state.selected = null; state.contexts.clear(); state.pending = []; state.snapshot = { tasks: [], messages: [], cursor: 0 };
   $('#workspace').hidden = true; $('#auth').hidden = false;
 });
 $('#refresh').addEventListener('click', () => { refresh(); flushOutbox(); });

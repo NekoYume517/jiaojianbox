@@ -48,3 +48,7 @@ python -X utf8 scripts/verify-installer.py
 云端始终挂载原 `/data` 数据卷。不要在升级时删除或替换卷，也不要更换 `master.key`/`JJB_MASTER_KEY`。云端与本机迁移为复制式，不删除来源，不迁移账号凭证和模型密钥。部署步骤见 [Coolify 指南](docs/deploy-coolify.md)。
 
 `server/` 和旧 Electron 模块保留为兼容测试及回滚参考，不参与 0.6.0 安装包/服务端镜像。历史实现说明见 [历史文档](docs/legacy-implementation.md)。
+
+## 插件开发
+
+扩展契约、一级/二级 tab、任务触发器与外部 AI 工具接入见 [插件开发指南](docs/plugin-development.md)。可导入样例位于 [examples/plugins/task-agent](examples/plugins/task-agent)。

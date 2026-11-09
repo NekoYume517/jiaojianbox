@@ -66,7 +66,26 @@ module.exports = async function verifyMotion(page, scratch) {
     await page.setViewportSize({width,height:830});await page.locator('[data-nav="sources"]').click();
     assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),'sources must not overflow horizontally');
   }
+  await page.setViewportSize({width:390,height:830});await page.locator('[data-nav="stats"]').click();
+  await page.locator('.page-tabs button').first().waitFor();
+  const tabThumb=page.locator('.page-tabs .segment-highlight');
+  const tabBefore=await tabThumb.evaluate(el=>el.style.transform);
+  await page.locator('.page-tabs button').nth(1).click();
+  await page.waitForFunction(([before])=>{
+    const thumb=document.querySelector('.page-tabs .segment-highlight');
+    return thumb&&thumb.style.transform!==before&&document.querySelector('.page-tabs button[aria-selected=true]').textContent.trim()!=='概览';
+  },[tabBefore]);
+  assert.equal(await page.locator('.page-tabs button[aria-selected=true]').evaluate(el=>getComputedStyle(el).backgroundColor),'rgba(0, 0, 0, 0)');
+  await page.setViewportSize({width:1280,height:860});
+  const themeThumb=page.locator('.topbar .theme-picker .segment-highlight');
+  const themeBefore=await themeThumb.evaluate(el=>el.style.transform);
+  const activeMode=await page.locator('.topbar [data-theme-mode].active').getAttribute('data-theme-mode');
+  await page.locator(`.topbar [data-theme-mode="${activeMode==='dark'?'light':'dark'}"]`).click();
+  await page.waitForFunction(before=>document.querySelector('.topbar .theme-picker .segment-highlight')?.style.transform!==before,[themeBefore]);
+  await page.locator(`.topbar [data-theme-mode="${activeMode}"]`).click();
+  await page.waitForFunction(()=>getComputedStyle(document.querySelector('#view')).opacity==='1');
   await page.setViewportSize({width:1280,height:860});await page.locator('[data-nav="tasks"]').click();
+  await page.waitForFunction(()=>getComputedStyle(document.querySelector('#view')).opacity==='1');
   await require('./verify-experience.cjs')(page,scratch);
   console.log('Motion: first render, spring retargeting, press feedback, interrupted dialogs, menu re-entry/keyboard, reduced motion and narrow bounds passed.');
 };

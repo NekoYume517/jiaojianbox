@@ -31,7 +31,11 @@ func main() {
 		if err = setup.EnsureVC(ctx, payload); err != nil {
 			fatal(err, true)
 		}
-		target, e := setup.Install(ctx, payload, *directory, !*noShortcuts, !*noShortcuts, func(int, string) {})
+		resolved, e := setup.ResolveDirectory(*directory)
+		if e != nil {
+			fatal(e, true)
+		}
+		target, e := setup.Install(ctx, payload, resolved, !*noShortcuts, !*noShortcuts, func(int, string) {})
 		if e != nil {
 			fatal(e, true)
 		}

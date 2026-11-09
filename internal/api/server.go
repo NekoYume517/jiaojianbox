@@ -166,6 +166,12 @@ func (s *Server) transaction(ctx context.Context, fn func(store.SQL) any) any {
 }
 func event(ctx context.Context, db store.SQL, user, kind, id string) {
 	check(store.Event(ctx, db, user, kind, id))
+	if kind == "task.upsert" {
+		row := first(query(ctx, db, "SELECT version FROM tasks WHERE id=? AND user_id=?", id, user))
+		if row != nil && num(row, "version") == 1 && len(query(ctx, db, "SELECT seq FROM events WHERE user_id=? AND kind='task.created' AND entity_id=? LIMIT 1", user, id)) == 0 {
+			event(ctx, db, user, "task.created", id)
+		}
+	}
 }
 
 func New(database *store.Store, assets fs.FS, version string) (*Server, error) {
@@ -188,8 +194,18 @@ func New(database *store.Store, assets fs.FS, version string) (*Server, error) {
 		s.statisticsRoutes()
 		s.route("GET /health", "", func(r request) any { return Object{"status": "ok", "version": s.Version, "runtime": "go"} })
 		s.Mux.HandleFunc("GET /authorize", func(w http.ResponseWriter, r *http.Request) {
-			r.URL.Path = "/"
-			http.FileServerFS(s.Assets).ServeHTTP(w, r)
+			asset, err := s.Assets.Open("authorize.html")
+			if err != nil {
+				http.NotFound(w, r)
+				return
+			}
+			defer asset.Close()
+			stat, err := asset.Stat()
+			if err != nil {
+				http.NotFound(w, r)
+				return
+			}
+			http.ServeContent(w, r, "authorize.html", stat.ModTime(), asset.(io.ReadSeeker))
 		})
 		s.Mux.Handle("GET /", http.FileServerFS(s.Assets))
 		exec(context.Background(), s.Store.DB, "UPDATE analysis_jobs SET state='queued' WHERE state='running'")

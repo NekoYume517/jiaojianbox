@@ -31,7 +31,10 @@ snow=ROOT/'runtime-vendor/snowluma'
 for component in [snow/'node.exe',snow/'native/snowluma-win32-x64.node',ROOT/'desktop/drag-watch.exe']:
  if not component.is_file():raise SystemExit(f'Missing required runtime: {component.name}')
 deps=ROOT/'work/installer-deps';deps.mkdir(parents=True,exist_ok=True)
-urls={'webview2':'https://go.microsoft.com/fwlink/?linkid=2124701','vcredist':'https://aka.ms/vs/17/release/vc_redist.x64.exe'}
+# WebView2 ships as an evergreen bootstrapper downloaded on demand during
+# install (see internal/setup/windows.go); bundling the offline installer cost
+# ~215 MB. vcredist stays bundled because machines without it are common.
+urls={'vcredist':'https://aka.ms/vs/17/release/vc_redist.x64.exe'}
 for name,url in urls.items():
  destination=deps/(name+'.exe')
  if not destination.exists():
@@ -53,7 +56,7 @@ try:
 finally:
  for file in resources:file.unlink(missing_ok=True)
 shutil.copytree(helper,stage/'runtime/collector-agent',dirs_exist_ok=True,ignore=shutil.ignore_patterns('__pycache__'))
-shutil.copytree(snow,stage/'runtime/snowluma',dirs_exist_ok=True,ignore=shutil.ignore_patterns('__pycache__'))
+shutil.copytree(snow,stage/'runtime/snowluma',dirs_exist_ok=True,ignore=shutil.ignore_patterns('__pycache__','client'))
 (stage/'bridge').mkdir(exist_ok=True)
 for name in ['snow-loader.mjs','snow-bridge.mjs','drag-watch.exe']:
  shutil.copy2(ROOT/'desktop'/name,stage/'bridge'/name)
@@ -64,7 +67,7 @@ for file in sorted(stage.rglob('*')):
  if file.is_file():
   with file.open('rb') as f:manifest['files'][file.relative_to(stage).as_posix()]=hashlib.file_digest(f,'sha256').hexdigest()
 archive=out/'payload.zip'
-with zipfile.ZipFile(archive,'w',zipfile.ZIP_DEFLATED,compresslevel=6) as z:
+with zipfile.ZipFile(archive,'w',zipfile.ZIP_DEFLATED,compresslevel=9) as z:
  for name in manifest['files']:z.write(stage/name,name)
  for name in urls:z.write(deps/(name+'.exe'),'dependencies/'+name+'.exe',compress_type=zipfile.ZIP_STORED)
  z.writestr('manifest.json',json.dumps(manifest,ensure_ascii=False))

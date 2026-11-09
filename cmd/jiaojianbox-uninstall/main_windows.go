@@ -6,7 +6,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"syscall"
 	"time"
 )
 
@@ -19,6 +18,14 @@ func main() {
 		os.Exit(1)
 	}
 	if *remove != "" {
+		if !*quiet {
+			if err := setup.RunUninstall(*remove); err != nil {
+				setup.Message(err.Error(), false)
+				os.Exit(1)
+			}
+			return
+		}
+
 		var last error
 		for n := 0; n < 30; n++ {
 			last = setup.RemoveInstalled(*remove)
@@ -44,9 +51,6 @@ func main() {
 		setup.Message("未找到安装清单，未删除任何文件。", false)
 		os.Exit(1)
 	}
-	if !*quiet && !setup.Message("卸载交件箱？本机工作空间和账号数据会保留。", true) {
-		return
-	}
 	dir, err := os.MkdirTemp("", "jjb-uninstall-")
 	if err != nil {
 		os.Exit(1)
@@ -64,7 +68,9 @@ func main() {
 		args = append(args, "--quiet")
 	}
 	cmd := exec.Command(copyPath, args...)
-	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
+	// A graphical child must not inherit SW_HIDE. The launcher must exit so
+	// the original Uninstall.exe can be removed by the copied process.
+	cmd.Dir = dir
 	if cmd.Start() != nil {
 		os.Exit(1)
 	}

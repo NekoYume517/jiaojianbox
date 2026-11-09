@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"os"
+	"net/http"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -70,11 +71,59 @@ func runtimeDependency(ctx context.Context, p *Payload, name string) error {
 	}
 	return nil
 }
+
+// downloadWebView installs the evergreen WebView2 runtime when the machine
+// lacks it and the installer payload carries no offline copy. The bootstrapper
+// is about 2 MB and fetches the runtime from Microsoft directly.
+func downloadWebView(ctx context.Context) error {
+	bootstrapper, err := os.CreateTemp("", "jjb-webview2-*.exe")
+	if err != nil {
+		return err
+	}
+	path := bootstrapper.Name()
+	defer os.Remove(path)
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://go.microsoft.com/fwlink/?linkid=2124701", nil)
+	if err != nil {
+		bootstrapper.Close()
+		return err
+	}
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		bootstrapper.Close()
+		return errors.New("无法下载 WebView2 运行时，请检查网络后重试，或到 https://developer.microsoft.com/microsoft-edge/webview2 手动安装")
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		bootstrapper.Close()
+		return errors.New("无法下载 WebView2 运行时，请检查网络后重试，或到 https://developer.microsoft.com/microsoft-edge/webview2 手动安装")
+	}
+	if _, err = io.Copy(bootstrapper, io.LimitReader(response.Body, 64<<20)); err != nil {
+		bootstrapper.Close()
+		return err
+	}
+	if err = bootstrapper.Close(); err != nil {
+		return err
+	}
+	cmd := exec.CommandContext(ctx, path, "/silent", "/install")
+	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
+	if err = cmd.Run(); err != nil {
+		var exit *exec.ExitError
+		if errors.As(err, &exit) && (exit.ExitCode() == 3010 || exit.ExitCode() == 1638) {
+			return nil
+		}
+		return errors.New("WebView2 运行时安装失败，请重试")
+	}
+	return nil
+}
+
 func EnsureWebView(ctx context.Context, p *Payload) error {
 	if HasWebView() {
 		return nil
 	}
-	return runtimeDependency(ctx, p, "webview2")
+	if err := runtimeDependency(ctx, p, "webview2"); err == nil {
+		return nil
+	}
+	return downloadWebView(ctx)
 }
 func EnsureVC(ctx context.Context, p *Payload) error {
 	key, err := registry.OpenKey(registry.LOCAL_MACHINE, `SOFTWARE\Microsoft\VisualStudio\14.0\VC\Runtimes\x64`, registry.QUERY_VALUE|registry.WOW64_64KEY)
@@ -92,7 +141,7 @@ func DefaultDirectory() string {
 		location, _, e := key.GetStringValue("InstallLocation")
 		key.Close()
 		if e == nil && filepath.IsAbs(location) {
-			if _, e = os.Stat(filepath.Join(location, Marker)); e == nil {
+			if isJiaojianboxInstallation(location) {
 				return location
 			}
 		}

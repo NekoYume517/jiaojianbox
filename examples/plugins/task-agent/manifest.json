@@ -1,0 +1,54 @@
+{
+  "id": "task-agent",
+  "name": "任务自动化",
+  "version": "0.3.0",
+  "api": "^1",
+  "entry": "main.js",
+  "events": [
+    "task.created"
+  ],
+  "description": "新增任务后，把上下文交给你配置的本机 AI 工具，并将结果记录到本机执行记录。",
+  "settings": [
+    {
+      "key": "command",
+      "type": "string",
+      "title": "工具命令",
+      "description": "本机可执行文件路径，任务上下文以 JSON 写入标准输入",
+      "default": ""
+    },
+    {
+      "key": "args-template",
+      "type": "string",
+      "title": "参数模板",
+      "description": "多个参数用空格分隔，例如：--run --input {stdin}",
+      "default": "{stdin}"
+    },
+    {
+      "key": "cwd",
+      "type": "string",
+      "title": "工作目录",
+      "description": "留空使用应用目录",
+      "default": ""
+    },
+    {
+      "key": "timeout-seconds",
+      "type": "number",
+      "title": "超时秒数",
+      "description": "工具最长运行时间",
+      "default": 300,
+      "min": 5,
+      "max": 3600
+    },
+    {
+      "key": "auto-report",
+      "type": "bool",
+      "title": "自动回写摘要",
+      "description": "工具完成后把摘要记入执行记录",
+      "default": true
+    }
+  ],
+  "permissions": [
+    "tasks:read",
+    "tools:exec"
+  ]
+}

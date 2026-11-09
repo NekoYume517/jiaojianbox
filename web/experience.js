@@ -1,17 +1,13 @@
 'use strict';
 (() => {
   let instances=[],detecting=null,resumeTimer,authorizationGeneration=0,authorizeUrl='',lastSessionGeneration=-1;
-  const authorizationCode=()=>new URLSearchParams(location.search).get('code')||'';
   const appearancePanel=()=>`<section id="settings-appearance" class="panel appearance-panel"><div class="appearance-heading"><div><h3>外观</h3><p class="helper">选择适合当前设备的颜色、文字和信息密度。</p></div><div data-theme-picker></div></div><div class="theme-options">${[['light','浅色'],['dark','深色'],['system','跟随系统']].map(([mode,label])=>`<button type="button" class="theme-option" data-theme-mode="${mode}"><div class="theme-preview ${mode}"></div><span>${appearance.icon(mode)}${label}</span></button>`).join('')}</div><div class="appearance-fields"><label>配色主题<select id="appearance-palette"><option value="magpie">默认</option><option value="tokyo-night">Tokyo Night</option><option value="nord">Nord</option><option value="graphite">Graphite</option></select></label><label>信息密度<select id="appearance-density"><option value="comfortable">舒适</option><option value="compact">紧凑</option></select></label><label>文字大小<select id="appearance-text-size"><option value="normal">标准</option><option value="large">较大</option></select></label></div></section>`;
   function decorate(page){
     if(page==='settings'&&!$('#appearance-panel-marker')){
       const marker=document.createElement('div');marker.id='appearance-panel-marker';marker.innerHTML=appearancePanel();$('#view .page-heading').after(marker);appearance.refresh();
       if(window.desktop){
         const panel=document.createElement('section');panel.id='settings-quick';panel.className='panel appearance-panel';panel.innerHTML='<h3>桌面快捷收集</h3><p class="helper">拖动标题栏调整位置，下次打开会记住。文件拖入后保持打开，可按 Esc 或 × 关闭。</p>'+[['enabled','启用快捷收集（拖拽、快捷键和托盘）'],['drop','显示文件拖拽框'],['note','显示随手记'],['files','显示文件列表']].map(([key,label])=>`<label class="switch-line"><input type="checkbox" data-quick-option="${key}"><span>${label}</span></label>`).join('')+'<p class="helper" data-quick-status role="status"></p>';marker.append(panel);let prefs;desktop.quickGet().then(value=>{prefs=value;panel.querySelectorAll('[data-quick-option]').forEach(input=>input.checked=prefs[input.dataset.quickOption]!==false);}).catch(e=>panel.querySelector('[data-quick-status]').textContent=e.message);panel.addEventListener('change',async e=>{if(!e.target.matches('[data-quick-option]'))return;const inputs=[...panel.querySelectorAll('[data-quick-option]')];inputs.forEach(i=>i.disabled=true);try{prefs=await desktop.quickSet(Object.fromEntries(inputs.map(i=>[i.dataset.quickOption,i.checked])));panel.querySelector('[data-quick-status]').textContent='已保存，仅作用于本机';}catch(error){panel.querySelector('[data-quick-status]').textContent=error.message;inputs.forEach(i=>i.checked=prefs?.[i.dataset.quickOption]!==false);}finally{inputs.forEach(i=>i.disabled=false);}});
-        const launcher=document.createElement('section');launcher.id='settings-launcher';launcher.className='panel appearance-panel';launcher.innerHTML='<h3>启动与更新</h3><label class="switch-line"><input type="checkbox" data-launch-option="openAtLogin"><span><strong>开机自动启动</strong><small>登录 Windows 后自动在后台运行，恢复上次的 QQ/微信采集，不需要手动打开。</small></span></label><div class="detail-actions"><button type="button" class="secondary" data-action-check-update>检查更新</button></div><p class="helper" data-launch-status role="status"></p>';marker.append(launcher);
-        desktop.launcherGet().then(value=>{launcher.querySelector('[data-launch-option]').checked=!!value.openAtLogin;}).catch(e=>launcher.querySelector('[data-launch-status]').textContent=e.message);
-        launcher.querySelector('[data-launch-option]').addEventListener('change',async e=>{const input=e.target;input.disabled=true;try{const value=await desktop.launcherSet({openAtLogin:input.checked});launcher.querySelector('[data-launch-status]').textContent=value.openAtLogin?'已开启开机自启，下次登录 Windows 自动运行':'已关闭开机自启';}catch(error){launcher.querySelector('[data-launch-status]').textContent=error.message;input.checked=!input.checked;}finally{input.disabled=false;}});
-        launcher.querySelector('[data-action-check-update]').addEventListener('click',async e=>{const button=e.target;const status=launcher.querySelector('[data-launch-status]');button.disabled=true;status.textContent='正在检查更新…';try{const platform=await desktop.platform();const result=await window.updater.check(platform.version);status.textContent=result.updatable?`发现新版本 v${result.latest}（当前 v${result.current}），点击下载：`:result.reason||`已是最新版本 v${result.current}`;if(result.updatable){const link=document.createElement('button');link.className='link';link.textContent='打开下载页面 ↗';link.onclick=()=>desktop.external(result.url);status.append(document.createElement('br'),link);}}catch(error){status.textContent=error.message;}finally{button.disabled=false;}});
+        const launcher=buildLauncher();marker.append(launcher);
       }
     }
     if(state.session)$('#shelf-handle').hidden=false;
@@ -96,17 +92,9 @@
     }catch(error){$('#auth-error').textContent=error.message||'无法连接服务端';}
     finally{if(generation===authorizationGeneration)$('#auth-submit').disabled=false;}
   }
-  async function showConsent(){
-    $('#workspace').hidden=true;$('#auth').hidden=true;$('#shelf-handle').hidden=true;$('#browser-consent').hidden=false;
-    const code=authorizationCode();$('#consent-code').textContent=code.length===8?code.slice(0,4)+'-'+code.slice(4):code;
-    $('#consent-account').textContent='当前账号：'+state.session.username;
-    try{const result=await api('/api/auth/device/request?code='+encodeURIComponent(code));if(result.state!=='pending'){$('#consent-status').textContent='该请求已处理，可以返回客户端。';$('#approve-device').disabled=true;$('#deny-device').disabled=true;}}
-    catch(error){$('#consent-status').textContent=error.message;$('#approve-device').disabled=true;$('#deny-device').disabled=true;}
-  }
   async function onSession(){
     if(lastSessionGeneration===state.generation)return;lastSessionGeneration=state.generation;
-    if(location.pathname==='/authorize')return showConsent();
-    $('#browser-consent').hidden=true;$('#shelf-handle').hidden=false;
+    $('#shelf-handle').hidden=false;
     if(window.desktop)detect(true);
   }
   document.addEventListener('click',async event=>{
@@ -137,13 +125,106 @@
     }
   });
   document.addEventListener('input',event=>{if(event.target.dataset.chatSearch){const type=event.target.dataset.chatSearch;const query=event.target.value.toLowerCase();$$(`[data-chat-label="${type}"]`).forEach(row=>{row.hidden=!row.dataset.search.toLowerCase().includes(query);});}});
-  $('#approve-device').addEventListener('click',()=>approve(true));$('#deny-device').addEventListener('click',()=>approve(false));
-  async function approve(allowed){
-    $('#approve-device').disabled=true;$('#deny-device').disabled=true;
-    try{await api('/api/auth/device/approve','POST',{user_code:authorizationCode(),approve:allowed});$('#consent-status').textContent=allowed?'授权完成，可以返回桌面客户端。':'已取消此次授权。';}
-    catch(error){$('#consent-status').textContent=error.message;$('#approve-device').disabled=false;$('#deny-device').disabled=false;}
+  let updateValue = null;
+
+  function updateText(value) {
+    if (!value) return '';
+    const status = value.status || 'idle';
+    if (status === 'downloading') return value.progress ? `正在下载更新 ${Math.round(value.progress * 100)}%` : '正在下载更新…';
+    if (status === 'downloaded') return `安装包已就绪（v${value.latest}），可以立即安装。`;
+    if (status === 'error') return value.error || '更新下载失败。';
+    if (status === 'available') return `发现新版本 v${value.latest}（当前 v${value.current || ''}）。`;
+    if (status === 'current') return `已是最新版本 v${value.current || ''}`;
+    if (value.current) return `当前版本 v${value.current}`;
+    return '';
   }
-  $('#consent-workspace').addEventListener('click',()=>{history.replaceState(null,'','/');$('#browser-consent').hidden=true;$('#workspace').hidden=false;$('#shelf-handle').hidden=false;render();});
+
+  function renderUpdate(value, keepStatus) {
+    const launcher=document.querySelector('#settings-launcher');
+    if (!launcher) return;
+    if (value && value.received !== undefined && updateValue) value = { ...updateValue, ...value, status: 'downloading' };
+    if (value) updateValue = value;
+    const current = updateValue || {};
+    launcher.querySelectorAll('[data-update-option]').forEach(input => {
+      const key = input.dataset.updateOption;
+      input.checked = current[key] === undefined ? key !== 'autoDownload' : !!current[key];
+    });
+    const interval = launcher.querySelector('[data-update-interval]');
+    if (interval) interval.value = String(Math.max(30, Math.min(1440, Number(current.intervalMinutes) || 360)));
+    const status = launcher.querySelector('[data-launch-status]');
+    const actions = launcher.querySelector('[data-update-actions]');
+    if (status && !keepStatus) status.textContent = updateText(current);
+    if (actions) {
+      actions.replaceChildren();
+      const state = current.status || 'idle';
+      if (state === 'available' && current.assetUrl) {
+        const download = document.createElement('button');
+        download.className = 'secondary';
+        download.textContent = '下载更新';
+        download.addEventListener('click', async () => { try { await desktop.updateDownload(); } catch (error) { status.textContent = error.message; } });
+        actions.append(download);
+      }
+      if (state === 'downloaded' && current.path) {
+        const install = document.createElement('button');
+        install.className = 'primary';
+        install.textContent = '运行安装程序';
+        install.addEventListener('click', async () => { try { await desktop.updateInstall(); status.textContent = '安装程序已启动，请按提示完成安装。'; } catch (error) { status.textContent = error.message; } });
+        actions.append(install);
+      }
+      if (state === 'downloading') {
+        const cancel = document.createElement('button');
+        cancel.className = 'plain-button';
+        cancel.textContent = '取消下载';
+        cancel.addEventListener('click', async () => { await desktop.updateCancel(); });
+        actions.append(cancel);
+      }
+      const page = document.createElement('button');
+      page.className = 'link';
+      page.textContent = '打开发布页 ↗';
+      page.addEventListener('click', async () => { try { await desktop.external(current.url || 'https://github.com/NekoYume517/jiaojianbox/releases/latest'); } catch (error) { status.textContent = error.message; } });
+      actions.append(page);
+    }
+  }
+
+  function buildLauncher() {
+    const launcher=document.createElement('section');launcher.id='settings-launcher';launcher.className='panel appearance-panel';
+    launcher.innerHTML='<h3>启动与更新</h3>'
+      +'<label class="switch-line"><input type="checkbox" data-launch-option="openAtLogin"><span><strong>开机自动启动</strong><small>登录 Windows 后自动在后台运行，恢复上次的 QQ/微信采集，不需要手动打开。</small></span></label>'
+      +'<label class="switch-line"><input type="checkbox" data-update-option="autoCheck"><span><strong>自动检查更新</strong><small>按下面的间隔在后台检查 GitHub 发布版本。</small></span></label>'
+      +'<div class="form-grid update-interval-row"><label>检查间隔<select data-update-interval><option value="30">30 分钟</option><option value="60">1 小时</option><option value="360">6 小时</option><option value="1440">24 小时</option></select></label>'
+      +'<label class="switch-line"><input type="checkbox" data-update-option="autoDownload"><span><strong>自动下载更新</strong><small>发现新版本时自动下载安装包，安装始终需要你确认。</small></span></label></div>'
+      +'<div class="detail-actions"><button type="button" class="secondary" data-action-check-update>检查更新</button></div>'
+      +'<div class="detail-actions" data-update-actions></div>'
+      +'<p class="helper" data-launch-status role="status"></p>';
+    launcher.querySelector('[data-launch-option]').addEventListener('change',async e=>{const input=e.target;input.disabled=true;try{const value=await desktop.launcherSet({openAtLogin:input.checked});launcher.querySelector('[data-launch-status]').textContent=value.openAtLogin?'已开启开机自启，下次登录 Windows 自动运行':'已关闭开机自启';}catch(error){launcher.querySelector('[data-launch-status]').textContent=error.message;input.checked=!input.checked;}finally{input.disabled=false;}});
+    const persistUpdate = async patch => {
+      try { updateValue = await desktop.updateSet(patch); renderUpdate(updateValue); launcher.querySelector('[data-launch-status]').textContent = '已保存，仅作用于本机'; }
+      catch (error) { launcher.querySelector('[data-launch-status]').textContent = error.message; }
+    };
+    launcher.querySelectorAll('[data-update-option]').forEach(input => input.addEventListener('change', () => persistUpdate({ [input.dataset.updateOption]: input.checked })));
+    launcher.querySelector('[data-update-interval]').addEventListener('change', e => persistUpdate({ intervalMinutes: Number(e.target.value) }));
+    launcher.querySelector('[data-action-check-update]').addEventListener('click',async e=>{
+      const button=e.target;const status=launcher.querySelector('[data-launch-status]');
+      button.disabled=true;status.textContent='正在检查更新…';
+      try {
+        if (window.desktop?.updateCheck) { renderUpdate(await desktop.updateCheck()); }
+        else {
+          const platform=await desktop.platform();
+          const result=await window.updater.check(platform.version);
+          status.textContent=result.updatable?`发现新版本 v${result.latest}（当前 v${result.current}），点击下载：`:result.reason||`已是最新版本 v${result.current}`;
+          if(result.updatable){const link=document.createElement('button');link.className='link';link.textContent='打开下载页面 ↗';link.onclick=()=>desktop.external(result.url);status.append(document.createElement('br'),link);}
+        }
+      } catch(error){status.textContent=error.message;}
+      finally{button.disabled=false;}
+    });
+    if (window.desktop?.updateGet) {
+      desktop.updateGet().then(value => { updateValue = value; renderUpdate(value); }).catch(error => { launcher.querySelector('[data-launch-status]').textContent = error.message; });
+    }
+    return launcher;
+  }
+
+  window.updateUI = renderUpdate;
+
   window.addEventListener('appearance-error',()=>toast('外观已应用，但本机偏好未能保存'));
   window.experience={sourcesView,decorate,detect,onSession,prepareLogin,browserLogin};
   if(window.desktop){prepareLogin();desktop.onAppearance(value=>appearance.restore(value));}

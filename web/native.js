@@ -1,6 +1,10 @@
 /* Wails adapter. The browser build uses the same UI without native capabilities. */
 (() => {
-  if (new URLSearchParams(location.search).get('desktop') !== '1') return;
+  if (new URLSearchParams(location.search).get('desktop') !== '1') {
+    document.documentElement.dataset.runtime = 'web';
+    return;
+  }
+  document.documentElement.dataset.runtime = 'wails';
   const ready = new Promise((resolve, reject) => {
     const started = Date.now();
     let requested=false;
@@ -18,7 +22,7 @@
     ready.then(runtime => { unsubscribe = runtime.Events.On(name, event => callback(event.data)); if (cancelled) unsubscribe?.(); });
     return () => { cancelled = true; unsubscribe?.(); };
   };
-  window.desktop = Object.fromEntries(['offlineStart', 'quickGet', 'quickSet', 'launcherGet', 'launcherSet', 'get', 'set', 'remove', 'platform', 'getAppearance', 'setAppearance', 'tintTitlebar', 'discoverQQ', 'connectQQ', 'sourceDiagnostics', 'debugQQ', 'selectRuntime', 'external', 'listConversations', 'startCollector', 'stopCollector', 'collectorState', 'download', 'quickState', 'quickChoose', 'quickNote', 'quickHide', 'window'].map(name => [name, (...args) => invoke(name, ...args)]));
+  window.desktop = Object.fromEntries(['pluginExec','pluginList','pluginGet','pluginImport','pluginImportArchive','pluginSet','pluginDelete','pluginDataGet','pluginDataSet','pluginRecord','pluginRuns','offlineStart', 'quickGet', 'quickSet', 'launcherGet', 'launcherSet', 'updateGet', 'updateSet', 'updateCheck', 'updateDownload', 'updateInstall', 'updateCancel', 'get', 'set', 'remove', 'platform', 'getAppearance', 'setAppearance', 'tintTitlebar', 'discoverQQ', 'connectQQ', 'sourceDiagnostics', 'debugQQ', 'selectRuntime', 'external', 'listConversations', 'startCollector', 'stopCollector', 'collectorState', 'download', 'quickState', 'quickChoose', 'quickNote', 'quickHide', 'window'].map(name => [name, (...args) => invoke(name, ...args)]));
   Object.assign(window.desktop, { nativeFileDrop: true, onAppearance: callback => on('appearance-updated', callback), onCollector: callback => on('collector-state', callback), on });
   const discover = desktop.discoverQQ;
   desktop.discoverQQ = async (preferred,quiet=false) => {
@@ -53,6 +57,8 @@
     document.documentElement.dataset.runtime = 'wails'; markTargets();
     const view = document.getElementById('view'); if (view) new MutationObserver(markTargets).observe(view, { childList: true, subtree: true });
   });
+  on('update-state', value => { if (typeof updateUI !== 'undefined') updateUI(value); });
+  on('update-download', value => { if (typeof updateUI !== 'undefined') updateUI(value, true); });
   on('native-drop-complete', () => { if (typeof refresh === 'function') refresh(); });
   on('native-status', message => { if (typeof toast === 'function') toast(message); });
 })();

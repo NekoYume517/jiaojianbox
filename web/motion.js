@@ -74,8 +74,8 @@
   }
 
   function syncSegments() {
-    document.querySelectorAll('.theme-picker').forEach(box => {
-      const selected = box.querySelector('button.active');
+    document.querySelectorAll('.theme-picker,.page-tabs').forEach(box => {
+      const selected = box.querySelector('button.active,button[aria-selected=true]');
       if (!selected?.offsetWidth || !box.getClientRects().length) return;
       let entry = segments.get(box);
       if (!entry) {
@@ -89,6 +89,7 @@
       Object.assign(entry.thumb.style, to);
       if (from && entry.selected !== selected && !keyboard && !reduced.matches) entry.animations = [play(entry.thumb, [from, to], { duration: 280, easing: 'cubic-bezier(.2,.8,.2,1)' })];
       entry.selected = selected;
+      if (entry.animations.length) entry.animations[0]?.finished.finally(() => syncSegments()).catch(() => {});
     });
   }
 
@@ -222,12 +223,41 @@
   });
   function closeImmediately(d) { const entry = dialogs.get(d); stop(entry); dialogs.delete(d); d.close(); }
   const pageAnimations = new WeakMap();
+  let pageSwapToken = 0;
   function transitionPage(element, subsection = false) {
     pageAnimations.get(element)?.cancel();
     if (keyboard || reduced.matches || document.hidden) return;
     // Magpie side-nav pages fade; inner content swaps enter from 2px below.
     const animation=play(element,subsection?[{opacity:.5,transform:'translateY(2px)'},{opacity:1,transform:'none'}]:[{opacity:0},{opacity:1}],{duration:subsection?220:240,easing:'cubic-bezier(.2,.8,.2,1)'});
     if(animation)pageAnimations.set(element,animation);
+  }
+  async function swapPage(element, renderPage, { subsection = false } = {}) {
+    const token = ++pageSwapToken;
+    pageAnimations.get(element)?.cancel();
+    if (keyboard || reduced.matches || document.hidden || !element.getClientRects().length) {
+      renderPage();
+      element.scrollTop = 0;
+      document.scrollingElement.scrollTop = 0;
+      return;
+    }
+    const drawn = getComputedStyle(element);
+    const exit = play(element, [
+      { opacity: drawn.opacity, transform: drawn.transform === 'none' ? 'none' : drawn.transform },
+      { opacity: subsection ? .5 : 0, transform: subsection ? 'none' : 'translateY(-4px)' },
+    ], { duration: subsection ? 120 : 140, easing: ease, fill: 'forwards' });
+    if (exit) pageAnimations.set(element, exit);
+    try { await Promise.race([exit?.finished, new Promise(resolve => setTimeout(resolve, subsection ? 160 : 180))]); }
+    catch { /* A newer swap can cancel this exit. */ }
+    if (token !== pageSwapToken) return;
+    exit?.cancel();
+    renderPage();
+    element.scrollTop = 0;
+    document.scrollingElement.scrollTop = 0;
+    const entry = play(element, [
+      { opacity: subsection ? .5 : 0, transform: subsection ? 'translateY(2px)' : 'translateY(6px)' },
+      { opacity: 1, transform: 'none' },
+    ], { duration: subsection ? 220 : 240, easing: 'cubic-bezier(.2,.8,.2,1)' });
+    if (entry) pageAnimations.set(element, entry);
   }
   function revealSubnavigation(element) {
     if (keyboard || reduced.matches || document.hidden) return;
@@ -248,6 +278,6 @@
     const deadline=setTimeout(()=>element.remove(),320);
     animation.finished.catch(()=>{}).finally(()=>{clearTimeout(deadline);element.remove();});
   }
-  window.uiMotion = { openDialog, closeDialog, syncNavigation, syncSegments, hideMenu, transitionPage, revealSubnavigation, hideSubnavigation };
+  window.uiMotion = { openDialog, closeDialog, syncNavigation, syncSegments, hideMenu, transitionPage, swapPage, revealSubnavigation, hideSubnavigation };
   syncSegments();
 })();

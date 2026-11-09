@@ -126,6 +126,79 @@ func safeTarget(target string) (string, error) {
 	return path, nil
 }
 
+func isJiaojianboxInstallation(path string) bool {
+	if _, err := os.Stat(filepath.Join(path, Marker)); err == nil {
+		return true
+	}
+	_, err := os.Stat(filepath.Join(path, "交件箱.exe"))
+	return err == nil
+}
+
+func directoryIsEmpty(path string) bool {
+	entries, err := os.ReadDir(path)
+	return err == nil && len(entries) == 0
+}
+
+// ResolveDirectory keeps an empty picked folder as the target, sends a folder
+// the user has already filled into a dedicated jiaojianbox subfolder, and
+// updates an existing installation in place.
+func ResolveDirectory(requested string) (string, error) {
+	requested = strings.TrimSpace(requested)
+	if requested == "" {
+		requested = DefaultDirectory()
+	}
+	if !filepath.IsAbs(requested) {
+		return "", errors.New("请选择一个绝对路径")
+	}
+	path, err := filepath.Abs(requested)
+	if err != nil {
+		return "", err
+	}
+	path = filepath.Clean(path)
+	if !filepath.IsAbs(path) {
+		return "", errors.New("请选择一个绝对路径")
+	}
+	stat, err := os.Stat(path)
+	if err != nil {
+		if !os.IsNotExist(err) {
+			return "", errors.New("无法读取选择的文件夹")
+		}
+		return safeTarget(path)
+	}
+	if !stat.IsDir() {
+		return "", errors.New("选择的路径不是文件夹")
+	}
+	if directoryIsEmpty(path) || isJiaojianboxInstallation(path) {
+		return safeTarget(path)
+	}
+	nested := filepath.Join(path, "jiaojianbox")
+	if stat, err = os.Stat(nested); err == nil && !stat.IsDir() {
+		return "", errors.New("jiaojianbox 子文件夹被其他文件占用")
+	}
+	if err != nil && !os.IsNotExist(err) {
+		return "", errors.New("无法创建 jiaojianbox 子文件夹")
+	}
+	if os.IsNotExist(err) {
+		return safeTarget(nested)
+	}
+	if directoryIsEmpty(nested) || isJiaojianboxInstallation(nested) {
+		return safeTarget(nested)
+	}
+	return "", errors.New("所选文件夹和 jiaojianbox 子文件夹都已有内容")
+}
+
+func installedOptions(target string) (bool, bool, bool) {
+	raw, err := os.ReadFile(filepath.Join(target, Marker))
+	if err != nil {
+		return false, true, true
+	}
+	var manifest Manifest
+	if json.Unmarshal(raw, &manifest) != nil {
+		return false, true, true
+	}
+	return true, manifest.Desktop, manifest.StartMenu
+}
+
 func rejectLinks(root, dir string) error {
 	for p := dir; ; p = filepath.Dir(p) {
 		if stat, err := os.Lstat(p); err == nil && stat.Mode()&os.ModeSymlink != 0 {

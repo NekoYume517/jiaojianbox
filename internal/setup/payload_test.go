@@ -68,6 +68,36 @@ func TestInstallUpgradeAndUninstallPreserveUnownedFiles(t *testing.T) {
 		t.Fatal("unowned data lost", e)
 	}
 }
+
+func TestResolveDirectoryUpdatesExistingOrUsesDedicatedFolder(t *testing.T) {
+	root := t.TempDir()
+	empty := filepath.Join(root, "empty")
+	os.MkdirAll(empty, 0700)
+	if got, err := ResolveDirectory(empty); err != nil || got != empty {
+		t.Fatal(got, err)
+	}
+
+	filled := filepath.Join(root, "filled")
+	os.MkdirAll(filled, 0700)
+	os.WriteFile(filepath.Join(filled, "user.txt"), []byte("keep"), 0600)
+	if got, err := ResolveDirectory(filled); err != nil || got != filepath.Join(filled, "jiaojianbox") {
+		t.Fatal("filled", got, err)
+	}
+
+	existing := filepath.Join(root, "existing")
+	os.MkdirAll(existing, 0700)
+	os.WriteFile(filepath.Join(existing, Marker), []byte(`{"version":"old","files":{"app.exe":"old"}}`), 0600)
+	os.WriteFile(filepath.Join(existing, "app.exe"), []byte("old"), 0600)
+	if got, err := ResolveDirectory(existing); err != nil || got != existing {
+		t.Fatal("existing", got, err)
+	}
+
+	os.MkdirAll(filepath.Join(filled, "jiaojianbox"), 0700)
+	os.WriteFile(filepath.Join(filled, "jiaojianbox", "user.txt"), []byte("keep"), 0600)
+	if _, err := ResolveDirectory(filled); err == nil {
+		t.Fatal("accepted a conflicting jiaojianbox folder")
+	}
+}
 func TestFailedUpgradeRestoresOldFilesAndManifest(t *testing.T) {
 	target := filepath.Join(t.TempDir(), "app")
 	os.MkdirAll(filepath.Join(target, "z-conflict"), 0700)

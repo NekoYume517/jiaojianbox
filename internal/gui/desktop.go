@@ -45,6 +45,10 @@ type Desktop struct {
 	ctx                                context.Context
 	cancel                             context.CancelFunc
 	appearance, prefs, state           Object
+	plugins                            Object
+	pluginsMu                          sync.Mutex
+	updateMu                           sync.Mutex
+	updateCancel                       context.CancelFunc
 	offline                            Object
 	collector, drag                    *exec.Cmd
 	qq                                 *snowManager
@@ -107,8 +111,21 @@ func Run(version string) error {
 	if err = os.MkdirAll(root, 0700); err != nil {
 		return err
 	}
+	activate := make(chan struct{}, 1)
+	release, primary, err := claimInstance(root, activate)
+	if err != nil {
+		return err
+	}
+	if !primary {
+		return nil
+	}
+	defer release()
+	if err = guardChildren(); err != nil {
+		return fmt.Errorf("无法建立采集进程生命周期保护: %w", err)
+	}
 	d := &Desktop{root: root, resources: resourceRoot(), version: version, vault: &vault{root: filepath.Join(root, "vault-go")}, appearance: Object{"theme": "system", "density": "compact", "textSize": "normal", "palette": "magpie"}, prefs: Object{"enabled": true, "drop": true, "note": true, "files": true}, state: Object{"state": "stopped", "message": "采集未启动"}}
 	d.ctx, d.cancel = context.WithCancel(context.Background())
+	go d.updateLoop()
 	defer d.cancel()
 	if value, e := d.vault.get("appearance"); e == nil {
 		for k, v := range getObject(value) {
@@ -150,7 +167,13 @@ func Run(version string) error {
 	if port, e := strconv.Atoi(os.Getenv("JJB_DEBUG_PORT")); e == nil && port > 0 && port <= 65535 {
 		debugArgs = append(debugArgs, "--remote-debugging-port="+strconv.Itoa(port))
 	}
-	d.app = application.New(application.Options{Name: "交件箱", Description: "通知、待办与文件", Icon: icon, Windows: application.WindowsOptions{WebviewUserDataPath: filepath.Join(root, "webview"), DisableQuitOnLastWindowClosed: true, AdditionalBrowserArgs: debugArgs}, Assets: application.AssetOptions{Handler: application.BundledAssetFileServer(assets.FS())}, Services: []application.Service{application.NewService(d)}, SingleInstance: &application.SingleInstanceOptions{UniqueID: "com.jiaojianbox.go." + store.Hash(root)[:12], OnSecondInstanceLaunch: func(application.SecondInstanceData) { d.main.Show(); d.main.Focus() }}, OnShutdown: d.shutdown})
+	d.app = application.New(application.Options{Name: "交件箱", Description: "通知、待办与文件", Icon: icon, Windows: application.WindowsOptions{WebviewUserDataPath: filepath.Join(root, "webview"), DisableQuitOnLastWindowClosed: true, AdditionalBrowserArgs: debugArgs}, Assets: application.AssetOptions{Handler: application.BundledAssetFileServer(assets.FS())}, Services: []application.Service{application.NewService(d)}, SingleInstance: &application.SingleInstanceOptions{UniqueID: "com.jiaojianbox.go." + store.Hash(root)[:12], OnSecondInstanceLaunch: func(application.SecondInstanceData) {
+		if d.main != nil {
+			d.main.Show()
+			d.main.UnMinimise()
+			d.main.Focus()
+		}
+	}}, OnShutdown: d.shutdown})
 	silent := false
 	for _, a := range os.Args[1:] {
 		if a == "--silent" {
@@ -179,17 +202,41 @@ func Run(version string) error {
 		files := append([]string(nil), e.Context().DroppedFiles()...)
 		go d.acceptFiles(files, target, kind, false)
 	})
+	go func() {
+		for {
+			select {
+			case <-d.ctx.Done():
+				return
+			case <-activate:
+				d.main.Show()
+				d.main.UnMinimise()
+				d.main.Focus()
+			}
+		}
+	}()
 	d.qq = newSnowManager(d)
 	tray := d.app.SystemTray.New()
 	tray.SetIcon(icon)
 	tray.SetTooltip("交件箱")
 	menu := application.NewMenu()
-	menu.Add("打开交件箱").OnClick(func(*application.Context) { d.main.Show(); d.main.Focus() })
+	menu.Add("打开交件箱").OnClick(func(*application.Context) {
+		if d.main != nil {
+			d.main.Show()
+			d.main.UnMinimise()
+			d.main.Focus()
+		}
+	})
 	menu.Add("快捷收集").OnClick(func(*application.Context) { d.showQuick() })
 	menu.AddSeparator()
 	menu.Add("退出").OnClick(func(*application.Context) { d.app.Quit() })
 	tray.SetMenu(menu)
-	tray.OnClick(func() { d.main.Show(); d.main.Focus() })
+	tray.OnClick(func() {
+		if d.main != nil {
+			d.main.Show()
+			d.main.UnMinimise()
+			d.main.Focus()
+		}
+	})
 	d.app.GlobalShortcut.Register("Ctrl+Shift+Space", d.showQuick)
 	d.startDragWatch()
 	return d.app.Run()
@@ -304,6 +351,28 @@ func isHTTP(u *url.URL) bool {
 // Invoke is the single native boundary. The existing UI keeps a small typed JS adapter.
 func (d *Desktop) Invoke(method string, args []any) (any, error) {
 	switch method {
+	case "pluginExec":
+		return d.pluginExec(stringArg(args, 0), getObject(arg(args, 1)))
+	case "pluginList":
+		return d.PluginList()
+	case "pluginGet":
+		return d.PluginGet(stringArg(args, 0))
+	case "pluginImport":
+		return d.PluginImport(getObject(arg(args, 0)))
+	case "pluginImportArchive":
+		return d.PluginImportArchive(stringArg(args, 0))
+	case "pluginSet":
+		return d.PluginSet(stringArg(args, 0), getObject(arg(args, 1)))
+	case "pluginDelete":
+		return d.PluginDelete(stringArg(args, 0))
+	case "pluginDataGet":
+		return d.PluginDataGet(stringArg(args, 0), stringArg(args, 1))
+	case "pluginDataSet":
+		return d.PluginDataSet(stringArg(args, 0), stringArg(args, 1), arg(args, 2))
+	case "pluginRecord":
+		return d.PluginRecord(stringArg(args, 0), getObject(arg(args, 1)))
+	case "pluginRuns":
+		return d.PluginRuns(stringArg(args, 0))
 	case "get":
 		return d.vault.get(stringArg(args, 0))
 	case "set":
@@ -411,6 +480,18 @@ func (d *Desktop) Invoke(method string, args []any) (any, error) {
 	case "stopCollector":
 		d.stopCollector()
 		return Object{"ok": true}, nil
+	case "updateGet":
+		return d.UpdateGet(), nil
+	case "updateSet":
+		return d.UpdateSet(getObject(arg(args, 0))), nil
+	case "updateCheck":
+		return d.UpdateCheck()
+	case "updateDownload":
+		return d.UpdateDownload()
+	case "updateInstall":
+		return d.UpdateInstall()
+	case "updateCancel":
+		return d.UpdateCancel(), nil
 	case "collectorState":
 		d.mu.Lock()
 		out := getObjectCopy(d.state)
