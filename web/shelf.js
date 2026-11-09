@@ -3,6 +3,16 @@
   const drawer=$('#file-shelf');const backdrop=$('#shelf-backdrop');
   const drafts=new Map();const uploadingFiles=new Map();const analyzing=new Set();let open=false,lastFocus,dragTimer;
   const categories={inbox:'待整理',reference:'参考资料',receipt:'提交回执',other:'其他文件',material:'待办材料'};
+  const gb=value=>`${(value/1073741824).toFixed(value%1073741824===0?0:1).replace(/\.0$/,'')} GB`;
+  async function refreshStorage(){
+    const chip=$('#storage-usage');if(!chip)return;
+    if(!state.session||state.session.mode==='offline'){chip.hidden=true;return;}
+    try{
+      const info=await api('/api/storage');
+      chip.textContent=info.unlimited?`${gb(Number(info.used))} · 不限量`:`${gb(Number(info.used))} / ${gb(Number(info.quota))}`;
+      chip.hidden=false;
+    }catch{chip.hidden=true;}
+  }
   function files(){return state.snapshot.shelf||[];}
   function show(){
     if(!state.session){toast('登录后即可收纳文件');return;}
@@ -45,7 +55,7 @@
     if(state.page!=='files')show();if(!state.session)return;const generation=state.generation;
     for(const file of incoming){
       if(generation!==state.generation)return;const key=crypto.randomUUID();uploadingFiles.set(key,{name:file.name,status:'正在放入收纳框…'});renderShelf();
-      try{const form=new FormData();form.append('file',file);const saved=await api('/api/shelf','POST',form);if(generation!==state.generation)return;uploadingFiles.delete(key);updateFile(saved);analyzeFile(saved.id);}
+      try{const form=new FormData();form.append('file',file);const saved=await api('/api/shelf','POST',form);if(generation!==state.generation)return;uploadingFiles.delete(key);updateFile(saved);analyzeFile(saved.id);refreshStorage();}
       catch(error){uploadingFiles.set(key,{name:file.name,status:error.message+'，请重新拖入。'});renderShelf();}
     }
   }
@@ -119,7 +129,7 @@
     if(!rows.length&&!pending)return empty('暂无文件','拖入文件，或点击“添加文件”开始整理。');
     return `<div class="files-table-wrap"><table class="files-table"><thead><tr><th>文件</th><th>用途</th><th class="file-place">关联待办</th><th></th></tr></thead><tbody>${pending}${rows.map(file=>{const task=state.snapshot.tasks.find(t=>t.id===file.task_id);return `<tr><td><div class="file-name-cell"><span class="file-icon">${esc(file.name.split('.').pop().slice(0,4).toUpperCase())}</span><div><span class="file-title" title="${esc(file.name)}">${esc(file.name)}</span><small>${bytes(file.size)} · ${formatDate(file.created_at)}</small></div></div></td><td>${tag(categories[file.task_id?file.kind:file.category]||'待整理')}</td><td class="file-place">${task?`<button class="link" data-files-task="${esc(task.id)}">${esc(task.title)}</button>`:'—'}</td><td class="file-controls"><button class="plain-button" data-files-download="${file.id}">下载</button><button class="secondary" data-files-edit="${file.id}">整理</button></td></tr>`;}).join('')}</tbody></table></div>`;
   }
-  function page(){return heading('文件','集中查看材料、参考资料与提交回执。', '<button class="primary" data-files-add>添加文件</button>')+`<div class="files-drop" data-file-drop-target>拖入文件，AI 会结合内容与待办建议归属</div><section class="panel" id="files-page-list">${fileRows()}</section>`;}
+  function page(){return heading('文件','集中查看材料、参考资料与提交回执。', '<span id="storage-usage" class="storage-usage" hidden></span><button class="primary" data-files-add>添加文件</button>')+`<div class="files-drop" data-file-drop-target>拖入文件，AI 会结合内容与待办建议归属</div><section class="panel" id="files-page-list">${fileRows()}</section>`;}
   document.addEventListener('click',async event=>{
     const button=event.target.closest('[data-files-add],[data-files-edit],[data-files-download],[data-files-task]');if(!button)return;
     if(button.hasAttribute('data-files-add'))return $('#shelf-file-input').click();
@@ -127,7 +137,7 @@
     if(button.dataset.filesEdit){show();drawer.querySelector(`[data-shelf-assign="${button.dataset.filesEdit}"]`)?.closest('.shelf-file')?.scrollIntoView({block:'start'});}
     if(button.dataset.filesTask){await navigate('tasks');state.taskId=button.dataset.filesTask;render();}
   });
-  window.shelf={page,show,hide,addFiles,refresh:renderShelf,reset:()=>{drafts.clear();uploadingFiles.clear();analyzing.clear();hide();}};
+  window.shelf={page,show,hide,addFiles,refresh:renderShelf,refreshStorage,reset:()=>{drafts.clear();uploadingFiles.clear();analyzing.clear();hide();}};
   window.desktop?.onEdgeFiles?.(async items=>{
     show();if(!state.session)return;
     try{const saved=await desktop.importEdgeFiles(items);for(const file of saved){updateFile(file);analyzeFile(file.id);}}catch(error){toast(error.message);}

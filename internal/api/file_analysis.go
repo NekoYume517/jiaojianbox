@@ -150,7 +150,7 @@ func prepareImage(path string) (Object, Object) {
 	return Object{"type": "image_url", "image_url": Object{"url": "data:image/jpeg;base64," + base64.StdEncoding.EncodeToString(out.Bytes())}}, Object{"image_width": width, "image_height": height, "image_analyzed": true}
 }
 func (s *Server) suggestFile(ctx context.Context, user, id string, autoAssign bool, p progress) any {
-	config, key := s.llmConfig(ctx, user)
+	config, key := s.resolveLLM(ctx, user)
 	if str(config, "base_url") == "" || str(config, "model") == "" {
 		fail(400, "请先配置 AI，或手动选择分类")
 	}

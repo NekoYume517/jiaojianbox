@@ -4,7 +4,9 @@ import (
 	"archive/zip"
 	"context"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
+	"errors"
 	"io"
 	"mime"
 	"net/http"
@@ -18,6 +20,10 @@ import (
 
 var badFilename = regexp.MustCompile(`[<>:"/\\|?*\x00-\x1f]`)
 var deviceFilename = regexp.MustCompile(`(?i)^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)`)
+
+// defaultQuotaBytes is the per-account server storage allowance unless an
+// administrator overrides it in user_quotas (-1 means unlimited).
+const defaultQuotaBytes = int64(10) << 30
 
 func safeName(value string) string {
 	name := strings.Trim(clip(badFilename.ReplaceAllString(value, "_"), 180), ". ")
@@ -92,6 +98,26 @@ func (s *Server) taskQuota(ctx context.Context, db store.SQL, id, excluded strin
 		fail(413, "每项待办最多 50 个文件，总大小不超过 200 MB")
 	}
 }
+func (s *Server) userQuota(ctx context.Context, db store.SQL, user string) int64 {
+	row, err := store.One(ctx, db, "SELECT bytes FROM user_quotas WHERE user_id=?", user)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		check(err)
+	}
+	if row == nil {
+		return defaultQuotaBytes
+	}
+	return int64(num(row, "bytes"))
+}
+func (s *Server) checkUserQuota(ctx context.Context, db store.SQL, user string, incoming int64) {
+	quota := s.userQuota(ctx, db, user)
+	if quota < 0 {
+		return
+	}
+	used := one(ctx, db, "SELECT COALESCE(SUM(size),0) AS used FROM attachments WHERE user_id=?", user)
+	if int64(num(used, "used"))+incoming > quota {
+		fail(413, "服务器存储空间已满，请清理文件或联系管理员调整配额")
+	}
+}
 func (s *Server) uploadFile(r request, fn func(store.SQL, Object) any) any {
 	r.Body = http.MaxBytesReader(r.W, r.Body, s.MaxUpload+(1<<20))
 	checkMultipart := r.ParseMultipartForm(8 << 20)
@@ -125,12 +151,18 @@ func (s *Server) uploadFile(r request, fn func(store.SQL, Object) any) any {
 		fail(413, "文件超过单文件上传上限")
 	}
 	value := s.transaction(r.Context(), func(db store.SQL) any {
+		s.checkUserQuota(r.Context(), db, r.User, size)
 		return fn(db, Object{"id": id, "name": safeName(header.Filename), "size": size, "sha256": hex.EncodeToString(hash.Sum(nil))})
 	})
 	stored = true
 	return value
 }
 func (s *Server) fileRoutes() {
+	s.route("GET /api/storage", "owner", func(r request) any {
+		used := one(r.Context(), s.Store.DB, "SELECT COALESCE(SUM(size),0) AS used FROM attachments WHERE user_id=?", r.User)
+		quota := s.userQuota(r.Context(), s.Store.DB, r.User)
+		return Object{"used": int64(num(used, "used")), "quota": quota, "unlimited": quota < 0, "default_quota": defaultQuotaBytes}
+	})
 	s.route("POST /api/shelf", "owner", func(r request) any {
 		return s.uploadFile(r, func(db store.SQL, f Object) any {
 			totals := one(r.Context(), db, "SELECT COUNT(*) AS count,COALESCE(SUM(size),0) AS size FROM attachments WHERE user_id=? AND task_id IS NULL", r.User)

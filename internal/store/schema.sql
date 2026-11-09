@@ -21,6 +21,9 @@
                 CREATE TABLE IF NOT EXISTS user_roles(user_id TEXT PRIMARY KEY REFERENCES users(id), role TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS site_settings(key TEXT PRIMARY KEY, value TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS profiles(user_id TEXT PRIMARY KEY REFERENCES users(id), nickname TEXT DEFAULT '', email TEXT UNIQUE COLLATE NOCASE, verified INTEGER DEFAULT 0);
+        CREATE TABLE IF NOT EXISTS user_quotas(user_id TEXT PRIMARY KEY REFERENCES users(id), bytes INTEGER NOT NULL, updated_at TEXT);
+                CREATE TABLE IF NOT EXISTS ai_credits(user_id TEXT PRIMARY KEY REFERENCES users(id), balance REAL NOT NULL, updated_at TEXT);
+                CREATE TABLE IF NOT EXISTS ai_checkins(user_id TEXT REFERENCES users(id), day TEXT NOT NULL, credits REAL NOT NULL, at TEXT NOT NULL, PRIMARY KEY(user_id,day));
                 CREATE TABLE IF NOT EXISTS mail_tokens(hash TEXT PRIMARY KEY, purpose TEXT, email TEXT, payload TEXT, expires REAL, created REAL);
                 CREATE TABLE IF NOT EXISTS invitations(id TEXT PRIMARY KEY, code_hash TEXT UNIQUE NOT NULL,
                     prefix TEXT, label TEXT, max_uses INTEGER, uses INTEGER DEFAULT 0,

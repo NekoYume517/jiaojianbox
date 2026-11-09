@@ -40,8 +40,9 @@ async function storeSet(key, value) {
 }
 function toastTimerHolder(){}
 let toastHideTimer, toastAutoTimer;
-function toast(message, action) {
+function toast(message, action, corner = false) {
   const el = $('#toast'); $('#toast-text').textContent = message;
+  el.classList.toggle('corner', !!corner);
   const button = $('#toast-action');
   clearTimeout(toastHideTimer); clearTimeout(toastAutoTimer);
   if (action?.label) {
@@ -184,6 +185,18 @@ async function enter(session) {
   maybeOnboard();
   window.experience?.onSession();
   await window.accountUI?.afterLogin();
+  promptCheckin();
+}
+async function promptCheckin() {
+  const generation = state.generation;
+  try {
+    const credit = await api('/api/ai/credit');
+    if (generation !== state.generation || !credit.enabled || !credit.checkin_enabled || credit.checked_today) return;
+    toast(`今日可签到领取 ${credit.checkin_credits} 积分，当前剩余 ${credit.balance} 积分`, { label: '立即签到', run: async () => {
+      try { const result = await api('/api/ai/credit/checkin', 'POST'); toast(`签到成功，剩余 ${result.balance} 积分`); }
+      catch (error) { toast(error.message); }
+    }}, true);
+  } catch { /* Managed service is optional. */ }
 }
 const ONBOARD_STEPS = [
   { title: '欢迎来到交件箱', body: '把聊天里的通知整理成能交付的事：收通知、建待办、交材料、存回执，都在这里。', hint: '第一步 · 了解工作台' },
@@ -338,7 +351,7 @@ function taskDetail(t) {
     `<div class="task-detail-grid"><section class="panel"><div class="panel-head"><h3>待办内容</h3></div><div class="task-main-content">${statusSwitch}<div class="task-description">${esc(t.description || '暂无说明')}</div>${t.conflict ? '<button class="secondary" data-action="discard-conflict">放弃本机草稿，使用云端版本</button>' : ''}<div class="section-heading"><h3>待办材料</h3><small class="helper">${t.attachments.filter(f => f.kind === 'material').length} 个文件</small></div>${t.attachments.filter(f => f.kind === 'material').map(f => fileRow(f, t)).join('')}<label class="drop-zone">点击或拖入文件添加材料<input id="material-upload" type="file" multiple ${t.pending ? 'disabled' : ''} aria-label="上传待办材料"></label><div class="section-heading"><h3>提交回执</h3><small class="helper">成功截图、确认邮件或回执文件</small></div>${t.attachments.filter(f => f.kind === 'receipt').map(f => fileRow(f, t)).join('')}<label class="drop-zone">添加提交凭证<input id="receipt-upload" type="file" multiple ${t.pending ? 'disabled' : ''} aria-label="上传提交回执"></label>${origin ? `<details class="task-origin"><summary class="helper">查看原始通知 · ${esc(origin.conversation_name)}</summary><p>${esc(pretty(origin.text))}</p></details>` : ''}<div class="section-heading"><h3>待办管理</h3></div><div class="small-actions"><button class="plain-button" data-action="${t.status==='archived'?'restore-task':'archive-task'}" ${t.pending ? 'disabled' : ''}>${t.status==='archived'?'恢复待办':'归档待办'}</button><button class="plain-button danger-button" data-action="delete-task" ${t.pending ? 'disabled' : ''}>删除待办</button></div></div></section><aside><section class="panel task-side"><div class="info-label">紧急度</div><div class="urgency-switch" role="group" aria-label="紧急度">${urgencySwitch(t)}</div><div class="info-label">截止时间</div><div class="info-value">${formatDate(t.due_at)}</div><div class="info-label">提醒</div><div class="info-value reminders-block">${reminderList || '<p class="helper">暂无提醒</p>'}${reminderAdd}</div><div class="info-label">文件命名</div><div class="info-value">${esc(t.naming_hint || t.filename_pattern || '未设置命名要求')}</div><div class="info-label">提交入口</div><div class="info-value">${t.submit_url ? `<button class="link" data-external="${esc(t.submit_url)}">打开提交页面 ↗</button>` : '未填写'}</div><div class="section-heading"><h3>材料核对</h3><button class="link" data-action="check-task">重新核对</button></div><div id="task-check">${t.requirements.length ? t.requirements.map(r => `<div class="check-row"><span class="check-symbol manual">○</span><div><strong>${esc(r.label)}</strong><small>${esc(r.extensions.join(' / ') || '任意格式')} · 至少 ${r.min_count} 份</small></div></div>`).join('') : '<p class="helper">未设置材料清单，可在编辑待办中添加。</p>'}</div></section></aside></div>`;
 }
 function settingsView() {
-  return heading('设置', '使用自己的模型接口，决定怎样整理通知。') + `<div class="settings-grid"><form id="llm-form" class="panel settings-panel"><h3>AI 连接</h3><p class="helper">支持兼容 Chat Completions 的接口。配置按账号保存，电脑和手机共用。</p><label>API 地址<input id="llm-url" type="url" placeholder="https://api.example.com/v1" required></label><label>API Key<input id="llm-key" type="password" autocomplete="new-password" placeholder="留空保留已保存的 Key"><span id="llm-key-note" class="helper"></span></label><div class="form-grid"><label>模型<input id="llm-model" list="model-options" required placeholder="填写模型名称"><datalist id="model-options"></datalist></label><label>默认上下文条数<input id="llm-context" type="number" min="0" max="50" value="12" required></label></div><label class="switch-line"><input id="llm-vision" type="checkbox"><span><strong>模型支持图片分析</strong><small>启用后，图片会发送实际图像给模型，判断截图内容和提交状态；纯文本模型请关闭。</small></span></label><label class="switch-line"><input id="llm-auto" type="checkbox"><span><strong>自动分析新消息</strong><small>仅处理桌面端所选会话同步的新消息。关闭后，可在通知页手动分析。</small></span></label><label class="switch-line" id="auto-task-line" hidden><input id="llm-auto-task" type="checkbox"><span><strong>自动新建待办</strong><small>分析判定为待办通知且可信度不低于 80% 时，自动把待办草稿放入待办列表（仍可编辑或删除）。需要先开启自动分析。</small></span></label><div class="form-grid"><label>只自动分析含这些词的消息<input id="llm-include" placeholder="提交,报名,截止（留空处理全部）"></label><label>跳过含这些词的消息<input id="llm-exclude" placeholder="签到成功,红包（英文逗号分隔）"></label></div><label>分类偏好<textarea id="llm-instruction" rows="3" placeholder="例如：重点关注课程作业与比赛报名，日常约饭视为普通聊天。"></textarea></label><div class="detail-actions"><button type="submit" class="primary">保存设置</button><button type="button" class="secondary" data-action="test-llm">保存并读取模型</button><button type="button" class="plain-button" data-action="clear-llm-key">清除 Key</button></div><div id="llm-status" class="settings-status" role="status"></div><div id="models-output" class="models-output" hidden></div></form><aside class="settings-side"><h3>分析如何进行</h3><ol><li>采集端同步你选择的联系人和群聊。</li><li>模型结合上下文，区分待办通知、普通聊天和其他信息。</li><li>你可以查看理由、调整上下文，再确认待办草稿。</li></ol><div class="divider"></div><p>只有目标消息和所选上下文会发送给你配置的模型服务。</p><p>API Key 加密保存在服务端。留空保存会沿用已有 Key。</p></aside></div>`;
+  return heading('设置', '使用自己的模型接口，决定怎样整理通知。') + `<div class="settings-grid"><form id="llm-form" class="panel settings-panel"><h3>AI 连接</h3><p class="helper">支持兼容 Chat Completions 的接口。配置按账号保存，电脑和手机共用。</p><p id="llm-managed-note" class="helper" hidden></p><label>API 地址<input id="llm-url" type="url" placeholder="https://api.example.com/v1" required></label><label>API Key<input id="llm-key" type="password" autocomplete="new-password" placeholder="留空保留已保存的 Key"><span id="llm-key-note" class="helper"></span></label><div class="form-grid"><label>模型<input id="llm-model" list="model-options" required placeholder="填写模型名称"><datalist id="model-options"></datalist></label><label>默认上下文条数<input id="llm-context" type="number" min="0" max="50" value="12" required></label></div><label class="switch-line"><input id="llm-vision" type="checkbox"><span><strong>模型支持图片分析</strong><small>启用后，图片会发送实际图像给模型，判断截图内容和提交状态；纯文本模型请关闭。</small></span></label><label class="switch-line"><input id="llm-auto" type="checkbox"><span><strong>自动分析新消息</strong><small>仅处理桌面端所选会话同步的新消息。关闭后，可在通知页手动分析。</small></span></label><label class="switch-line" id="auto-task-line" hidden><input id="llm-auto-task" type="checkbox"><span><strong>自动新建待办</strong><small>分析判定为待办通知且可信度不低于 80% 时，自动把待办草稿放入待办列表（仍可编辑或删除）。需要先开启自动分析。</small></span></label><div class="form-grid"><label>只自动分析含这些词的消息<input id="llm-include" placeholder="提交,报名,截止（留空处理全部）"></label><label>跳过含这些词的消息<input id="llm-exclude" placeholder="签到成功,红包（英文逗号分隔）"></label></div><label>分类偏好<textarea id="llm-instruction" rows="3" placeholder="例如：重点关注课程作业与比赛报名，日常约饭视为普通聊天。"></textarea></label><div class="detail-actions"><button type="submit" class="primary">保存设置</button><button type="button" class="secondary" data-action="test-llm">保存并读取模型</button><button type="button" class="plain-button" data-action="clear-llm-key">清除 Key</button></div><div id="llm-status" class="settings-status" role="status"></div><div id="models-output" class="models-output" hidden></div></form><aside class="settings-side"><h3>分析如何进行</h3><ol><li>采集端同步你选择的联系人和群聊。</li><li>模型结合上下文，区分待办通知、普通聊天和其他信息。</li><li>你可以查看理由、调整上下文，再确认待办草稿。</li></ol><div class="divider"></div><p>只有目标消息和所选上下文会发送给你配置的模型服务。</p><p>API Key 加密保存在服务端。留空保存会沿用已有 Key。</p></aside></div>`;
 }
 function conversations(type) {
   const list = (state.sources.conversations || []).filter(c => c.source === type);
@@ -372,6 +385,7 @@ function render() {
   $('#view').scrollTop = scrollTop;
   uiMotion.syncNavigation();
   if(state.page==='stats')window.statistics?.mount();
+  if(state.page==='files')window.shelf?.refreshStorage?.();
   state.firstRenderDone = true;
   window.appearance?.refresh(); window.experience?.decorate(state.page);
   if(state.session?.mode!=='offline')window.jjbAdmin?.mount();
@@ -535,6 +549,12 @@ async function loadLlm() {
     $('#llm-include').value = llmSettings.include_keywords; $('#llm-exclude').value = llmSettings.exclude_keywords;
     $('#llm-instruction').value = llmSettings.instruction;
     $('#llm-key-note').textContent = llmSettings.has_key ? '已保存 Key，留空即可沿用。' : '尚未保存 Key，本地免鉴权模型可留空。';
+    api('/api/ai/credit').then(credit => {
+      const note = $('#llm-managed-note');
+      if (!note) return;
+      note.hidden = !credit.enabled;
+      if (credit.enabled) note.textContent = `服务器提供免配置 AI：未配置自有接口时自动使用服务器上游，剩余 ${credit.balance} 积分（1 积分 = ${Number(credit.tokens_per_credit).toLocaleString('zh-CN')} tokens）。`;
+    }).catch(() => {});
     $('#llm-status').textContent = '';
   } catch (error) { toast(error.message); }
   finally { if (form?.isConnected) form.querySelectorAll('input,textarea,button').forEach(input => { input.disabled = false; }); }

@@ -532,7 +532,10 @@ func (s *Server) recordLLM(ctx context.Context, user, kind string, config Object
 	if duration == nil {
 		duration = time.Since(started).Milliseconds()
 	}
-	exec(ctx, s.Store.DB, "INSERT INTO llm_calls(id,user_id,kind,model,status,started_at,duration_ms,first_token_ms,prompt_tokens,completion_tokens,total_tokens,http_status,usage_reported,streamed) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)", store.ID(), user, kind, str(config, "model"), status, started.UTC().Format(time.RFC3339Nano), duration, metrics["first_token_ms"], metrics["prompt_tokens"], metrics["completion_tokens"], metrics["total_tokens"], metrics["http_status"], boolean(metrics, "usage_reported"), boolean(metrics, "streamed"))
+	exec(ctx, s.Store.DB, "INSERT INTO llm_calls(id,user_id,kind,model,status,started_at,duration_ms,first_token_ms,prompt_tokens,completion_tokens,total_tokens,http_status,usage_reported,streamed,managed) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", store.ID(), user, kind, str(config, "model"), status, started.UTC().Format(time.RFC3339Nano), duration, metrics["first_token_ms"], metrics["prompt_tokens"], metrics["completion_tokens"], metrics["total_tokens"], metrics["http_status"], boolean(metrics, "usage_reported"), boolean(metrics, "streamed"), boolean(config, "managed"))
+	if success && boolean(config, "managed") && boolean(metrics, "usage_reported") {
+		s.aiSpend(ctx, user, num(metrics, "total_tokens"))
+	}
 }
 
 func (s *Server) stream(r request, work func(context.Context, progress) any) any {

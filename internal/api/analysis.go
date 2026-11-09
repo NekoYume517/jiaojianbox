@@ -98,7 +98,7 @@ func (s *Server) runAnalysis(ctx context.Context, user string, body Object, p pr
 		fail(409, "此通知正在分析，请等待结果")
 	}
 	defer s.analysis.Delete(keyID)
-	config, key := s.llmConfig(ctx, user)
+	config, key := s.resolveLLM(ctx, user)
 	if str(config, "base_url") == "" || str(config, "model") == "" {
 		fail(400, "请先在 AI 设置中填写接口地址和模型")
 	}

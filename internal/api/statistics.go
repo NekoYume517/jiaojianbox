@@ -21,7 +21,7 @@ func (s *Server) statisticsRoutes() {
 		days := r.integer("days", 30, 1, 365)
 		now := time.Now().In(zone)
 		start := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, zone).AddDate(0, 0, 1-days)
-		rows := query(r.Context(), s.Store.DB, "SELECT kind,model,status,started_at,duration_ms,CASE WHEN streamed=1 THEN first_token_ms ELSE NULL END AS first_token_ms,prompt_tokens,completion_tokens,total_tokens,http_status,usage_reported,streamed FROM llm_calls WHERE user_id=? AND started_at>=? ORDER BY started_at DESC", r.User, start.UTC().Format(time.RFC3339Nano))
+		rows := query(r.Context(), s.Store.DB, "SELECT kind,model,status,started_at,duration_ms,CASE WHEN streamed=1 THEN first_token_ms ELSE NULL END AS first_token_ms,prompt_tokens,completion_tokens,total_tokens,http_status,usage_reported,streamed,managed FROM llm_calls WHERE user_id=? AND started_at>=? ORDER BY started_at DESC", r.User, start.UTC().Format(time.RFC3339Nano))
 		daily := []Object{}
 		byDate := map[string]Object{}
 		latencies := map[string][]float64{}
@@ -30,7 +30,7 @@ func (s *Server) statisticsRoutes() {
 		allLatencies := []float64{}
 		for i := 0; i < days; i++ {
 			day := start.AddDate(0, 0, i).Format(time.DateOnly)
-			item := Object{"date": day, "calls": 0, "success": 0, "failed": 0, "prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0, "unreported": 0}
+			item := Object{"date": day, "calls": 0, "success": 0, "failed": 0, "prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0, "unreported": 0, "managed_tokens": 0, "custom_tokens": 0}
 			daily = append(daily, item)
 			byDate[day] = item
 		}
@@ -58,6 +58,11 @@ func (s *Server) statisticsRoutes() {
 			for _, key := range []string{"prompt_tokens", "completion_tokens", "total_tokens"} {
 				item[key] = num(item, key) + num(row, key)
 			}
+			if boolean(row, "managed") {
+				item["managed_tokens"] = num(item, "managed_tokens") + num(row, "total_tokens")
+			} else {
+				item["custom_tokens"] = num(item, "custom_tokens") + num(row, "total_tokens")
+			}
 			if !boolean(row, "usage_reported") {
 				item["unreported"] = num(item, "unreported") + 1
 			}
@@ -72,7 +77,7 @@ func (s *Server) statisticsRoutes() {
 				m["unreported"] = num(m, "unreported") + 1
 			}
 		}
-		total := Object{"calls": 0, "success": 0, "failed": 0, "prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0, "unreported": 0, "success_rate": nil, "average_ms": average(allLatencies)}
+		total := Object{"calls": 0, "success": 0, "failed": 0, "prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0, "unreported": 0, "managed_tokens": 0, "custom_tokens": 0, "success_rate": nil, "average_ms": average(allLatencies)}
 		for _, item := range daily {
 			day := str(item, "date")
 			values := latencies[day]
@@ -83,7 +88,7 @@ func (s *Server) statisticsRoutes() {
 			if len(values) > 0 {
 				item["p95_ms"] = math.Round(values[int(math.Ceil(float64(len(values))*.95))-1])
 			}
-			for _, key := range []string{"calls", "success", "failed", "prompt_tokens", "completion_tokens", "total_tokens", "unreported"} {
+			for _, key := range []string{"calls", "success", "failed", "prompt_tokens", "completion_tokens", "total_tokens", "unreported", "managed_tokens", "custom_tokens"} {
 				total[key] = num(total, key) + num(item, key)
 			}
 		}

@@ -249,7 +249,19 @@ func (s *Server) accountRoutes() {
 		return Object{"mode": mode}
 	})
 	s.route("GET /api/admin/users", "admin", func(r request) any {
-		return query(r.Context(), s.Store.DB, "SELECT u.id,u.username,COALESCE(r.role,'user') AS role FROM users u LEFT JOIN user_roles r ON r.user_id=u.id ORDER BY u.rowid")
+		return query(r.Context(), s.Store.DB, "SELECT u.id,u.username,COALESCE(r.role,'user') AS role,COALESCE(q.bytes,0) AS quota_bytes,COALESCE((SELECT SUM(size) FROM attachments a WHERE a.user_id=u.id),0) AS used_bytes FROM users u LEFT JOIN user_roles r ON r.user_id=u.id LEFT JOIN user_quotas q ON q.user_id=u.id ORDER BY u.rowid")
+	})
+	s.route("PUT /api/admin/users/{user_id}/quota", "admin", func(r request) any {
+		target := r.PathValue("user_id")
+		if one(r.Context(), s.Store.DB, "SELECT id FROM users WHERE id=?", target) == nil {
+			fail(404, "账号不存在")
+		}
+		quota := int64(num(r.body(), "quota_bytes"))
+		if quota != -1 && quota != 0 && quota < 1<<20 {
+			fail(422, "配额无效：0 表示默认 10GB，-1 表示不限制，最小 1MB")
+		}
+		exec(r.Context(), s.Store.DB, "INSERT INTO user_quotas(user_id,bytes,updated_at) VALUES(?,?,?) ON CONFLICT(user_id) DO UPDATE SET bytes=excluded.bytes,updated_at=excluded.updated_at", target, quota, store.Now())
+		return Object{"user_id": target, "quota_bytes": quota}
 	})
 	s.route("GET /api/admin/invitations", "admin", func(r request) any {
 		return query(r.Context(), s.Store.DB, "SELECT id,prefix,label,max_uses,uses,expires,revoked FROM invitations ORDER BY rowid DESC LIMIT 200")

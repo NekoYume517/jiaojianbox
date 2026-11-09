@@ -103,7 +103,7 @@ func Open(root string) (*Store, error) {
 		return nil, err
 	}
 	// The schema is intentionally wire-compatible with the Python releases.
-	for _, migration := range []struct{ table, column, ddl string }{{"llm_calls", "streamed", "ALTER TABLE llm_calls ADD COLUMN streamed INTEGER"}, {"shelf_meta", "version", "ALTER TABLE shelf_meta ADD COLUMN version INTEGER DEFAULT 1"}} {
+	for _, migration := range []struct{ table, column, ddl string }{{"llm_calls", "streamed", "ALTER TABLE llm_calls ADD COLUMN streamed INTEGER"}, {"llm_calls", "managed", "ALTER TABLE llm_calls ADD COLUMN managed INTEGER"}, {"shelf_meta", "version", "ALTER TABLE shelf_meta ADD COLUMN version INTEGER DEFAULT 1"}} {
 		rows, err := Query(context.Background(), db, "PRAGMA table_info("+migration.table+")")
 		if err != nil {
 			db.Close()
