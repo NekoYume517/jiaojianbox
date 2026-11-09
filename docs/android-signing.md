@@ -51,7 +51,7 @@ python scripts/verify-android-signing.py --apk android/app/build/outputs/apk/deb
 
 - 发布流水线：还原密钥后先校验密钥库，构建后再校验 APK，任一不符就终止发布；
 - `Android signing identity` 工作流：改动 `android/**` 时、以及每周一自动校验 Secret 是否仍然一致；
-- `docs/verification` 里的本地检查。
+- 本地：`npm run verify:signing`，或直接运行上面的命令。
 
 Secret 被删除或被替换时会立刻失败，不会静默发出一批装不上的包。
 

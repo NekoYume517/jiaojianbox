@@ -10,7 +10,8 @@
     "server": "go run ./cmd/jiaojianbox-server",
     "package:win": "node scripts/package-win.mjs",
     "test": "go test ./internal/api ./internal/store ./internal/setup",
-    "test:legacy": "python -m pytest tests -q"
+    "test:legacy": "python -m pytest tests -q",
+    "verify:signing": "python -X utf8 scripts/verify-android-signing.py"
   },
   "devDependencies": {
     "echarts": "^6.1.0",
