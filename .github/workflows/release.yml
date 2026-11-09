@@ -37,6 +37,10 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
       - name: Setup Gradle cache
         uses: gradle/actions/setup-gradle@v4
 
@@ -49,6 +53,9 @@ jobs:
           printf '%s' "$JJB_ANDROID_DEBUG_KEYSTORE" | base64 --decode > "$key"
           chmod 600 "$key"
           echo "JJB_ANDROID_KEYSTORE_PATH=$key" >> "$GITHUB_ENV"
+
+      - name: Verify stored signing identity matches the pinned certificate
+        run: python -X utf8 scripts/verify-android-signing.py --keystore "$JJB_ANDROID_KEYSTORE_PATH"
 
       - name: Build debug APK
         working-directory: android
@@ -64,17 +71,7 @@ jobs:
           cp android/app/build/outputs/apk/debug/app-debug.apk "dist/JiaojianBox-${RELEASE_TAG}-android-debug.apk"
 
       - name: Verify APK uses the stable signing key
-        shell: bash
-        run: |
-          expected=$(keytool -exportcert -keystore "$JJB_ANDROID_KEYSTORE_PATH" -storepass android -alias androiddebugkey | sha256sum | cut -d' ' -f1)
-          signer=$(find "$ANDROID_HOME/build-tools" -name apksigner | sort -V | tail -1)
-          report=$("$signer" verify --print-certs android/app/build/outputs/apk/debug/app-debug.apk)
-          printf '%s\n' "$report"
-          actual=$(printf '%s\n' "$report" | grep -i 'certificate SHA-256 digest:' | head -1 | awk '{print $NF}' | tr -d '\r')
-          echo "Expected signing certificate: $expected"
-          echo "Actual signing certificate: $actual"
-          test "$actual" = "$expected" || { echo 'APK signing certificate mismatch'; exit 1; }
-          echo "Verified APK signing certificate: $actual"
+        run: python -X utf8 scripts/verify-android-signing.py --apk android/app/build/outputs/apk/debug/app-debug.apk
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4

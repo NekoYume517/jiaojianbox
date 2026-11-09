@@ -4,6 +4,38 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
+// Permanent signing identity of the shipped app. See docs/android-signing.md.
+// Never generate a replacement key: a new key changes the signature and forces every
+// user to uninstall the previous build before installing an update.
+val stableKeystore: File = run {
+    val fromEnvironment = System.getenv("JJB_ANDROID_KEYSTORE_PATH")?.let { file(it) }
+    val fromRepository = rootProject.file("keystore/jiaojianbox-signing.keystore")
+    val resolved = fromEnvironment ?: fromRepository.takeIf { it.isFile }
+    if (resolved == null) {
+        throw GradleException(
+            """
+            Missing the permanent Android signing keystore.
+
+            Expected it at: ${rootProject.file("keystore/jiaojianbox-signing.keystore")}
+            or set JJB_ANDROID_KEYSTORE_PATH to its location.
+
+            This keystore is the app identity (certificate SHA-256
+            256994e591fe61061ed76b88aabe518f140deefb4dab7f947d64e461dbb158ab). Replacing or
+            regenerating it silently breaks upgrades for every installed device. Read
+            docs/android-signing.md.
+            """.trimIndent(),
+        )
+    }
+    if (!resolved.isFile) {
+        throw GradleException("Android signing keystore not found: $resolved (see docs/android-signing.md)")
+    }
+    resolved
+}
+
+val stableStorePassword: String = System.getenv("JJB_ANDROID_KEYSTORE_PASSWORD") ?: "android"
+val stableKeyAlias: String = System.getenv("JJB_ANDROID_KEY_ALIAS") ?: "androiddebugkey"
+val stableKeyPassword: String = System.getenv("JJB_ANDROID_KEY_PASSWORD") ?: stableStorePassword
+
 android {
     namespace = "com.jiaojianbox.app"
     compileSdk = 35
@@ -16,15 +48,25 @@ android {
         versionName = "0.6.4"
     }
     signingConfigs {
-        getByName("debug") {
-            // CI explicitly selects the stable key instead of AGP's SDK-dependent default.
-            System.getenv("JJB_ANDROID_KEYSTORE_PATH")?.let { storeFile = file(it) }
+        create("stable") {
+            storeFile = stableKeystore
+            storePassword = stableStorePassword
+            keyAlias = stableKeyAlias
+            keyPassword = stableKeyPassword
+            storeType = "PKCS12"
+            enableV1Signing = true
+            enableV2Signing = true
         }
     }
     buildTypes {
+        debug {
+            // Both variants use the permanent key so no build can drift to a fresh one.
+            signingConfig = signingConfigs.getByName("stable")
+        }
         release {
             isMinifyEnabled = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            signingConfig = signingConfigs.getByName("stable")
         }
     }
     compileOptions {

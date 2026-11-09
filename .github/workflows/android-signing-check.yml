@@ -1,24 +1,59 @@
 name: Android signing identity
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - 'android/**'
+      - 'scripts/verify-android-signing.py'
+      - '.github/workflows/android-signing-check.yml'
+  schedule:
+    - cron: '0 3 * * 1'
 permissions:
   contents: read
 jobs:
   identity:
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
+
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - uses: gradle/actions/setup-gradle@v4
+
       - name: Verify stored signing certificate
         env:
           SIGNING_KEY: ${{ secrets.JJB_ANDROID_DEBUG_KEYSTORE }}
+          JJB_ANDROID_KEYSTORE_PATH: ${{ runner.temp }}/jiaojianbox-signing.keystore
         shell: bash
         run: |
-          test -n "$SIGNING_KEY"
-          key="$RUNNER_TEMP/signing.keystore"
-          trap 'rm -f "$key"' EXIT
-          printf '%s' "$SIGNING_KEY" | base64 --decode > "$key"
-          chmod 600 "$key"
-          keytool -list -keystore "$key" -storepass android -alias androiddebugkey
+          test -n "$SIGNING_KEY" || { echo 'Stable Android signing key is required'; exit 1; }
+          trap 'rm -f "$JJB_ANDROID_KEYSTORE_PATH"' EXIT
+          printf '%s' "$SIGNING_KEY" | base64 --decode > "$JJB_ANDROID_KEYSTORE_PATH"
+          chmod 600 "$JJB_ANDROID_KEYSTORE_PATH"
+          python -X utf8 scripts/verify-android-signing.py
+          echo 'Stored Android signing identity is unchanged.'
+
+      - name: Confirm Gradle resolves the same signing identity
+        env:
+          SIGNING_KEY: ${{ secrets.JJB_ANDROID_DEBUG_KEYSTORE }}
+          JJB_ANDROID_KEYSTORE_PATH: ${{ runner.temp }}/jiaojianbox-signing.keystore
+        working-directory: android
+        shell: bash
+        run: |
+          printf '%s' "$SIGNING_KEY" | base64 --decode > "$JJB_ANDROID_KEYSTORE_PATH"
+          chmod 600 "$JJB_ANDROID_KEYSTORE_PATH"
+          chmod +x gradlew
+          ./gradlew :app:signingReport --no-daemon | tee "$RUNNER_TEMP/signing-report.txt"
+          if ! grep -qi '25:69:94:E5:91:FE:61:06' "$RUNNER_TEMP/signing-report.txt"; then
+            echo 'Gradle did not resolve the permanent signing identity'
+            exit 1
+          fi
