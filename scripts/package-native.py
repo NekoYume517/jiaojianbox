@@ -26,7 +26,7 @@ helper=ROOT/'work/helper/collector-agent'
 run([helper/'collector-agent.exe','self-test'])
 csc=Path(os.environ.get('WINDIR',r'C:\Windows'))/'Microsoft.NET/Framework64/v4.0.30319/csc.exe'
 if not csc.is_file():raise SystemExit('Missing C# compiler for drag-watch')
-run([csc,'/nologo','/target:exe','/reference:System.Windows.Forms.dll','/out:',ROOT/'desktop/drag-watch.exe',ROOT/'desktop/drag-watch.cs'])
+run([csc,'/nologo','/target:exe','/reference:System.Windows.Forms.dll',f'/out:{ROOT/"desktop/drag-watch.exe"}',ROOT/'desktop/drag-watch.cs'])
 snow=ROOT/'runtime-vendor/snowluma'
 for component in [snow/'node.exe',snow/'native/snowluma-win32-x64.node',ROOT/'desktop/drag-watch.exe']:
  if not component.is_file():raise SystemExit(f'Missing required runtime: {component.name}')
