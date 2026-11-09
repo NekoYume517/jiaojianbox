@@ -54,7 +54,7 @@ jobs:
         working-directory: android
         run: |
           chmod +x gradlew
-          ./gradlew assembleDebug
+          ./gradlew clean signingReport assembleDebug --no-build-cache
 
       - name: Rename APK
         env:
@@ -68,7 +68,9 @@ jobs:
         run: |
           expected=$(keytool -exportcert -keystore "$JJB_ANDROID_KEYSTORE_PATH" -storepass android -alias androiddebugkey | sha256sum | cut -d' ' -f1)
           signer=$(find "$ANDROID_HOME/build-tools" -name apksigner | sort -V | tail -1)
-          actual=$("$signer" verify --print-certs android/app/build/outputs/apk/debug/app-debug.apk | sed -n 's/^Signer #1 certificate SHA-256 digest: //p')
+          actual=$("$signer" verify --print-certs android/app/build/outputs/apk/debug/app-debug.apk | sed -n 's/^Signer #1 certificate SHA-256 digest: //p' | tr -d '\r' | xargs)
+          echo "Expected signing certificate: $expected"
+          echo "Actual signing certificate: $actual"
           test "$actual" = "$expected" || { echo 'APK signing certificate mismatch'; exit 1; }
           echo "Verified APK signing certificate: $actual"
 
