@@ -1,4 +1,4 @@
-/* Motion follows Magpie's continuity principles (MIT; see THIRD_PARTY_NOTICES).
+/* Canonical contract: docs/ui-motion-standard.md.  Behavior follows Magpie's continuity principles (MIT; see THIRD_PARTY_NOTICES).
    Main workspace only: quick.html deliberately does not load this module. */
 (() => {
   'use strict';

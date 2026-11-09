@@ -1,4 +1,4 @@
-/* Small distances and explicit properties; never imported by quick.html. */
+/* Canonical contract: docs/ui-motion-standard.md. Never imported by quick.html. */
 :root{--motion-ease:cubic-bezier(.2,.8,.2,1);--motion-out:cubic-bezier(.23,1,.32,1)}
 .stagger>.stagger-item{opacity:1;transform:none;animation:none!important}
 button{transition:background-color 150ms var(--motion-ease),color 150ms var(--motion-ease),border-color 150ms var(--motion-ease),transform 140ms var(--motion-out)}

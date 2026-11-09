@@ -14,7 +14,7 @@ module.exports = async function verifyMotion(page, scratch) {
     return Math.abs(a.x-b.x)<.5 && Math.abs(a.y-b.y)<.5 && Math.abs(a.width-b.width)<.5 && Math.abs(a.height-b.height)<.5;
   });
   assert.equal(await page.locator('.nav-highlight').count(), 1);
-  const create = page.locator('[data-action="new-task"]').filter({ visible: true });
+  const create = page.locator('#view [data-action="new-task"]').filter({ visible: true });
   const box = await create.boundingBox();
   await page.mouse.move(box.x+box.width/2, box.y+box.height/2); await page.mouse.down();
   await page.waitForTimeout(90);

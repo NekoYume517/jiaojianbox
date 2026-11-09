@@ -4,6 +4,8 @@
 
 桌面端和服务端共用 Go 核心；Windows 桌面使用 Wails v3 与系统 WebView2，界面采用原生 JavaScript/CSS。Android 保持原生 Material 3。技术结构参考 [Magpie](https://github.com/yetone/magpie)，视觉采用扁平、直角和细边框，支持浅色、深色、跟随系统，以及 Tokyo Night、Nord、Graphite 配色。
 
+前端动效以 [docs/ui-motion-standard.md](docs/ui-motion-standard.md) 为准；主工作区和服务端页面复用同一运行时与验收脚本，快捷收集保持轻量例外。
+
 ## 安装使用
 
 从 [GitHub Releases](https://github.com/NekoYume517/jiaojianbox/releases/latest) 下载 Windows 安装程序 EXE 或 Android APK。Windows 自定义安装程序包含采集器、独立 Python 运行环境、微信数据库读取模块、SnowLuma/Node、WebView2 离线安装程序和 VC++ 运行库，无需另外配置开发环境。首次启用 QQ 时在应用内阅读组件协议、选择已登录实例和会话。

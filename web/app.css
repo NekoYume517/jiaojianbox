@@ -231,7 +231,7 @@ textarea{resize:vertical;line-height:1.7}
 .task-origin{margin-top:20px;padding:16px;border:1px solid var(--soft-line);background:var(--surface);border-radius:6px}
 .task-origin p{font-size:0.82rem;margin:10px 0 0;white-space:pre-wrap;color:var(--muted)}
 dialog{border:1px solid var(--line);border-radius:13px;width:min(680px,calc(100vw - 30px));max-height:90vh;padding:0;box-shadow:var(--shadow);color:var(--ink);background:var(--panel)}
-dialog::backdrop{background:var(--backdrop);backdrop-filter:blur(3px)}
+dialog::backdrop{background:var(--backdrop)}
 dialog[open]{animation:dialog-in 170ms var(--ease-out)}
 dialog.closing{animation:dialog-out 130ms ease forwards}
 @keyframes dialog-out{to{opacity:0;transform:translateY(5px) scale(.985)}}
@@ -335,7 +335,7 @@ body.dragging-files .drop-overlay{opacity:1}
 body.dragging-files .file-shelf{border-left:2px solid var(--green);box-shadow:0 0 0 5px var(--focus-soft),var(--shadow)}
 
 /* 命令面板 */
-.cmdk-backdrop{position:fixed;inset:var(--titlebar);z-index:900;background:var(--backdrop);backdrop-filter:blur(3px);display:flex;justify-content:center;align-items:flex-start;padding:11vh 20px 20px}
+.cmdk-backdrop{position:fixed;inset:var(--titlebar);z-index:900;background:var(--backdrop);display:flex;justify-content:center;align-items:flex-start;padding:11vh 20px 20px}
 .cmdk{width:min(560px,100%);background:var(--panel);border:1px solid var(--line);border-radius:13px;box-shadow:var(--shadow);overflow:hidden;animation:dialog-in 150ms var(--ease-out)}
 .cmdk input{margin:0;border:0;border-bottom:1px solid var(--soft-line);border-radius:0;min-height:52px;font-size:1.05rem;padding:14px 18px}
 .cmdk input:focus{box-shadow:none;border-color:var(--soft-line)}
@@ -386,7 +386,7 @@ nav{gap:9px}
 }
 
 @media(max-width:620px){.workspace{display:block}
-.sidebar{position:fixed;top:auto;bottom:0;left:0;right:0;width:100%;height:62px;z-index:20;border-top:1px solid var(--line);border-right:0;padding:0;background:var(--sidebar);backdrop-filter:blur(12px)}
+.sidebar{position:fixed;top:auto;bottom:0;left:0;right:0;width:100%;height:62px;z-index:20;border-top:1px solid var(--line);border-right:0;padding:0;background:var(--sidebar)}
 .brand,.account{display:none}
 nav{display:flex;justify-content:space-around;height:100%;gap:0}
 nav button{font-size:0.82rem;display:flex;flex-direction:column;gap:5px;padding:9px 8px;min-width:70px;border-radius:0;background:transparent!important}
@@ -511,7 +511,7 @@ dialog{max-height:calc(100dvh - var(--titlebar) - 30px);background:var(--panel)}
 .chat-toolbar{display:flex;gap:10px;align-items:center}.chat-toolbar input{margin:0;flex:1}.chat-toolbar span{white-space:nowrap}.advanced-source{margin-top:24px}.advanced-source>summary{padding:20px 23px;cursor:pointer;font-weight:550}.advanced-source>summary span{font-weight:400;margin-left:10px}.advanced-body{padding:0 23px 23px}.advanced-body>details{margin:15px 0}.advanced-body>details>summary{cursor:pointer;margin-bottom:17px}.debug-controls{margin-top:22px}.debug-output{background:var(--input);border:1px solid var(--line);padding:16px;border-radius:7px;max-height:360px;overflow:auto;font-size:12px;white-space:pre-wrap;overflow-wrap:anywhere}
 .device-status{padding:18px;margin-top:18px;border:1px solid var(--line);border-radius:9px;background:var(--surface)}.device-status>p{margin:0}.device-code{font-size:26px;letter-spacing:4px;font-weight:600;font-variant-numeric:tabular-nums;color:var(--green);margin:18px 0}.consent-page{min-height:calc(100dvh - var(--titlebar));padding:50px 20px;display:grid;place-items:center}.consent-card{padding:35px;max-width:500px}.consent-card>img{margin-bottom:24px}.consent-card h1{font-size:25px}.consent-card .detail-actions{margin-top:27px}.consent-card>.link{margin-top:15px}
 .shelf-handle{position:fixed;right:0;top:46%;z-index:45;padding:15px 9px;background:var(--green);color:var(--on-green);border-radius:10px 0 0 10px;box-shadow:var(--shadow);writing-mode:vertical-rl;font-size:12px;letter-spacing:3px}.shelf-handle span{writing-mode:horizontal-tb;letter-spacing:0;margin-top:7px;font-size:11px}
-.shelf-backdrop{position:fixed;inset:var(--titlebar) 0 0;z-index:70;background:var(--backdrop);backdrop-filter:blur(2px);opacity:0;transition:opacity 180ms var(--ease-out)}
+.shelf-backdrop{position:fixed;inset:var(--titlebar) 0 0;z-index:70;background:var(--backdrop);opacity:0;transition:opacity 180ms var(--ease-out)}
 .shelf-backdrop.show{opacity:1}
 .file-shelf{position:fixed;inset:var(--titlebar) 0 0 auto;width:min(440px,100vw);z-index:71;background:var(--panel);border-left:1px solid var(--line);box-shadow:var(--shadow);display:flex;flex-direction:column;padding:24px;transform:translateX(40px);opacity:.6;transition:transform 210ms var(--ease-drawer),opacity 210ms var(--ease-drawer),box-shadow 180ms var(--ease-out)}
 .file-shelf.show{transform:none;opacity:1}
