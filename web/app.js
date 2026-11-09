@@ -352,12 +352,17 @@ function render() {
   const active = document.activeElement;
   const focus = active?.id;
   const selection = active?.selectionStart;
+  const viewKey = state.page + ':' + (state.taskId || '');
+  const scrollTop = $('#view').dataset.viewKey === viewKey ? $('#view').scrollTop : 0;
   const titles = { files:'文件', inbox: '通知', tasks: '待办', sources: '消息来源', settings: '设置',stats:'统计' };
   $('#breadcrumb').textContent = titles[state.page];
   $$('[data-nav]').forEach(button => button.classList.toggle('active', button.dataset.nav === state.page));
   window.statistics?.unmount();
   $('#view').innerHTML = state.page === 'sources' && window.experience ? experience.sourcesView() : ({ files:()=>window.shelf?.page()||'', inbox: inboxView, tasks: tasksView, sources: sourcesView, settings: settingsView,stats:()=>window.statistics.page() })[state.page]();
   hydrateIcons(); updateCounts(); syncLocationHash();
+  $('#view').dataset.viewKey = viewKey;
+  $('#view').scrollTop = scrollTop;
+  uiMotion.syncNavigation();
   if(state.page==='stats')window.statistics?.mount();
   state.firstRenderDone = true;
   window.appearance?.refresh(); window.experience?.decorate(state.page);
@@ -367,7 +372,7 @@ function render() {
   if ($('#category-filter')) $('#category-filter').value = state.category;
   if ($('#task-filter')) $('#task-filter').value = state.taskFilter;
   if (focus && document.getElementById(focus)) {
-    document.getElementById(focus).focus();
+    document.getElementById(focus).focus({preventScroll:true});
     if (selection != null && ['text', 'search'].includes(document.getElementById(focus).type)) document.getElementById(focus).setSelectionRange(selection, selection);
   }
   if (state.page === 'tasks' && state.taskId && !state.taskId.startsWith('local:')) checkTask().catch(() => {});
@@ -406,7 +411,7 @@ async function openTask(task = {}, source) {
   (task.requirements || []).forEach(requirementRow);
   editingUrgency = task.id ? (task.urgency || null) : null;
   editingReminders = task.id ? (Array.isArray(task.reminders) ? task.reminders : null) : null;
-  $('#task-dialog').showModal(); $('#task-title').focus();
+  uiMotion.openDialog($('#task-dialog')); $('#task-title').focus();
 }
 function dialogSubmit(dialogId, task) {
   const dialog = document.getElementById(dialogId);
@@ -549,7 +554,7 @@ async function runAction(action, button) {
     case 'edit-task': return openTask(task);
     case 'close-task': return closableDialog($('#task-dialog'));
     case 'add-requirement': return requirementRow();
-    case 'paste': $('#paste-content').value = ''; return $('#paste-dialog').showModal();
+    case 'paste': $('#paste-content').value = ''; return uiMotion.openDialog($('#paste-dialog'));
     case 'close-paste': return closableDialog($('#paste-dialog'));
     case 'close-rename': return closableDialog($('#rename-dialog'));
     case 'back-inbox': state.selected = null; return render();
@@ -700,7 +705,7 @@ document.addEventListener('click', async event => {
     const changeKind=event.target.closest('[data-change-kind]');if(changeKind){await api(`/api/tasks/${state.taskId}/files/${changeKind.dataset.changeKind}/kind`,'PUT',{kind:changeKind.dataset.nextKind,version:Number(changeKind.dataset.version)});await refresh();toast(changeKind.dataset.nextKind==='material'?'已转为待办材料，并重新核对清单':'已转为提交回执');return;}
     const renamed = event.target.closest('[data-rename-file]'); if (renamed) {
       $('#rename-form').dataset.fileId = renamed.dataset.renameFile; $('#rename-form').dataset.version = renamed.dataset.version;
-      $('#rename-form').dataset.taskId = state.taskId; $('#rename-name').value = renamed.dataset.name; $('#rename-error').textContent = ''; $('#rename-dialog').showModal(); $('#rename-name').focus();
+      $('#rename-form').dataset.taskId = state.taskId; $('#rename-name').value = renamed.dataset.name; $('#rename-error').textContent = ''; uiMotion.openDialog($('#rename-dialog')); $('#rename-name').focus();
       return;
     }
     const deleted = event.target.closest('[data-delete-file]');
@@ -727,7 +732,7 @@ const CMDK_COMMANDS = [
   { icon: 'connect', label: '前往：消息来源', kbd: 'G S', run: () => navigate('sources') },
   { icon: 'settings', label: '前往：设置', kbd: 'G C', run: () => navigate('settings') },
   { icon: 'plus', label: '新建待办', kbd: 'N', run: () => { state.page = 'inbox'; render(); openTask(); } },
-  { icon: 'file', label: '粘贴一条通知', kbd: 'P', run: () => { state.page = 'inbox'; render(); $('#paste-content').value = ''; $('#paste-dialog').showModal(); } },
+  { icon: 'file', label: '粘贴一条通知', kbd: 'P', run: () => { state.page = 'inbox'; render(); $('#paste-content').value = ''; uiMotion.openDialog($('#paste-dialog')); } },
   { icon: 'refresh', label: '立即同步', kbd: 'R', run: () => { refresh(); flushOutbox(); } },
   { icon: 'connect', label: '打开文件收纳框', kbd: 'F', run: () => window.shelf?.show() },
 ];
@@ -785,7 +790,7 @@ document.addEventListener('keydown', event => {
   if (state.page === 'tasks' && key === 'n') { event.preventDefault(); return openTask(); }
   if (key === 'f' && !shelfOpen) { event.preventDefault(); return window.shelf?.show(); }
 });
-const closableDialog = dialog => { dialog.classList.add('closing'); setTimeout(() => { dialog.classList.remove('closing'); dialog.close(); }, 120); };
+const closableDialog = dialog => uiMotion.closeDialog(dialog);
 document.addEventListener('click', event => {
   const closer = event.target.closest('[data-action="close-task"]');
   if (closer) { event.preventDefault(); return closableDialog($('#task-dialog')); }
@@ -895,7 +900,7 @@ window.desktop?.onCollector(showCollectorState);
 setInterval(() => { if (state.session) { refresh({ renderPage: false }); if (state.pending.length) flushOutbox(); } }, 30000);
 (async () => {
   hydrateIcons();
-  if(window.desktop){const platform=await desktop.platform();document.body.classList.toggle('native-titlebar',!!platform.nativeTitlebar);$('#desktop-titlebar').hidden=!platform.nativeTitlebar;try{appearance.restore(await desktop.getAppearance());}catch{}}
+  if(window.desktop){try{appearance.restore(await desktop.getAppearance());}catch{}}
   $('#server-url').value = window.desktop ? 'https://jiaojianbox.bansonic.top' : location.origin;
   try {
     const session = window.desktop ? await storeGet('session') : JSON.parse(localStorage.getItem('jjb-session') || 'null');

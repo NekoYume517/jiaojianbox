@@ -107,7 +107,7 @@ func Run(version string) error {
 	if err = os.MkdirAll(root, 0700); err != nil {
 		return err
 	}
-	d := &Desktop{root: root, resources: resourceRoot(), version: version, vault: &vault{root: filepath.Join(root, "vault-go")}, appearance: Object{"theme": "system", "density": "compact", "textSize": "normal", "palette": "tokyo-night"}, prefs: Object{"enabled": true, "drop": true, "note": true, "files": true}, state: Object{"state": "stopped", "message": "采集未启动"}}
+	d := &Desktop{root: root, resources: resourceRoot(), version: version, vault: &vault{root: filepath.Join(root, "vault-go")}, appearance: Object{"theme": "system", "density": "compact", "textSize": "normal", "palette": "magpie"}, prefs: Object{"enabled": true, "drop": true, "note": true, "files": true}, state: Object{"state": "stopped", "message": "采集未启动"}}
 	d.ctx, d.cancel = context.WithCancel(context.Background())
 	defer d.cancel()
 	if value, e := d.vault.get("appearance"); e == nil {
@@ -157,7 +157,15 @@ func Run(version string) error {
 			silent = true
 		}
 	}
-	d.main = d.app.Window.NewWithOptions(application.WebviewWindowOptions{Name: "main", Title: "交件箱", Width: 1280, Height: 860, MinWidth: 360, MinHeight: 520, URL: "/?desktop=1", Frameless: true, EnableFileDrop: true, Hidden: silent, BackgroundColour: application.NewRGB(26, 27, 38)})
+	windowTitle := "交件箱"
+	if strings.HasSuffix(version, "-preview") {
+		windowTitle += " · 主题预览"
+	}
+	chrome, background := desktopWindowChrome(getString(d.appearance, "theme"))
+	d.main = d.app.Window.NewWithOptions(application.WebviewWindowOptions{Name: "main", Title: windowTitle, Width: 1280, Height: 860, MinWidth: 360, MinHeight: 520, URL: "/?desktop=1", Frameless: false, EnableFileDrop: true, Hidden: silent, Windows: chrome, BackgroundColour: background})
+	if runtime.GOOS == "windows" {
+		d.main.OnWindowEvent(events.Common.WindowRuntimeReady, func(*application.WindowEvent) { d.main.ExecJS(frameOnlyResizeJS) })
+	}
 	d.main.OnWindowEvent(events.Common.WindowClosing, func(e *application.WindowEvent) { e.Cancel(); d.main.Hide() })
 	d.main.OnWindowEvent(events.Common.WindowFilesDropped, func(e *application.WindowEvent) {
 		details := e.Context().DropTargetDetails()
@@ -316,6 +324,15 @@ func (d *Desktop) Invoke(method string, args []any) (any, error) {
 			}
 		}
 		return Object{"platform": platform, "version": d.version, "nativeTitlebar": true, "runtime": "wails", "silentStartup": silent}, nil
+	case "tintTitlebar":
+		value := getObject(arg(args, 0))
+		for _, key := range []string{"r", "g", "b"} {
+			n := store.Number(value, key)
+			if n < 0 || n > 255 {
+				return nil, errors.New("invalid title bar colour")
+			}
+		}
+		return d.tintTitlebar(uint8(store.Number(value, "r")), uint8(store.Number(value, "g")), uint8(store.Number(value, "b")), store.Bool(value, "dark")), nil
 	case "getAppearance":
 		d.mu.Lock()
 		out := getObjectCopy(d.appearance)
@@ -326,7 +343,7 @@ func (d *Desktop) Invoke(method string, args []any) (any, error) {
 		defer d.appearanceMu.Unlock()
 		value := getObject(arg(args, 0))
 		d.mu.Lock()
-		for _, key := range []string{"theme", "density", "textSize", "palette"} {
+		for _, key := range []string{"theme", "density", "textSize", "palette", "designVersion"} {
 			if v, ok := value[key]; ok {
 				d.appearance[key] = v
 			}

@@ -1,0 +1,57 @@
+const assert = require('node:assert/strict');
+const path = require('node:path');
+
+module.exports = async function verifyMotion(page, scratch) {
+  // The first render must work without a refresh, a timer, or an animation end.
+  await page.evaluate(() => { state.firstRenderDone = false; render(); });
+  assert.deepEqual(await page.locator('.stagger-item').first().evaluate(el => ({ opacity: getComputedStyle(el).opacity, transform: getComputedStyle(el).transform })), { opacity: '1', transform: 'none' });
+
+  // Re-target a moving highlight several times, then check its actual final bounds.
+  for (const name of ['files', 'inbox', 'sources', 'tasks']) await page.locator(`[data-nav="${name}"]`).click();
+  await page.waitForFunction(() => {
+    const a = document.querySelector('.sidebar [data-nav].active').getBoundingClientRect();
+    const b = document.querySelector('.nav-highlight').getBoundingClientRect();
+    return Math.abs(a.x-b.x)<.5 && Math.abs(a.y-b.y)<.5 && Math.abs(a.width-b.width)<.5 && Math.abs(a.height-b.height)<.5;
+  });
+  assert.equal(await page.locator('.nav-highlight').count(), 1);
+  const create = page.locator('[data-action="new-task"]').filter({ visible: true });
+  const box = await create.boundingBox();
+  await page.mouse.move(box.x+box.width/2, box.y+box.height/2); await page.mouse.down();
+  await page.waitForTimeout(90);
+  assert.notEqual(await create.evaluate(el => getComputedStyle(el).transform), 'none');
+  await page.mouse.up(); await page.locator('#task-dialog').waitFor({state:'visible'});
+  await page.locator('#task-title').fill('动画中断后保留的草稿');
+  // Cancel a close with a new open before its completion callback can run.
+  await page.evaluate(() => { uiMotion.closeDialog(document.querySelector('#task-dialog')); uiMotion.openDialog(document.querySelector('#task-dialog')); });
+  await page.waitForTimeout(500);
+  assert(await page.locator('#task-dialog').evaluate(d => d.open));
+  assert.equal(await page.locator('#task-title').inputValue(), '动画中断后保留的草稿');
+  await page.keyboard.press('Escape'); await page.locator('#task-dialog').waitFor({state:'hidden'});
+
+  const trigger = page.locator('#quick-actions'), menu = page.locator('#quick-actions-menu');
+  await trigger.click(); await menu.waitFor({state:'visible'});
+  await page.screenshot({path:path.join(scratch,'motion-menu.png')});
+  await trigger.click(); await trigger.click(); await menu.waitFor({state:'visible'});
+  await page.waitForTimeout(400); assert.equal(await page.locator('.menu-ghost').count(),0);
+  await page.keyboard.press('Escape'); assert.equal(await trigger.getAttribute('aria-expanded'),'false');
+  await trigger.focus(); await page.keyboard.press('ArrowDown');
+  assert.equal(await page.evaluate(()=>document.activeElement.textContent), '新建待办');
+  await page.keyboard.press('ArrowUp'); assert((await page.evaluate(()=>document.activeElement.textContent)).startsWith('全部快捷操作'));
+  await page.keyboard.press('Escape'); assert(await trigger.evaluate(el=>document.activeElement===el));
+
+  await trigger.click(); await menu.getByRole('menuitem',{name:'新建待办',exact:true}).click();
+  await page.locator('#task-dialog').waitFor({state:'visible'}); assert(await menu.isHidden());
+  await page.screenshot({path:path.join(scratch,'motion-dialog.png')});
+  await page.keyboard.press('Escape');
+  await page.emulateMedia({reducedMotion:'reduce'});
+  await create.click();
+  assert.equal(await page.locator('#task-dialog').evaluate(d=>d.getAnimations().filter(a=>a.playState==='running').length),0);
+  await page.locator('#task-dialog [data-action="close-task"]').first().click();
+  assert(await page.locator('#task-dialog').isHidden());
+  await trigger.click(); assert.equal(await menu.evaluate(el=>el.getAnimations().filter(a=>a.playState==='running').length),0);
+  await page.keyboard.press('Escape'); await page.emulateMedia({reducedMotion:'no-preference'});
+  await page.setViewportSize({width:390,height:844});
+  await trigger.click(); const bounds=await menu.boundingBox(); assert(bounds.x>=0&&bounds.x+bounds.width<=390);
+  await page.keyboard.press('Escape'); await page.setViewportSize({width:1280,height:860});
+  console.log('Motion: first render, spring retargeting, press feedback, interrupted dialogs, menu re-entry/keyboard, reduced motion and narrow bounds passed.');
+};

@@ -17,13 +17,23 @@ const fs=require('node:fs/promises'),path=require('node:path'),net=require('node
   const context=browser.contexts()[0];let page=context.pages()[0];if(!page){page=await context.waitForEvent('page');}console.log('WebView initial URL:',page.url());
   const errors=[];page.on('pageerror',e=>errors.push(e.message));
   try{await page.locator('#auth').waitFor({state:'visible',timeout:30000});}catch(e){console.log('Native diagnostics:',await page.evaluate(()=>({url:location.href,wailsKeys:Object.keys(window.wails||{}),internal:Object.keys(window._wails||{}),toast:document.querySelector('#toast')?.textContent,state:typeof state,body:document.body.innerText.slice(0,600)})));console.log('Page errors:',errors);console.log('Native output:',output.slice(-3000));throw e;}
-  assert.equal(await page.locator('#server-url').isVisible(),false);
-  await page.evaluate(()=>appearance.update({theme:'dark',palette:'tokyo-night'}));await page.screenshot({path:path.join(scratch,'login-dark.png')});
+  assert.equal(await page.locator('#server-url').isVisible(),false);assert.equal(await page.evaluate(()=>appearance.get().palette),'magpie');
+  const checkChrome=async (dark,colour)=>{
+   assert.equal(await page.locator('.window-controls,#desktop-titlebar').count(),0);
+   assert(await page.evaluate(()=>_wails.setResizable.frameOnly));
+   await page.waitForTimeout(150);
+   const chrome=JSON.parse(require('node:child_process').execFileSync('powershell.exe',['-NoProfile','-NonInteractive','-File',path.join(root,'scripts','read-native-chrome.ps1'),'-AppPid',String(child.pid)],{encoding:'utf8',windowsHide:true}));
+   assert(chrome.caption&&chrome.minimize&&chrome.maximize&&chrome.resize);
+   if(chrome.darkSupported)assert.equal(chrome.dark,Number(dark));
+   if(chrome.colourSupported)assert.equal(chrome.colour,colour);
+  };
+  await page.evaluate(()=>appearance.update({theme:'dark',palette:'magpie'}));await checkChrome(true,0x1e1a1a);await page.screenshot({path:path.join(scratch,'login-dark.png')});
   await page.locator('#offline-login').click();await page.locator('#workspace').waitFor({state:'visible',timeout:30000});
   assert.equal(await page.evaluate(()=>state.session.mode),'offline');
   await page.evaluate(async()=>{await api('/api/tasks','POST',{title:'Go 原生版验收待办',description:'通知、材料和提交记录集中管理。'});await refresh();});
   await page.evaluate(async url=>api('/api/settings/llm','PUT',{base_url:url,model:'fixture'}),'http://127.0.0.1:'+model.address().port);
   await page.locator('[data-nav="tasks"]').click();await page.screenshot({path:path.join(scratch,'tasks-dark.png')});
+  await require('./verify-motion.cjs')(page,scratch);
   const target=await page.locator('.task-card[data-task]').first().boundingBox();
   console.log('Drop target:',await page.evaluate(([x,y])=>({flags:_wails.flags,target:document.elementFromPoint(x,y)?.closest('[data-file-drop-target]')?.outerHTML.slice(0,350)}),[target.x+50,target.y+70]));
   await page.evaluate(([file,x,y])=>_wails.handlePlatformFileDrop([file],Math.round(x),Math.round(y)),[dropFile,target.x+50,target.y+70]);
@@ -34,11 +44,12 @@ const fs=require('node:fs/promises'),path=require('node:path'),net=require('node
   await page.waitForFunction(()=>state.snapshot.shelf?.some(f=>f.suggestion?.category==='reference'));assert.equal(analysisRequests,1);
   await page.locator('[data-nav="settings"]').click();await page.locator('#appearance-palette').waitFor();
   await page.locator('#appearance-palette').selectOption('nord');assert.equal(await page.evaluate(()=>appearance.get().palette),'nord');
-  await page.evaluate(()=>appearance.update({theme:'light'}));await page.screenshot({path:path.join(scratch,'settings-light.png')});
+  await page.evaluate(()=>appearance.update({theme:'light',palette:'magpie'}));await page.waitForTimeout(150);await page.screenshot({path:path.join(scratch,'settings-light.png')});
   assert.equal(await page.locator('[data-theme-mode="light"]').first().getAttribute('aria-pressed'),'true');
+  await checkChrome(false,0xf6f4f4);
   await page.setViewportSize({width:390,height:844});await page.screenshot({path:path.join(scratch,'phone-light.png')});
   assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));await page.setViewportSize({width:1280,height:860});
-  await page.evaluate(()=>appearance.update({theme:'dark',palette:'tokyo-night'}));
+  await page.evaluate(()=>appearance.update({theme:'dark',palette:'magpie'}));
   const quickCall=(method,args=[])=>page.evaluate(([method,args])=>wails.Call.ByName('github.com/NekoYume517/jiaojianbox/internal/gui.Desktop.Invoke',method,args),[method,args]);
   await quickCall('quickShow');await new Promise(r=>setTimeout(r,800));
   const info=await quickCall('quickInfo');assert.equal(info.width,360);assert.equal(info.height,460);assert(info.visible);

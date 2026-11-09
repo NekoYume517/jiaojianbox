@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -94,7 +95,7 @@ func (d *Desktop) startDragWatch() {
 	if _, err := os.Stat(d.bridge("drag-watch.exe")); err != nil {
 		return
 	}
-	cmd := exec.CommandContext(d.ctx, d.bridge("drag-watch.exe"))
+	cmd := exec.CommandContext(d.ctx, d.bridge("drag-watch.exe"), "--parent-pid", strconv.Itoa(os.Getpid()))
 	hideProcess(cmd)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {

@@ -101,5 +101,16 @@ func cursorWithin(window *application.WebviewWindow) bool {
 		return false
 	}
 	ok, _, _ = user32.NewProc("GetWindowRect").Call(uintptr(handle), uintptr(unsafe.Pointer(&rect)))
-	return ok != 0 && point.X >= rect.Left && point.X < rect.Right && point.Y >= rect.Top && point.Y < rect.Bottom
+	if ok == 0 || point.X < rect.Left || point.X >= rect.Right || point.Y < rect.Top || point.Y >= rect.Bottom {
+		return false
+	}
+	// Explorer may cover our rectangle. Only suppress collection when the
+	// actual window under the pointer belongs to the main window.
+	packed := uintptr(uint64(uint32(point.X)) | uint64(uint32(point.Y))<<32)
+	hit, _, _ := user32.NewProc("WindowFromPoint").Call(packed)
+	if hit == 0 {
+		return false
+	}
+	root, _, _ := user32.NewProc("GetAncestor").Call(hit, 2) // GA_ROOT
+	return root == uintptr(handle)
 }

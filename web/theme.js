@@ -1,12 +1,13 @@
 /* 在样式表前应用外观，避免深色模式启动时先闪过白色页面。 */
 (() => {
   const key = 'jjb-appearance';
-  const defaults = { theme: 'system', density: 'compact', textSize: 'normal', palette: 'tokyo-night' };
+  const defaults = { theme: 'system', density: 'compact', textSize: 'normal', palette: 'magpie', designVersion: 2 };
   const normalize = input => ({
     theme: ['system', 'light', 'dark'].includes(input?.theme) ? input.theme : defaults.theme,
     density: ['comfortable', 'compact'].includes(input?.density) ? input.density : defaults.density,
     textSize: ['normal', 'large'].includes(input?.textSize) ? input.textSize : defaults.textSize,
-    palette: ['tokyo-night', 'nord', 'graphite'].includes(input?.palette) ? input.palette : defaults.palette,
+    palette: input?.designVersion === 2 && ['magpie', 'tokyo-night', 'nord', 'graphite'].includes(input?.palette) ? input.palette : defaults.palette,
+    designVersion: 2,
   });
   let settings;
   let writes=Promise.resolve(), pending=0;
@@ -19,6 +20,20 @@
   };
   const labels = { light: '浅色', dark: '深色', system: '跟随系统' };
   const svg = mode => `<svg viewBox="0 0 24 24" aria-hidden="true">${shapes[mode]}</svg>`;
+  let chromeFrame = 0, lastChrome = '';
+  function tintChrome() {
+    if (!window.desktop?.tintTitlebar || !document.getElementById('workspace')) return;
+    cancelAnimationFrame(chromeFrame);
+    chromeFrame = requestAnimationFrame(() => {
+      const canvas = document.createElement('canvas'), context = canvas.getContext('2d', {willReadFrequently:true});
+      context.fillStyle = getComputedStyle(document.body).backgroundColor;
+      context.fillRect(0,0,1,1);
+      const [r,g,b] = context.getImageData(0,0,1,1).data;
+      const key = [r,g,b].join(','); if (key === lastChrome) return;
+      lastChrome = key;
+      window.desktop.tintTitlebar({r,g,b,dark:.2126*r+.7152*g+.0722*b<128}).catch(() => { if(lastChrome === key) lastChrome = ''; });
+    });
+  }
   function paint() {
     const resolved = settings.theme === 'system' ? query.matches ? 'dark' : 'light' : settings.theme;
     document.documentElement.dataset.theme = resolved;
@@ -38,6 +53,8 @@
     for (const [id, name] of [['appearance-density', 'density'], ['appearance-text-size', 'textSize'], ['appearance-palette', 'palette']]) {
       const input = document.getElementById(id); if (input) input.value = settings[name];
     }
+    window.uiMotion?.syncSegments();
+    tintChrome();
     return resolved;
   }
   async function update(patch) {

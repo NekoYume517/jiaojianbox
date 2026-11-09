@@ -11,3 +11,29 @@
 0.2.0 私人构建包含 SnowLuma 2.1.1（原始运行时、native/client、Node；EULA.md 和 PRIVACY.md 位于 resources/runtime/snowluma）、CPython 3.13（LICENSE.txt 随包）、数据库专用 wechatauto-replica 1.2.9 衍生模块（Apache-2.0，LICENSE/NOTICE 随模块）以及 Python wheel 许可证元数据。读取模块保留原 db.py，替换包初始化和 logger，以移除 UI 自动化依赖。未包含用户配置或聊天数据。
 
 Apache ECharts 6.1.0 / zrender：Apache-2.0。ECharts 本地脚本与 LICENSE、NOTICE 位于 web/vendor，离线可用。图片预处理使用 Pillow（许可随服务端依赖分发），只用于给支持图片的模型准备尺寸受限、无元数据的图像，上传原件不改变。
+
+## Magpie theme reference
+
+Palette, component motion and Windows native title bar handling adapted from yetone/magpie (internal/gui/assets/app.css, app.js, mainwindow.go, titletint_windows.go), revision b1e8eb15a668bbccfcd46977c75602ceaa4d66b3.
+
+MIT License
+
+Copyright (c) 2026 yetone
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.

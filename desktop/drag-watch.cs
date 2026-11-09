@@ -3,6 +3,7 @@ using System.Text;
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
 using System.Windows.Forms;
+using System.Diagnostics;
 
 // Out-of-context accessibility hook. No Explorer injection and no file-content reads.
 class DragWatch {
@@ -24,11 +25,20 @@ class DragWatch {
   if(evt==0x8001||evt==0x8003){if(images.Remove(hwnd)&&!Held())Emit(false);return;}
   if((evt==0x8000||evt==0x8002)&&IsDragImage(hwnd)){images.Add(hwnd);if(Held())Emit(true);}
  }
- [STAThread]static void Main(){
+ [STAThread]static void Main(string[] args){
+  Process parent=null;int parentId;
+  if(args.Length==2&&args[0]=="--parent-pid"&&int.TryParse(args[1],out parentId)){
+   try{parent=Process.GetProcessById(parentId);if(parent.HasExited)return;}catch{return;}
+  }
+  DateTime parentCheck=DateTime.MinValue;
   IntPtr hook=SetWinEventHook(0x8000,0x8003,IntPtr.Zero,callback,0,0,2); // OUTOFCONTEXT | SKIPOWNPROCESS
   if(hook==IntPtr.Zero){Console.Error.WriteLine("WinEvent hook unavailable");Environment.Exit(1);}
   var timer=new Timer();timer.Interval=32;
-  timer.Tick+=(sender,args)=>{
+  timer.Tick+=(sender,eventArgs)=>{
+   if(parent!=null&&DateTime.UtcNow>=parentCheck){
+    parentCheck=DateTime.UtcNow.AddSeconds(1);
+    try{if(parent.HasExited){Application.Exit();return;}}catch{Application.Exit();return;}
+   }
    if((GetAsyncKeyState(27)&0x8000)!=0||!Held()){Emit(false);return;}
    if(!dragging){var image=FindWindow("SysDragImage",null);if(image!=IntPtr.Zero&&IsWindowVisible(image)){images.Add(image);Emit(true);}}
   };

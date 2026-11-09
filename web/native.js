@@ -18,7 +18,7 @@
     ready.then(runtime => { unsubscribe = runtime.Events.On(name, event => callback(event.data)); if (cancelled) unsubscribe?.(); });
     return () => { cancelled = true; unsubscribe?.(); };
   };
-  window.desktop = Object.fromEntries(['offlineStart', 'quickGet', 'quickSet', 'launcherGet', 'launcherSet', 'get', 'set', 'remove', 'platform', 'getAppearance', 'setAppearance', 'discoverQQ', 'connectQQ', 'sourceDiagnostics', 'debugQQ', 'selectRuntime', 'external', 'listConversations', 'startCollector', 'stopCollector', 'collectorState', 'download', 'quickState', 'quickChoose', 'quickNote', 'quickHide', 'window'].map(name => [name, (...args) => invoke(name, ...args)]));
+  window.desktop = Object.fromEntries(['offlineStart', 'quickGet', 'quickSet', 'launcherGet', 'launcherSet', 'get', 'set', 'remove', 'platform', 'getAppearance', 'setAppearance', 'tintTitlebar', 'discoverQQ', 'connectQQ', 'sourceDiagnostics', 'debugQQ', 'selectRuntime', 'external', 'listConversations', 'startCollector', 'stopCollector', 'collectorState', 'download', 'quickState', 'quickChoose', 'quickNote', 'quickHide', 'window'].map(name => [name, (...args) => invoke(name, ...args)]));
   Object.assign(window.desktop, { nativeFileDrop: true, onAppearance: callback => on('appearance-updated', callback), onCollector: callback => on('collector-state', callback), on });
   const discover = desktop.discoverQQ;
   desktop.discoverQQ = async (preferred,quiet=false) => {
@@ -52,8 +52,6 @@
   document.addEventListener('DOMContentLoaded', () => {
     document.documentElement.dataset.runtime = 'wails'; markTargets();
     const view = document.getElementById('view'); if (view) new MutationObserver(markTargets).observe(view, { childList: true, subtree: true });
-    const header = document.getElementById('desktop-titlebar');
-    if (header) { const controls = document.createElement('div'); controls.className = 'window-controls'; for (const [action, label, glyph] of [['minimize', '最小化', '—'], ['maximize', '最大化或还原', '□'], ['hide', '关闭到托盘', '×']]) { const button = document.createElement('button'); button.type = 'button'; button.title = label; button.setAttribute('aria-label', label); button.textContent = glyph; button.onclick = () => desktop.window(action); controls.append(button); } header.append(controls); }
   });
   on('native-drop-complete', () => { if (typeof refresh === 'function') refresh(); });
   on('native-status', message => { if (typeof toast === 'function') toast(message); });
