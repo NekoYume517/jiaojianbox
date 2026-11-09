@@ -5,7 +5,7 @@
   const elements = Object.fromEntries([
     'authorize-login', 'authorize-consent', 'authorize-complete', 'authorize-login-submit',
     'authorize-username', 'authorize-password', 'authorize-code', 'authorize-account',
-    'authorize-approve', 'authorize-deny', 'authorize-status', 'authorize-error',
+    'authorize-approve', 'authorize-deny', 'authorize-status', 'authorize-error', 'authorize-complete-text',
   ].map(id => [id, document.getElementById(id)]));
 
   const showStatus = message => { elements['authorize-status'].textContent = message || ''; };
