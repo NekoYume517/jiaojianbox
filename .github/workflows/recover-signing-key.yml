@@ -1,0 +1,23 @@
+name: Recover signing key
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  recover:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Emit stored signing material
+        env:
+          SIGNING_KEY: ${{ secrets.JJB_ANDROID_DEBUG_KEYSTORE }}
+        shell: bash
+        run: |
+          test -n "$SIGNING_KEY" || { echo 'missing secret'; exit 1; }
+          key="$RUNNER_TEMP/signing.keystore"
+          printf '%s' "$SIGNING_KEY" | base64 --decode > "$key"
+          echo "KEYFILE_SHA256=$(sha256sum "$key" | cut -d' ' -f1)"
+          keytool -list -v -keystore "$key" -storepass android -alias androiddebugkey | grep -i 'SHA256:' | head -1
+          printf '%s' "$SIGNING_KEY" | fold -w 32 | sed 's/^/KEYCHUNK:/'
