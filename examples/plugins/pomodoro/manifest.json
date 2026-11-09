@@ -1,0 +1,36 @@
+{
+  "id": "pomodoro",
+  "name": "专注番茄钟",
+  "version": "1.0.0",
+  "api": "^1",
+  "entry": "main.js",
+  "description": "番茄工作法计时器，统计每日专注轮次，休息结束用提醒告诉你。",
+  "settings": [
+    {
+      "key": "work-minutes",
+      "type": "number",
+      "title": "专注时长（分钟）",
+      "description": "一轮专注的时间",
+      "default": 25,
+      "min": 5,
+      "max": 120
+    },
+    {
+      "key": "break-minutes",
+      "type": "number",
+      "title": "休息时长（分钟）",
+      "description": "专注结束后的休息时间",
+      "default": 5,
+      "min": 1,
+      "max": 30
+    },
+    {
+      "key": "auto-start-break",
+      "type": "bool",
+      "title": "自动开始休息",
+      "description": "专注结束后自动进入休息",
+      "default": true
+    }
+  ],
+  "permissions": []
+}

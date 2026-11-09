@@ -148,6 +148,8 @@ host.patch(window, 'fetch', wrapped);  // 运行期补丁，停用时自动还�
 
 `examples/plugins/task-agent/` 是完整示例：声明 schema 设置（工具命令、参数模板、超时）、`tasks:read` 与 `tools:exec` 权限，`task.created` 触发时把任务上下文交给本机命令行工具，并把结果写回执行记录。
 
+`examples/plugins/pomodoro/` 是界面型示例（专注番茄钟）：注册侧边栏页面与命令面板命令，用 schema 设置时长，用插件数据持久化计时状态与每日统计，切页或重启后自动恢复。
+
 ## 4. 升级与调试
 
 - 插件卡片显示契约版本、触发器、页面数量和权限声明；设置区按 schema 生成表单，无 schema 时保留 JSON 编辑器。

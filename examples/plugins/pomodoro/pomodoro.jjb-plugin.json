@@ -1,0 +1,41 @@
+{
+  "manifest": {
+    "id": "pomodoro",
+    "name": "专注番茄钟",
+    "version": "1.0.0",
+    "api": "^1",
+    "entry": "main.js",
+    "description": "番茄工作法计时器，统计每日专注轮次，休息结束用提醒告诉你。",
+    "settings": [
+      {
+        "key": "work-minutes",
+        "type": "number",
+        "title": "专注时长（分钟）",
+        "description": "一轮专注的时间",
+        "default": 25,
+        "min": 5,
+        "max": 120
+      },
+      {
+        "key": "break-minutes",
+        "type": "number",
+        "title": "休息时长（分钟）",
+        "description": "专注结束后的休息时间",
+        "default": 5,
+        "min": 1,
+        "max": 30
+      },
+      {
+        "key": "auto-start-break",
+        "type": "bool",
+        "title": "自动开始休息",
+        "description": "专注结束后自动进入休息",
+        "default": true
+      }
+    ],
+    "permissions": []
+  },
+  "files": {
+    "main.js": "const ring = { work: '#7aa2f7', break: '#9ece6a' };\n\nexport function activate(host) {\n  // 计时状态存在插件数据里，切页或重启应用都能恢复。\n  let timer = { mode: 'idle', endAt: 0, remain: 0 };\n  let view = null;\n\n  async function load() {\n    const saved = await host.getData('timer').catch(() => null);\n    if (saved && saved.mode === 'running') {\n      if (Date.now() >= saved.endAt) {\n        await finish(saved.mode);\n        return;\n      }\n      timer = saved;\n    } else if (saved) {\n      timer = { mode: 'paused', endAt: 0, remain: saved.remain || 0, from: saved.from || 'work' };\n    }\n    draw();\n  }\n\n  async function persist() {\n    await host.setData('timer', timer).catch(() => {});\n  }\n\n  function minutes(setting) {\n    const value = Number(host.config[setting]);\n    return Number.isFinite(value) && value > 0 ? value : setting === 'work-minutes' ? 25 : 5;\n  }\n\n  function start(mode) {\n    timer = { mode: 'running', from: mode, endAt: Date.now() + minutes(mode === 'break' ? 'break-minutes' : 'work-minutes') * 60000 };\n    persist();\n    draw();\n  }\n\n  function pause() {\n    if (timer.mode !== 'running') return;\n    timer = { mode: 'paused', from: timer.from, remain: Math.max(0, timer.endAt - Date.now()) };\n    persist();\n    draw();\n  }\n\n  async function resume() {\n    if (timer.mode !== 'paused') return;\n    timer = { mode: 'running', from: timer.from, endAt: Date.now() + timer.remain };\n    await persist();\n    draw();\n  }\n\n  function reset() {\n    timer = { mode: 'idle' };\n    persist();\n    draw();\n  }\n\n  async function finish(mode) {\n    timer = { mode: 'idle' };\n    await persist();\n    if (mode === 'work') {\n      await recordSession();\n      host.toast('专注完成，休息一下吧', { type: 'info' });\n      if (host.config['auto-start-break']) start('break');\n    } else {\n      host.toast('休息结束，开始下一轮专注', { type: 'info' });\n    }\n    draw();\n  }\n\n  async function recordSession() {\n    const day = new Date().toISOString().slice(0, 10);\n    const stats = await host.getData('stats').catch(() => null);\n    const all = stats && typeof stats === 'object' ? stats : {};\n    const list = Array.isArray(all[day]) ? all[day] : [];\n    list.push({ at: new Date().toISOString(), minutes: minutes('work-minutes') });\n    const days = Object.keys(all).sort().slice(-30);\n    const trimmed = {};\n    for (const key of days) trimmed[key] = all[key];\n    trimmed[day] = list;\n    await host.setData('stats', trimmed);\n  }\n\n  function fmt(ms) {\n    const total = Math.max(0, Math.ceil(ms / 1000));\n    return `${String(Math.floor(total / 60)).padStart(2, '0')}:${String(total % 60).padStart(2, '0')}`;\n  }\n\n  async function todayCount() {\n    const day = new Date().toISOString().slice(0, 10);\n    const stats = await host.getData('stats').catch(() => null);\n    const list = stats && Array.isArray(stats[day]) ? stats[day] : [];\n    return list.length;\n  }\n\n  function draw() {\n    if (!view) return;\n    const label = timer.mode === 'running' ? (timer.from === 'break' ? '休息中' : '专注中')\n      : timer.mode === 'paused' ? '已暂停' : '准备开始';\n    const remain = timer.mode === 'running' ? timer.endAt - Date.now() : timer.mode === 'paused' ? timer.remain : 0;\n    const color = timer.from === 'break' || timer.mode === 'running' && timer.from === 'break' ? ring.break : ring.work;\n    view.label.textContent = label;\n    view.time.textContent = timer.mode === 'idle' ? fmt(minutes('work-minutes') * 60000) : fmt(remain);\n    view.time.style.color = timer.mode === 'idle' ? 'var(--ink)' : color;\n    view.start.hidden = timer.mode === 'running';\n    view.pause.hidden = timer.mode !== 'running';\n    view.reset.hidden = timer.mode === 'idle';\n    view.ring.style.setProperty('--progress', timer.mode === 'idle' ? '0%' : '100%');\n  }\n\n  function injectStyle(container) {\n    const style = document.createElement('style');\n    style.textContent = `\n      .pomodoro-panel { display: flex; flex-direction: column; align-items: center; gap: 18px; padding: 40px 24px 32px; }\n      .pomodoro-label { font-size: 13px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }\n      .pomodoro-time { font-size: 64px; font-weight: 200; font-variant-numeric: tabular-nums; line-height: 1; letter-spacing: -0.02em; transition: color 240ms ease; }\n      .pomodoro-bar { width: min(320px, 100%); height: 3px; border-radius: 2px; background: var(--line); overflow: hidden; }\n      .pomodoro-bar::after { content: ''; display: block; height: 100%; width: var(--progress, 0%); background: var(--green); transition: width 500ms ease; }\n      .pomodoro-controls { display: flex; gap: 10px; }\n      .pomodoro-controls button[hidden] { display: none; }\n      .pomodoro-stats { font-size: 13px; color: var(--muted); }`;\n    container.append(style);\n    return style;\n  }\n\n  host.registerPage({\n    key: 'timer',\n    title: '专注',\n    icon: 'refresh',\n    mount({ container, signal }) {\n      view = {};\n      const style = injectStyle(container);\n      const card = host.ui.el('div', { class: 'panel pomodoro-panel' });\n      view.label = host.ui.el('div', { class: 'pomodoro-label' }, '准备开始');\n      view.time = host.ui.el('div', { class: 'pomodoro-time' }, '--:--');\n      view.ring = host.ui.el('div', { class: 'pomodoro-bar' });\n      view.start = host.ui.button({ label: '开始专注', kind: 'primary', onClick: () => start('work') });\n      view.pause = host.ui.button({ label: '暂停', kind: 'secondary', onClick: pause });\n      const resumeButton = host.ui.button({ label: '继续', kind: 'primary', onClick: resume });\n      view.reset = host.ui.button({ label: '重置', kind: 'secondary', onClick: reset });\n      const controls = host.ui.el('div', { class: 'pomodoro-controls' }, view.start, view.pause, resumeButton, view.reset);\n      const stats = host.ui.el('div', { class: 'pomodoro-stats' }, '今日专注：统计中');\n      card.append(view.label, view.time, view.ring, controls, stats);\n      container.append(card);\n      view.pause.hidden = view.reset.hidden = true;\n      load();\n      todayCount().then(count => { stats.textContent = `今日已完成 ${count} 轮专注`; }).catch(() => {});\n\n      const tick = setInterval(() => {\n        if (timer.mode === 'running' && Date.now() >= timer.endAt) finish(timer.from);\n        draw();\n      }, 500);\n      signal.addEventListener('abort', () => { clearInterval(tick); style.remove(); view = null; });\n    },\n  });\n\n  host.registerCommand({\n    id: 'start',\n    title: '专注：开始一轮番茄钟',\n    icon: 'refresh',\n    run: () => { start('work'); host.navigate('plugin:pomodoro:timer'); },\n  });\n}\n"
+  }
+}
