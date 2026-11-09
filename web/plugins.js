@@ -7,7 +7,7 @@
   const running = new Map(), pages = new Map(), commands = new Map(), services = new Map();
   const pageSelection = new Map(), pluginErrors = new Map(), brokenPages = new Map();
   let entries = [], identity = '', syncing = false, lastSync = 0, pageCleanup, epoch = 0;
-  let previousTasks = new Map(), renderedPage = '', renderedSelection = '';
+  let previousTasks = new Map(), renderedPage = '', renderedSelection = '', renderedTarget = null;
   const key = () => state.session ? state.session.server + '|' + state.session.user_id : '';
   const errorText = error => String(error?.message || error);
   const matches = (pattern, route) => pattern === '*' || pattern === '/api/*' ? /^\/api(?:\/|$)/.test(route) :
@@ -118,7 +118,7 @@
     page.button.remove();
     pages.delete(id);
     brokenPages.delete(id);
-    if (renderedPage === id) { renderedPage = ''; renderedSelection = ''; }
+    if (renderedPage === id) { renderedPage = ''; renderedSelection = ''; renderedTarget = null; }
   }
 
   function dispose(plugin) {
@@ -167,7 +167,7 @@
     button.title = part.title;
     button.innerHTML = icon(part.icon || 'connect');
     button.append(document.createTextNode(part.title));
-    document.querySelector('.sidebar [data-nav=settings]').before(button);
+    document.querySelector('.sidebar nav').append(button);
     const page = { ...part, key: partKey, owner: plugin.id, button };
     pages.set(id, page);
     const remove = () => removePage(id);
@@ -482,12 +482,13 @@
     if (typeof page.mount === 'function' || typeof page.render === 'function') {
       const mount = validateMount(page.mount || page.render);
       const selection = currentPage + ':direct';
-      if (renderedPage === currentPage && renderedSelection === selection) return;
+      if (renderedPage === currentPage && renderedSelection === selection && renderedTarget?.isConnected) return;
       renderedPage = currentPage;
       renderedSelection = selection;
       pageCleanup?.();
       pageCleanup = null;
       const target = surface(container, page);
+      renderedTarget = target;
       try {
         const result = mount({ container: target, root: container, host: plugin.host, page, config: plugin.config, signal: plugin.controller.signal });
         mountResult(target, result, { page: currentPage, selection, owner }, cleanup => pageCleanup = cleanup);
@@ -501,12 +502,13 @@
     if (!child) return;
     pageSelection.set(currentPage, child.id);
     const selection = currentPage + ':' + child.id;
-    if (renderedPage === currentPage && renderedSelection === child.id) return;
+    if (renderedPage === currentPage && renderedSelection === child.id && renderedTarget?.isConnected) return;
     renderedPage = currentPage;
     renderedSelection = child.id;
     pageCleanup?.();
     pageCleanup = null;
     const target = surface(container, child.chrome === false ? child : page);
+    renderedTarget = target;
     const mount = validateMount(child.mount || child.render);
     try {
       const result = mount({ container: target, root: container, host: plugin.host, page, child, config: plugin.config, signal: plugin.controller.signal });

@@ -13,7 +13,8 @@ const assert = require('node:assert/strict');
   const port = socket.address().port;
   await new Promise(resolve => socket.close(resolve));
   const base = 'http://127.0.0.1:' + port;
-  const server = spawn(path.join(root, 'work/JiaojianBox-UISmoke.exe'), ['-data', scratch, '-listen', '127.0.0.1:' + port], { windowsHide: true, stdio: 'ignore', env: { ...process.env, JJB_REQUIRE_EMAIL: 'false' } });
+  const serverBinary = process.env.JJB_VERIFY_SERVER || path.join(root, 'work/JiaojianBox-UISmoke.exe');
+  const server = spawn(serverBinary, ['-data', scratch, '-listen', '127.0.0.1:' + port], { windowsHide: true, stdio: 'ignore', env: { ...process.env, JJB_REQUIRE_EMAIL: 'false' } });
   let browser;
   try {
     for (let i = 0; i < 100; i++) {
@@ -175,6 +176,11 @@ const assert = require('node:assert/strict');
     await page.locator('[data-nav=plugins]').click();
     await page.locator('.plugin-row[data-plugin-id="demo"]').waitFor();
     await page.waitForTimeout(300);
+    await page.getByTitle('单页入口').click();
+    await page.getByText('插件单页已挂载', { exact: true }).waitFor();
+    // Regression: a direct page must re-mount after the view was rebuilt.
+    await page.locator('[data-nav=plugins]').click();
+    await page.locator('.plugin-row[data-plugin-id="demo"]').waitFor();
     await page.getByTitle('单页入口').click();
     await page.getByText('插件单页已挂载', { exact: true }).waitFor();
     await page.locator('[data-nav=plugins]').click();
