@@ -22,10 +22,14 @@
   }
   function renderShelf(){
     const list=document.querySelector('#files-page-list');if(list)list.innerHTML=fileRows();
-    $('#shelf-count').textContent=files().filter(f=>!f.task_id&&f.category==='inbox').length;
+    const pending=files().filter(f=>!f.task_id&&f.category==='inbox').length;
+    const count=$('#shelf-count'),handle=$('#shelf-handle');
+    count.textContent=pending;count.hidden=!pending;
+    const label=pending?`打开文件收纳，${pending} 条待整理`:'打开文件收纳';
+    handle.title=label;handle.setAttribute('aria-label',label);
     if(!open)return;
-    const pending=[...uploadingFiles.values()].map(f=>`<article class="shelf-file"><strong>${esc(f.name)}</strong><p class="helper">${esc(f.status)}</p></article>`).join('');
-    $('#shelf-files').innerHTML=pending+files().map(file=>{
+    const pendingUploads=[...uploadingFiles.values()].map(f=>`<article class="shelf-file"><strong>${esc(f.name)}</strong><p class="helper">${esc(f.status)}</p></article>`).join('');
+    $('#shelf-files').innerHTML=pendingUploads+files().map(file=>{
       const task=state.snapshot.tasks.find(t=>t.id===file.task_id);const suggestion=file.suggestion;
       const draft=drafts.get(file.id);
       return `<article class="shelf-file"><div class="shelf-file-title"><span class="file-icon" data-ext="${esc(file.name.split('.').pop().toLowerCase().slice(0,5))}">${esc(file.name.split('.').pop().slice(0,5))}</span><div><strong>${esc(file.name)}</strong><small>${bytes(file.size)} · ${task?'已放入待办':esc(categories[file.category]||'待整理')}</small></div><button class="icon-button" data-shelf-download="${file.id}" aria-label="下载 ${esc(file.name)}">↓</button></div>${task?`<div class="shelf-task-label">${icon('check')}<span>${esc(task.title)} · ${file.kind==='receipt'?'提交回执':'待办材料'}</span></div>`:''}${analyzing.has(file.id)?window.liveAnalysis?.markup('file:'+file.id)||'<p class="helper">AI 正在匹配待办…</p>':suggestion?`<p class="shelf-reason">${esc(suggestion.reason)}</p>${window.liveAnalysis?.performance(suggestion)||''}${suggestion.task_id||suggestion.evidence?`<button class="shelf-badge" data-shelf-why="${file.id}">${icon('search')}依据原文 · 点击展开</button><div class="shelf-evidence" data-evidence="${file.id}">${esc(suggestion.evidence||'模型未返回原文依据')}</div><p class="helper">${suggestion.image_analyzed?'图片内容参与分析':suggestion.extracted_characters+' 字'} · 置信度 ${Math.round((suggestion.confidence||0)*100)}%</p>`:`<p class="helper">${esc(suggestion.extraction)}${suggestion.image_analyzed?'':' · '+suggestion.extracted_characters+' 字'}</p>`}`:'<p class="helper">可以交给 AI 判断，也可以直接选择归属。</p>'}${controls(file)}<div class="detail-actions"><button class="secondary" data-shelf-assign="${file.id}" ${draft?'':'disabled'}>应用</button><button class="plain-button" data-shelf-analyze="${file.id}" ${analyzing.has(file.id)||draft?'disabled':''}>${suggestion?'重新判断':'AI 整理'}</button>${draft?`<button class="plain-button" data-shelf-cancel="${file.id}">取消修改</button>`:''}${file.task_id?`<button class="plain-button" data-shelf-undo="${file.id}">取消关联</button>`:''}<button class="plain-button" data-shelf-delete="${file.id}">删除</button></div></article>`;

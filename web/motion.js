@@ -61,7 +61,7 @@
       highlight = document.createElement('span'); highlight.className = 'nav-highlight';
       highlight.setAttribute('aria-hidden', 'true'); highlight.hidden = true; nav.prepend(highlight);
       nav.classList.add('motion-nav');
-      new ResizeObserver(() => snapNav(targetRect())).observe(nav);
+      new ResizeObserver(() => { if(!frame)snapNav(targetRect()); }).observe(nav);
     }
     const to = targetRect();
     nav.querySelectorAll('[data-nav]').forEach(b => {
@@ -213,12 +213,41 @@
   document.addEventListener('scroll', () => hideMenu(), { capture: true, passive: true });
   document.addEventListener('visibilitychange', () => { hideMenu(); syncNavigation(true); });
   reduced.addEventListener('change', () => {
+    document.querySelectorAll('#view,.nav-sub,.nav-sub button,.subnav-highlight').forEach(el=>el.getAnimations().forEach(a=>a.cancel()));
+    if(reduced.matches){document.documentElement.classList.remove('theming');document.querySelectorAll('.nav-sub.leaving').forEach(el=>el.remove());}
     syncNavigation(true); syncSegments(); hideMenu();
     document.querySelectorAll('dialog[open]').forEach(d => {
       const entry = dialogs.get(d); if (entry?.phase === 'closing') closeImmediately(d); else stop(entry);
     });
   });
   function closeImmediately(d) { const entry = dialogs.get(d); stop(entry); dialogs.delete(d); d.close(); }
-  window.uiMotion = { openDialog, closeDialog, syncNavigation, syncSegments, hideMenu };
+  const pageAnimations = new WeakMap();
+  function transitionPage(element, subsection = false) {
+    pageAnimations.get(element)?.cancel();
+    if (keyboard || reduced.matches || document.hidden) return;
+    // Magpie side-nav pages fade; inner content swaps enter from 2px below.
+    const animation=play(element,subsection?[{opacity:.5,transform:'translateY(2px)'},{opacity:1,transform:'none'}]:[{opacity:0},{opacity:1}],{duration:subsection?220:240,easing:'cubic-bezier(.2,.8,.2,1)'});
+    if(animation)pageAnimations.set(element,animation);
+  }
+  function revealSubnavigation(element) {
+    if (keyboard || reduced.matches || document.hidden) return;
+    const css=getComputedStyle(element),navEase='cubic-bezier(.32,.72,0,1)';
+    element.classList.add('moving');
+    const animation=play(element,[{height:'0px',marginTop:'0px',marginBottom:'0px',opacity:0},{height:element.offsetHeight+'px',marginTop:css.marginTop,marginBottom:css.marginBottom,opacity:1}],{duration:300,easing:navEase});
+    animation?.finished.catch(()=>{}).finally(()=>element.classList.remove('moving'));
+    element.querySelectorAll('button').forEach((row,i)=>play(row,[{opacity:0,transform:'translateY(-6px)'},{opacity:1,transform:'none'}],{duration:260,delay:40+Math.min(i,12)*20,easing:navEase,fill:'backwards'}));
+    play(element.querySelector('.subnav-highlight'),[{opacity:0},{opacity:1}],{duration:200,delay:80,fill:'backwards'});
+  }
+  function hideSubnavigation(element) {
+    element.inert=true;element.classList.add('leaving');element.removeAttribute('id');
+    element.querySelectorAll('[role=tab]').forEach(row=>{row.removeAttribute('data-subnav');row.tabIndex=-1;});
+    if(keyboard||reduced.matches||document.hidden){element.remove();return;}
+    const css=getComputedStyle(element);element.classList.add('moving');
+    const animation=play(element,[{height:element.offsetHeight+'px',marginTop:css.marginTop,marginBottom:css.marginBottom,opacity:1},{height:'0px',marginTop:'0px',marginBottom:'0px',opacity:0}],{duration:240,easing:'cubic-bezier(.32,.72,0,1)',fill:'forwards'});
+    if(!animation){element.remove();return;}
+    const deadline=setTimeout(()=>element.remove(),320);
+    animation.finished.catch(()=>{}).finally(()=>{clearTimeout(deadline);element.remove();});
+  }
+  window.uiMotion = { openDialog, closeDialog, syncNavigation, syncSegments, hideMenu, transitionPage, revealSubnavigation, hideSubnavigation };
   syncSegments();
 })();

@@ -1,9 +1,9 @@
 /* Canonical contract: docs/ui-motion-standard.md. Never imported by quick.html. */
 :root{--motion-ease:cubic-bezier(.2,.8,.2,1);--motion-out:cubic-bezier(.23,1,.32,1)}
 .stagger>.stagger-item{opacity:1;transform:none;animation:none!important}
-button{transition:background-color 150ms var(--motion-ease),color 150ms var(--motion-ease),border-color 150ms var(--motion-ease),transform 140ms var(--motion-out)}
-button:active:not(:disabled){transform:scale(.97)}
-button.icon-button:active:not(:disabled){transform:scale(.93)}
+button{transition:background-color 160ms var(--motion-ease),color 160ms var(--motion-ease),border-color 160ms var(--motion-ease),transform 160ms var(--motion-ease)}
+button:active:not(:disabled){transform:scale(.96)}
+button.icon-button:active:not(:disabled){transform:scale(.9)}
 :root:not([data-input-method=pointer]) button:active:not(:disabled){transform:none}
 .sidebar nav button:active:not(:disabled),.cmdk-item:active:not(:disabled),[role=menuitem]:active:not(:disabled){transform:none}
 .sidebar nav.motion-nav{position:relative;isolation:isolate}
@@ -25,3 +25,6 @@ dialog::backdrop{backdrop-filter:none;-webkit-backdrop-filter:none}
 .cmdk{animation:none}
 @media(max-width:600px){.nav-highlight{background:var(--soft);box-shadow:none}.action-menu button{min-height:42px}}
 @media(prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important;scroll-behavior:auto!important}}
+
+.nav-sub.moving{overflow:hidden}
+html.theming,html.theming *,html.theming *::before,html.theming *::after{transition:background-color 250ms var(--motion-ease),color 250ms var(--motion-ease),border-color 250ms var(--motion-ease),box-shadow 250ms var(--motion-ease)!important}

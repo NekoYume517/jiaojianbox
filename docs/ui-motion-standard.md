@@ -1,6 +1,6 @@
 # 交件箱前端动效标准
 
-状态：规范生效。主工作区与服务端页面必须使用这套契约；新建界面、改组件或补动效时先读本文件。基准实现在 `web/motion.css` 和 `web/motion.js`，验收基线在 `scripts/verify-motion.cjs`。
+状态：规范生效。动效基准直接采用 [yetone/magpie](https://github.com/yetone/magpie/tree/b1e8eb15a668bbccfcd46977c75602ceaa4d66b3/internal/gui/assets) 的 `app.css` 与 `app.js`（MIT），版本固定为 `b1e8eb15a668bbccfcd46977c75602ceaa4d66b3`。主工作区与服务端页面必须使用这套契约；新建界面、改组件或补动效时先读本文件。基准实现在 `web/motion.css` 和 `web/motion.js`，验收基线在 `scripts/verify-motion.cjs`。
 
 ## 1. 目标与范围
 
@@ -29,8 +29,8 @@
 
 | 类型 | 时长 | 说明 |
 |---|---:|---|
-| 悬停、选中、焦点态 | 100–150ms | 只过渡颜色、边框、不透明度 |
-| 按压 | 140ms | `scale(.97)`；图标按钮 `scale(.93)` |
+| 悬停、选中、焦点态 | 160ms | 只过渡颜色、边框、不透明度 |
+| 按压 | 160ms | `scale(.96)`；图标按钮 `scale(.9)` |
 | 行或小面板进出场 | 180–240ms | 只用于增量数据或异步结果 |
 | 抽屉 | 210ms | 与空间位置变化配合 |
 | 菜单 | 开 240ms，关 150ms | 始终锚定触发按钮 |
@@ -38,8 +38,14 @@
 | 弹窗开 | 440ms | 使用弹簧曲线；键盘或 reduced motion 时直接显示 |
 | 弹窗关 | 220ms；遮罩 180ms | 必须有安全完成期限 |
 | 导航弹簧 | 420ms 周期，0.84 阻尼 | 只作用于一个共享高亮块 |
+| 二级导航展开 / 收起 | 300ms / 240ms | `cubic-bezier(.32,.72,0,1)`，高度与上下边距折叠 |
+| 二级条目进入 | 260ms | 上移 6px 起步；40ms 初始延迟，每项再加 20ms |
+| 二级选中条 | 240ms | `cubic-bezier(.23,1,.32,1)`；按下即可移动 |
+| 主页面切换 | 240ms | 侧栏模式只淡入，保持标题及工具区域位置稳定 |
+| 二级内容切换 | 220ms | 从 `opacity:.5`、`translateY(2px)` 进入 |
+| 主题切换 | 250ms | 只交叉过渡颜色、边框和阴影；首次渲染直接显示 |
 
-只允许动画 `transform`、`opacity`、`clip-path` 和 SVG `stroke-dashoffset`。悬停/选中可以用 100–150ms 过渡 `color`、`background-color`、`border-color`。禁止动画 `width`、`height`、`top`、`left`、`margin`、`padding`。共享高亮块是唯一例外：由 `motion.js` 的 rAF/WAAPI 控制，并且只操作一个装饰元素。
+只允许动画 `transform`、`opacity`、`clip-path` 和 SVG `stroke-dashoffset`。悬停/选中使用 160ms 过渡 `color`、`background-color`、`border-color`。禁止动画 `width`、`height`、`top`、`left`、`margin`、`padding`。例外直接沿用 Magpie：共享高亮块允许尺寸变化；二级导航折叠允许动画 `height`、`margin-top` 和 `margin-bottom`，条目必须 `flex:none` 保持自身尺寸。该例外仅限侧栏子目录，不能用于业务列表或快捷收集。
 
 禁止使用毛玻璃、视差、光晕、粒子、大面积颜色渐变和超过一个循环动画。`backdrop-filter` 一律关闭。
 
@@ -55,6 +61,8 @@
 
 按钮复用全局按压规则。导航、菜单项、命令面板项不缩放，只改背景。禁用按钮不播放动画。所有可交互元素保留 `:focus-visible`；行级可点元素使用 `cursor:default`，选中态和键盘焦点承担可点暗示。
 
+页面根节点和主布局容器不显示铺满窗口的焦点外框；按钮和表单控件仍保留键盘焦点。命令面板的搜索框固定在结果列表上方，用面板边框表达焦点，避免输入框外轮廓被裁成横线。页面禁止横向溢出；文件表格等需要横向滚动的区域使用自身滚动容器。
+
 ### 导航和分段控件
 
 导航使用一个 `nav-highlight`，分段控件使用一个 `segment-highlight`。真实按钮保留语义状态：激活项由 `active` 和 `aria-current` 表示，高亮块只是 `aria-hidden` 装饰。
@@ -69,6 +77,16 @@
 - 动画运行时再次快速点击。
 
 目标矩形必须始终收敛到当前激活按钮，误差小于 0.5px。布局变化或动画失败也不能留下错位高亮。
+
+### 二级导航、页面和信息密度
+
+设置、统计和消息来源的子页放到当前主项下面，缩进 16px、内边距 8px、1px 竖线；只使用一条中性的子项选中背景。子项使用 `tablist/tab`、`aria-selected` 和 roving tabindex，方向键可以切换。
+
+二级目录展开/收起按上表执行。收起时立刻 `inert` 并移出键盘路径；快速连点清掉旧的退出目录，旧动画不得删除新目录。改变信息密度、字体或窗口尺寸时，共享高亮立即对齐目标。键盘和减少动态效果模式不播放入场动画。
+
+主页面切换只淡入，内部二级内容使用 2px 位移；重复点击当前项不重播。表单节点保持原位，切换子页不得丢弃草稿。切换主页面从顶部开始，同页刷新保留滚动位置。手机宽度把二级导航放到页面顶部的分段栏。
+
+密度统一使用 `workspace.css` 的令牌：舒适导航至少 40px，紧凑至少 32px；表单和面板同步调整留白，文字大小独立使用 rem。手机主要操作和输入框至少 44px。快捷收集维持独立固定尺寸，不导入主界面导航和动效。
 
 ### 弹窗
 
@@ -128,6 +146,9 @@ ECharts 的 `animation` 保持 `false`。数据刷新通过重绘和文本状态
 7. reduced motion 下没有 `running` 动画。
 8. 390px 视口内菜单完整落在视口内。
 9. 全流程没有页面错误。
+10. 舒适 / 紧凑 / 大字切换后导航、输入框和面板实际变化，高亮保持对齐；360–1280px 下侧栏宽度与主内容预留一致。
+11. 二级目录快速切换后没有残留退出节点；表单草稿、方向键、命令面板焦点回退正常。
+12. 桌面用 `scripts/verify-native.cjs`，浏览器用 `scripts/verify-browser-experience.cjs`；两者复用 `verify-motion.cjs` 与 `verify-experience.cjs`。
 
 不满足其中任何一条，不能合并。
 

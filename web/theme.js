@@ -26,7 +26,8 @@
     cancelAnimationFrame(chromeFrame);
     chromeFrame = requestAnimationFrame(() => {
       const canvas = document.createElement('canvas'), context = canvas.getContext('2d', {willReadFrequently:true});
-      context.fillStyle = getComputedStyle(document.body).backgroundColor;
+      // Sample the destination palette, not an intermediate crossfade frame.
+      context.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--canvas').trim();
       context.fillRect(0,0,1,1);
       const [r,g,b] = context.getImageData(0,0,1,1).data;
       const key = [r,g,b].join(','); if (key === lastChrome) return;
@@ -34,8 +35,14 @@
       window.desktop.tintTitlebar({r,g,b,dark:.2126*r+.7152*g+.0722*b<128}).catch(() => { if(lastChrome === key) lastChrome = ''; });
     });
   }
+  let themeTimer;
   function paint() {
     const resolved = settings.theme === 'system' ? query.matches ? 'dark' : 'light' : settings.theme;
+    const layoutChanged=document.documentElement.dataset.density!==settings.density||document.documentElement.dataset.textSize!==settings.textSize;
+    const root=document.documentElement;
+    if(root.dataset.theme&&(root.dataset.theme!==resolved||root.dataset.palette!==settings.palette)&&!matchMedia('(prefers-reduced-motion:reduce)').matches){
+      clearTimeout(themeTimer);root.classList.add('theming');themeTimer=setTimeout(()=>root.classList.remove('theming'),250);
+    }
     document.documentElement.dataset.theme = resolved;
     document.documentElement.dataset.themeMode = settings.theme;
     document.documentElement.dataset.density = settings.density;
@@ -54,6 +61,7 @@
       const input = document.getElementById(id); if (input) input.value = settings[name];
     }
     window.uiMotion?.syncSegments();
+    if(layoutChanged)window.uiMotion?.syncNavigation(true);
     tintChrome();
     return resolved;
   }

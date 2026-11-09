@@ -353,7 +353,9 @@ function render() {
   const focus = active?.id;
   const selection = active?.selectionStart;
   const viewKey = state.page + ':' + (state.taskId || '');
-  const scrollTop = $('#view').dataset.viewKey === viewKey ? $('#view').scrollTop : 0;
+  const sameView = $('#view').dataset.viewKey === viewKey;
+  const scrollTop = sameView ? $('#view').scrollTop : 0;
+  const pageScroll = sameView ? document.scrollingElement.scrollTop : 0;
   const titles = { files:'文件', inbox: '通知', tasks: '待办', sources: '消息来源', settings: '设置',stats:'统计' };
   $('#breadcrumb').textContent = titles[state.page];
   $$('[data-nav]').forEach(button => button.classList.toggle('active', button.dataset.nav === state.page));
@@ -368,6 +370,8 @@ function render() {
   window.appearance?.refresh(); window.experience?.decorate(state.page);
   if(state.session?.mode!=='offline')window.jjbAdmin?.mount();
   window.accountUI?.mount();
+  window.pageNavigation?.sync();
+  document.scrollingElement.scrollTop = pageScroll;
   if ($('#source-filter')) $('#source-filter').value = state.source;
   if ($('#category-filter')) $('#category-filter').value = state.category;
   if ($('#task-filter')) $('#task-filter').value = state.taskFilter;
@@ -386,7 +390,9 @@ function renderDetailOnly(messageId) {
   hydrateIcons();
 }
 async function navigate(page) {
+  const changed=state.page!==page;
   state.page = page; state.search = ''; state.taskId = null; render();
+  if(changed)uiMotion.transitionPage($('#view'));
   if (page === 'settings') await loadLlm();
   if(page === 'sources')window.experience?.detect(false);
 }
@@ -736,23 +742,31 @@ const CMDK_COMMANDS = [
   { icon: 'refresh', label: '立即同步', kbd: 'R', run: () => { refresh(); flushOutbox(); } },
   { icon: 'connect', label: '打开文件收纳框', kbd: 'F', run: () => window.shelf?.show() },
 ];
-let cmdkOpen = false, cmdkItems = [];
+let cmdkOpen = false, cmdkItems = [], cmdkReturnFocus = null;
 function cmdkFilter(query) {
   const q = query.trim().toLowerCase();
   return !q ? CMDK_COMMANDS : CMDK_COMMANDS.filter(c => c.label.toLowerCase().includes(q) || c.kbd.toLowerCase().includes(q));
 }
 function cmdkRender() {
   const list = $('#cmdk-list');
-  list.innerHTML = cmdkItems.length ? cmdkItems.map((c, i) => `<button class="cmdk-item ${i === state.cmdkIndex ? 'active' : ''}" data-cmdk="${i}" role="option"><span data-icon="${c.icon}"></span>${esc(c.label)}<kbd>${c.kbd}</kbd></button>`).join('') : '<div class="cmdk-empty">没有匹配的命令</div>';
+  list.innerHTML = cmdkItems.length ? cmdkItems.map((c, i) => `<button class="cmdk-item ${i === state.cmdkIndex ? 'active' : ''}" id="cmdk-option-${i}" data-cmdk="${i}" role="option" tabindex="-1" aria-selected="${i === state.cmdkIndex}"><span data-icon="${c.icon}"></span>${esc(c.label)}<kbd>${c.kbd}</kbd></button>`).join('') : '<div class="cmdk-empty">没有匹配的命令</div>';
   hydrateIcons();
-  list.querySelector('.cmdk-item.active')?.scrollIntoView({ block: 'nearest' });
+  const active = list.querySelector('.cmdk-item.active');
+  if(active){
+    $('#cmdk-input').setAttribute('aria-activedescendant',active.id);
+    const item=active.getBoundingClientRect(),bounds=list.getBoundingClientRect();
+    if(item.top<bounds.top)list.scrollTop-=bounds.top-item.top;
+    else if(item.bottom>bounds.bottom)list.scrollTop+=item.bottom-bounds.bottom;
+  }else $('#cmdk-input').removeAttribute('aria-activedescendant');
 }
 function cmdkShow() {
-  if (!state.session) return;
+  if (!state.session || cmdkOpen || document.querySelector('dialog[open]')) return;
+  cmdkReturnFocus=document.activeElement;
+  $('#workspace').inert=true;document.body.classList.add('cmdk-open');
   cmdkOpen = true; state.cmdkIndex = 0; cmdkItems = cmdkFilter('');
   $('#cmdk-input').value = ''; $('#cmdk-backdrop').hidden = false; cmdkRender(); $('#cmdk-input').focus();
 }
-function cmdkHide() { cmdkOpen = false; $('#cmdk-backdrop').hidden = true; }
+function cmdkHide() { cmdkOpen = false; $('#cmdk-backdrop').hidden = true; $('#workspace').inert=false;document.body.classList.remove('cmdk-open');if(cmdkReturnFocus?.isConnected)cmdkReturnFocus.focus({preventScroll:true}); }
 function cmdkExecute(index) { const item = cmdkItems[index]; if (!item) return; cmdkHide(); item.run(); }
 document.addEventListener('keydown', event => {
   if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') {
@@ -760,6 +774,7 @@ document.addEventListener('keydown', event => {
     return cmdkOpen ? cmdkHide() : cmdkShow();
   }
   if (cmdkOpen) {
+    if (event.key === 'Tab') { event.preventDefault();$('#cmdk-input').focus();return; }
     if (event.key === 'Escape') { event.preventDefault(); return cmdkHide(); }
     if (event.key === 'ArrowDown') { event.preventDefault(); state.cmdkIndex = Math.min(state.cmdkIndex + 1, cmdkItems.length - 1); return cmdkRender(); }
     if (event.key === 'ArrowUp') { event.preventDefault(); state.cmdkIndex = Math.max(state.cmdkIndex - 1, 0); return cmdkRender(); }

@@ -53,5 +53,20 @@ module.exports = async function verifyMotion(page, scratch) {
   await page.setViewportSize({width:390,height:844});
   await trigger.click(); const bounds=await menu.boundingBox(); assert(bounds.x>=0&&bounds.x+bounds.width<=390);
   await page.keyboard.press('Escape'); await page.setViewportSize({width:1280,height:860});
+  // The command input stays above its scrolling results without a clipped focus ring.
+  await page.keyboard.press('Control+k'); await page.locator('#cmdk-input').waitFor({state:'visible'});
+  assert.equal(await page.locator('#cmdk-input').evaluate(el=>getComputedStyle(el).outlineStyle),'none');
+  assert.equal(await page.locator('#cmdk-input').evaluate(el=>getComputedStyle(el).boxShadow),'none');
+  await page.locator('#cmdk-list').evaluate(el=>el.scrollTop=el.scrollHeight);
+  const searchBounds=await page.locator('#cmdk-input').boundingBox(),listBounds=await page.locator('#cmdk-list').boundingBox();
+  assert(listBounds.y>=searchBounds.y+searchBounds.height-.5);
+  await page.keyboard.press('Escape');
+  assert.equal(await page.locator('#shelf-handle').evaluate(el=>getComputedStyle(el).position),'relative');
+  for(const width of [1264,820,390]){
+    await page.setViewportSize({width,height:830});await page.locator('[data-nav="sources"]').click();
+    assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),'sources must not overflow horizontally');
+  }
+  await page.setViewportSize({width:1280,height:860});await page.locator('[data-nav="tasks"]').click();
+  await require('./verify-experience.cjs')(page,scratch);
   console.log('Motion: first render, spring retargeting, press feedback, interrupted dialogs, menu re-entry/keyboard, reduced motion and narrow bounds passed.');
 };
