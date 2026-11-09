@@ -1,0 +1,15 @@
+{
+  "manifest": {
+    "id": "contract-copy",
+    "name": "页面文案改写演示",
+    "version": "1.0.0",
+    "api": "^1",
+    "entry": "main.js",
+    "description": "用 onRender 钩子改写插件管理页的能力卡片文案，停用即恢复。",
+    "settings": [],
+    "permissions": []
+  },
+  "files": {
+    "main.js": "export function activate(host) {\n  host.onRender('plugins', () => {\n    const card = document.querySelector('.plugin-overview .plugin-capabilities');\n    if (!card || card.dataset.copyRewritten === '1') return;\n    const copy = [\n      ['自由开发', '本条文案由示例插件改写：onRender 在每次页面渲染后重新生效。'],\n      ['标题也能改', '插件可以读取并替换管理页的任何节点，包括这一格的标题。'],\n      ['停用即恢复', '停用或删除本插件后，下次渲染自动还原官方文案。'],\n    ];\n    [...card.children].forEach((item, index) => {\n      const entry = copy[index];\n      if (!entry) return;\n      const strong = item.querySelector('strong');\n      const span = item.querySelector('span');\n      if (strong) strong.textContent = entry[0];\n      if (span) span.textContent = entry[1];\n    });\n    card.dataset.copyRewritten = '1';\n  });\n}\n"
+  }
+}

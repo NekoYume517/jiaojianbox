@@ -1,0 +1,10 @@
+{
+  "id": "contract-copy",
+  "name": "页面文案改写演示",
+  "version": "1.0.0",
+  "api": "^1",
+  "entry": "main.js",
+  "description": "用 onRender 钩子改写插件管理页的能力卡片文案，停用即恢复。",
+  "settings": [],
+  "permissions": []
+}
