@@ -12,8 +12,14 @@ android {
         applicationId = "com.jiaojianbox.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 10
-        versionName = "0.6.3"
+        versionCode = 11
+        versionName = "0.6.4"
+    }
+    signingConfigs {
+        getByName("debug") {
+            // CI explicitly selects the stable key instead of AGP's SDK-dependent default.
+            System.getenv("JJB_ANDROID_KEYSTORE_PATH")?.let { storeFile = file(it) }
+        }
     }
     buildTypes {
         release {

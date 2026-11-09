@@ -44,11 +44,11 @@ jobs:
         env:
           JJB_ANDROID_DEBUG_KEYSTORE: ${{ secrets.JJB_ANDROID_DEBUG_KEYSTORE }}
         run: |
-          mkdir -p "$HOME/.android"
-          if [ -n "$JJB_ANDROID_DEBUG_KEYSTORE" ]; then
-            printf '%s' "$JJB_ANDROID_DEBUG_KEYSTORE" | base64 --decode > "$HOME/.android/debug.keystore"
-            chmod 600 "$HOME/.android/debug.keystore"
-          fi
+          test -n "$JJB_ANDROID_DEBUG_KEYSTORE" || { echo 'Stable Android signing key is required'; exit 1; }
+          key="$RUNNER_TEMP/jiaojianbox-debug.keystore"
+          printf '%s' "$JJB_ANDROID_DEBUG_KEYSTORE" | base64 --decode > "$key"
+          chmod 600 "$key"
+          echo "JJB_ANDROID_KEYSTORE_PATH=$key" >> "$GITHUB_ENV"
 
       - name: Build debug APK
         working-directory: android
@@ -62,6 +62,15 @@ jobs:
         run: |
           mkdir -p dist
           cp android/app/build/outputs/apk/debug/app-debug.apk "dist/JiaojianBox-${RELEASE_TAG}-android-debug.apk"
+
+      - name: Verify APK uses the stable signing key
+        shell: bash
+        run: |
+          expected=$(keytool -exportcert -keystore "$JJB_ANDROID_KEYSTORE_PATH" -storepass android -alias androiddebugkey | sha256sum | cut -d' ' -f1)
+          signer=$(find "$ANDROID_HOME/build-tools" -name apksigner | sort -V | tail -1)
+          actual=$("$signer" verify --print-certs android/app/build/outputs/apk/debug/app-debug.apk | sed -n 's/^Signer #1 certificate SHA-256 digest: //p')
+          test "$actual" = "$expected" || { echo 'APK signing certificate mismatch'; exit 1; }
+          echo "Verified APK signing certificate: $actual"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -144,7 +153,8 @@ jobs:
           tag_name: ${{ inputs.release_tag || github.ref_name }}
           body_path: docs/releases/${{ inputs.release_tag || github.ref_name }}.md
           generate_release_notes: true
-          overwrite_files: false
+          overwrite_files: true
+          draft: false
           files: |
             dist/JiaojianBox-Setup-*-x64.exe
             dist/JiaojianBox-*-android-debug.apk
