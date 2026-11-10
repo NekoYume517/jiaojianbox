@@ -46,11 +46,12 @@
   };
   function markTargets() {
     document.body?.setAttribute('data-file-drop-target', '');
-    document.querySelectorAll('.drop-zone,[data-task],.shelf-drop').forEach(target => {
+    document.querySelectorAll('.drop-zone,[data-task],.shelf-drop,.plugin-board').forEach(target => {
       target.setAttribute('data-file-drop-target', '');
       const task = target.dataset.task || (target.classList.contains('drop-zone') && typeof state !== 'undefined' ? state.taskId : '');
       if (task) target.dataset.nativeTask = task; else delete target.dataset.nativeTask;
-      target.dataset.nativeKind = target.querySelector('#receipt-upload') ? 'receipt' : 'material';
+      target.dataset.nativeKind = target.classList.contains('plugin-board') ? 'plugin'
+        : target.querySelector('#receipt-upload') ? 'receipt' : 'material';
     });
   }
   document.addEventListener('DOMContentLoaded', () => {

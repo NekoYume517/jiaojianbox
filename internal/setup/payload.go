@@ -286,6 +286,8 @@ func Install(ctx context.Context, p *Payload, target string, desktop, startMenu 
 	if err != nil {
 		return "", err
 	}
+	progress(1, "正在结束旧版本进程")
+	stopInstalledProcesses(target)
 	parent := filepath.Dir(target)
 	if err = os.MkdirAll(parent, 0755); err != nil {
 		return "", err
@@ -381,6 +383,7 @@ func RemoveInstalled(target string) error {
 	if json.Unmarshal(raw, &manifest) != nil || len(manifest.Files) == 0 {
 		return errors.New("安装清单无效")
 	}
+	stopInstalledProcesses(absolute)
 	for name := range manifest.Files {
 		if !safeRelative(name) {
 			return errors.New("安装清单路径无效")

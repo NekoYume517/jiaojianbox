@@ -3,6 +3,7 @@ package gui
 import (
 	"bufio"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -169,6 +170,10 @@ func (d *Desktop) quickNote(value Object) (any, error) {
 	return d.jsonRequest("POST", "/api/messages", Object{"source": "manual", "account_id": session["user_id"], "conversation_id": "quick", "conversation_name": "随手记", "external_id": store.ID(), "sender_name": session["username"], "text": text, "sent_at": time.Now().Format(time.RFC3339Nano)})
 }
 func (d *Desktop) acceptFiles(paths []string, target, kind string, quick bool) {
+	if kind == "plugin" {
+		d.acceptPluginPackages(paths)
+		return
+	}
 	if quick {
 		d.mu.Lock()
 		d.pinned = true
@@ -260,6 +265,57 @@ func (d *Desktop) acceptFiles(paths []string, target, kind string, quick bool) {
 		} else {
 			d.emit("native-status", "已添加到指定待办")
 		}
+	}
+}
+
+func (d *Desktop) acceptPluginPackages(paths []string) {
+	accepted := 0
+	for _, path := range paths {
+		info, err := os.Stat(path)
+		if err != nil || !info.Mode().IsRegular() {
+			d.emit("native-status", "插件包无法读取："+filepath.Base(path))
+			continue
+		}
+		if info.Size() > pluginPackageLimit {
+			d.emit("native-status", "插件包过大（上限 16 MB）："+filepath.Base(path))
+			continue
+		}
+		var result Object
+		var importErr error
+		switch {
+		case strings.EqualFold(filepath.Ext(path), ".zip"):
+			raw, readErr := os.ReadFile(path)
+			if readErr != nil {
+				d.emit("native-status", "插件 ZIP 无法读取："+readErr.Error())
+				continue
+			}
+			result, importErr = d.PluginImportArchive(base64.StdEncoding.EncodeToString(raw))
+		case strings.EqualFold(filepath.Ext(path), ".json"):
+			raw, readErr := os.ReadFile(path)
+			if readErr != nil {
+				d.emit("native-status", "插件 JSON 无法读取："+readErr.Error())
+				continue
+			}
+			var pkg Object
+			if json.Unmarshal(raw, &pkg) != nil {
+				d.emit("native-status", "插件 JSON 无效："+filepath.Base(path))
+				continue
+			}
+			result, importErr = d.PluginImport(pkg)
+		default:
+			d.emit("native-status", "插件只支持 JSON 或 ZIP："+filepath.Base(path))
+			continue
+		}
+		if importErr != nil {
+			d.emit("native-status", importErr.Error())
+			continue
+		}
+		accepted++
+		d.emit("native-status", fmt.Sprintf("插件已导入（修订 %d），启用后在本机运行", int(store.Number(result, "revision"))))
+	}
+	d.emit("native-drop-complete", nil)
+	if accepted > 0 {
+		d.emit("quick-refresh", nil)
 	}
 }
 

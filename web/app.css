@@ -108,7 +108,7 @@ nav .count{margin-left:auto;font-size:0.82rem;font-variant-numeric:tabular-nums;
 .message-row.entering{animation:row-enter 240ms var(--ease-out)}
 @keyframes row-flash{0%,45%{background:var(--selected)}100%{background:transparent}}
 @keyframes row-enter{from{opacity:0;transform:translateY(-7px)}to{opacity:1;transform:none}}
-.row-actions{position:absolute;right:9px;top:9px;display:flex;gap:5px;opacity:0;pointer-events:none;transition:opacity 100ms var(--ease-out);background:var(--panel);border:1px solid var(--line);border-radius:7px;padding:3px;box-shadow:0 2px 9px var(--shadow-color)}
+.row-actions{position:absolute;right:9px;top:9px;z-index:2;display:flex;gap:5px;opacity:0;pointer-events:none;transition:opacity 100ms var(--ease-out);background:var(--panel);border:1px solid var(--line);border-radius:7px;padding:3px;box-shadow:0 2px 9px var(--shadow-color)}
 .row-actions button{font-size:.74rem;padding:4px 9px;border-radius:5px;color:var(--text);min-height:26px}
 .row-actions button:hover{background:var(--hover);color:var(--green)}
 .row-actions button.danger-hover:hover{color:var(--red-text)}

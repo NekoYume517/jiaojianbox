@@ -5,9 +5,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"os"
+	"sync"
+	"sync/atomic"
+	"io"
 	"os/exec"
 	"path/filepath"
 	"regexp"
@@ -19,6 +21,12 @@ import (
 )
 
 const updaterRepo = "NekoYume517/jiaojianbox"
+
+const updateThreadCount = 4
+
+var updateTransport = http.DefaultTransport.(*http.Transport).Clone()
+
+var updateClient = &http.Client{Transport: updateTransport}
 
 var updateDefaults = Object{"autoCheck": true, "intervalMinutes": 360.0, "autoDownload": false, "channel": "stable"}
 
@@ -132,7 +140,7 @@ func (d *Desktop) fetchLatestRelease() (Object, error) {
 		return nil, err
 	}
 	request.Header.Set("Accept", "application/vnd.github+json")
-	response, err := http.DefaultClient.Do(request)
+	response, err := updateClient.Do(request)
 	if err != nil {
 		return nil, err
 	}
@@ -233,76 +241,19 @@ func (d *Desktop) UpdateDownload() (Object, error) {
 	d.updateMu.Lock()
 	d.updateProgress = nil
 	d.updateMu.Unlock()
-	d.setUpdateState(Object{"status": "downloading", "progress": 0, "received": 0, "total": 0, "bytesPerSecond": 0, "etaSeconds": 0})
+	d.setUpdateState(Object{"status": "downloading", "multiThread": false, "progress": 0, "received": 0, "total": 0, "bytesPerSecond": 0, "etaSeconds": 0})
 	destination := filepath.Join(d.downloadsDir(), fmt.Sprintf("JiaojianBox-Setup-%s-x64.exe", latest))
 	partial := destination + ".partial"
 	go func() {
 		defer cancel()
-		err := func() error {
-			request, requestErr := http.NewRequestWithContext(ctx, http.MethodGet, assetURL, nil)
-			if requestErr != nil {
-				return requestErr
-			}
-			response, doErr := http.DefaultClient.Do(request)
-			if doErr != nil {
-				return doErr
-			}
-			defer response.Body.Close()
-			if response.StatusCode != http.StatusOK {
-				return fmt.Errorf("下载更新失败（HTTP %d）", response.StatusCode)
-			}
-			file, createErr := os.Create(partial)
-			if createErr != nil {
-				return createErr
-			}
-			defer file.Close()
-			total := response.ContentLength
-			written := int64(0)
-			buffer := make([]byte, 512<<10)
-			lastEmit := time.Now()
-			lastWritten := int64(0)
-			for {
-				read, readErr := response.Body.Read(buffer)
-				if read > 0 {
-					if _, writeErr := file.Write(buffer[:read]); writeErr != nil {
-						return writeErr
-					}
-					written += int64(read)
-					if time.Since(lastEmit) >= 400*time.Millisecond {
-						seconds := time.Since(lastEmit).Seconds()
-						speed := float64(written-lastWritten) / seconds
-						progress := float64(0)
-						eta := float64(0)
-						if total > 0 {
-							progress = float64(written) / float64(total)
-							if speed > 0 {
-								eta = float64(total-written) / speed
-							}
-						}
-						lastEmit = time.Now()
-						lastWritten = written
-						snapshot := Object{"received": written, "total": total, "progress": progress, "bytesPerSecond": speed, "etaSeconds": eta}
-						d.updateMu.Lock()
-						d.updateProgress = snapshot
-						d.updateMu.Unlock()
-						d.emit("update-download", snapshot)
-					}
-				}
-				if readErr != nil {
-					if readErr == io.EOF {
-						break
-					}
-					return readErr
-				}
-				if ctx.Err() != nil {
-					return ctx.Err()
-				}
-			}
-			if total > 0 && written != total {
-				return fmt.Errorf("下载不完整（%d / %d）", written, total)
-			}
-			return file.Close()
-		}()
+		total, ranged, probeErr := probeUpdateDownload(ctx, assetURL)
+		var err error
+		if probeErr == nil && ranged && total > 0 {
+			d.setUpdateState(Object{"multiThread": true})
+			err = downloadUpdateRanged(d, ctx, assetURL, partial, total)
+		} else {
+			err = downloadUpdateStream(ctx, assetURL, partial, d)
+		}
 		if err != nil {
 			os.Remove(partial)
 			if ctx.Err() != nil {
@@ -319,6 +270,222 @@ func (d *Desktop) UpdateDownload() (Object, error) {
 		d.setUpdateState(Object{"status": "downloaded", "path": destination, "progress": 1})
 	}()
 	return d.UpdateGet(), nil
+}
+
+func (d *Desktop) setDownloadProgress(received, total int64) {
+	speed := float64(0)
+	eta := float64(0)
+	progress := float64(0)
+	if total > 0 {
+		progress = float64(received) / float64(total)
+	}
+	d.updateMu.Lock()
+	speed = store.Number(d.updateProgress, "bytesPerSecond")
+	eta = store.Number(d.updateProgress, "etaSeconds")
+	d.updateProgress = Object{"received": received, "total": total, "progress": progress, "bytesPerSecond": speed, "etaSeconds": eta}
+	d.updateMu.Unlock()
+	d.emit("update-download", d.updateProgress)
+}
+
+func probeUpdateDownload(ctx context.Context, url string) (int64, bool, error) {
+	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
+	request, err := http.NewRequestWithContext(ctx, http.MethodHead, url, nil)
+	if err != nil {
+		return 0, false, err
+	}
+	response, err := updateClient.Do(request)
+	if err != nil {
+		return 0, false, err
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		return 0, false, fmt.Errorf("下载更新失败（HTTP %d）", response.StatusCode)
+	}
+	return response.ContentLength, strings.EqualFold(response.Header.Get("Accept-Ranges"), "bytes") && response.ContentLength > 64<<10, nil
+}
+
+func monitorUpdateProgress(desktop *Desktop, ctx context.Context, received *atomic.Int64, total int64) func() {
+	started := time.Now()
+	lastAt := started
+	lastReceived := int64(0)
+	stop := make(chan struct{})
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		ticker := time.NewTicker(200 * time.Millisecond)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-stop:
+				return
+			case <-ticker.C:
+				value := received.Load()
+				now := time.Now()
+				seconds := now.Sub(lastAt).Seconds()
+				speed := float64(value-lastReceived) / seconds
+				eta := float64(0)
+				if total > 0 && speed > 0 {
+					eta = float64(total-value) / speed
+				}
+				desktop.updateMu.Lock()
+				desktop.updateProgress = Object{"received": value, "total": total, "progress": float64(value) / float64(total), "bytesPerSecond": speed, "etaSeconds": eta}
+				snapshot := cloneObject(desktop.updateProgress)
+				desktop.updateMu.Unlock()
+				desktop.emit("update-download", snapshot)
+				lastAt, lastReceived = now, value
+			}
+		}
+	}()
+	return func() {
+		close(stop)
+		<-done
+		if ctx.Err() == nil {
+			value := received.Load()
+			speed := float64(value) / time.Since(started).Seconds()
+			eta := float64(0)
+			if speed > 0 {
+				eta = float64(total-value) / speed
+			}
+			desktop.updateMu.Lock()
+			desktop.updateProgress = Object{"received": value, "total": total, "progress": float64(value) / float64(total), "bytesPerSecond": speed, "etaSeconds": eta}
+			desktop.updateMu.Unlock()
+			desktop.emit("update-download", desktop.updateProgress)
+		}
+	}
+}
+
+func downloadUpdateRanged(desktop *Desktop, ctx context.Context, url string, destination string, total int64) error {
+	file, err := os.OpenFile(destination, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0600)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	if err = file.Truncate(total); err != nil {
+		return err
+	}
+	chunk := (total + int64(updateThreadCount) - 1) / int64(updateThreadCount)
+	received := &atomic.Int64{}
+	monitor := monitorUpdateProgress(desktop, ctx, received, total)
+	errs := make(chan error, updateThreadCount)
+	workers := &sync.WaitGroup{}
+	for index := 0; index < updateThreadCount; index++ {
+		start := int64(index) * chunk
+		end := start + chunk - 1
+		if end >= total {
+			end = total - 1
+		}
+		workers.Add(1)
+		go func(start, end int64) {
+			defer workers.Done()
+			request, requestErr := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+			if requestErr != nil {
+				errs <- requestErr
+				return
+			}
+			request.Header.Set("Range", fmt.Sprintf("bytes=%d-%d", start, end))
+			response, doErr := updateClient.Do(request)
+			if doErr != nil {
+				errs <- doErr
+				return
+			}
+			defer response.Body.Close()
+			if response.StatusCode != http.StatusPartialContent {
+				errs <- fmt.Errorf("下载更新失败（HTTP %d，分段请求不受支持）", response.StatusCode)
+				return
+			}
+			buffer := make([]byte, 256<<10)
+			offset := start
+			for {
+				read, readErr := response.Body.Read(buffer)
+				if read > 0 {
+					if _, writeErr := file.WriteAt(buffer[:read], offset); writeErr != nil {
+						errs <- writeErr
+						return
+					}
+					offset += int64(read)
+					received.Add(int64(read))
+				}
+				if readErr != nil {
+					if readErr == io.EOF || offset > end {
+						if offset != end+1 {
+							errs <- fmt.Errorf("下载分段不完整（%d / %d）", offset-start, end-start+1)
+						}
+						return
+					}
+					errs <- readErr
+					return
+				}
+				if ctx.Err() != nil {
+					errs <- ctx.Err()
+					return
+				}
+			}
+		}(start, end)
+	}
+	workers.Wait()
+	monitor()
+	close(errs)
+	for err = range errs {
+		if err != nil {
+			return err
+		}
+	}
+	if received.Load() != total {
+		return fmt.Errorf("下载不完整（%d / %d）", received.Load(), total)
+	}
+	return file.Close()
+}
+
+func downloadUpdateStream(ctx context.Context, url string, destination string, desktop *Desktop) error {
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return err
+	}
+	response, err := updateClient.Do(request)
+	if err != nil {
+		return err
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		return fmt.Errorf("下载更新失败（HTTP %d）", response.StatusCode)
+	}
+	file, err := os.Create(destination)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	total := response.ContentLength
+	received := &atomic.Int64{}
+	monitor := monitorUpdateProgress(desktop, ctx, received, total)
+	buffer := make([]byte, 512<<10)
+	var readErr error
+	for {
+		var read int
+		read, readErr = response.Body.Read(buffer)
+		if read > 0 {
+			if _, writeErr := file.Write(buffer[:read]); writeErr != nil {
+				monitor()
+				return writeErr
+			}
+			received.Add(int64(read))
+		}
+		if readErr != nil {
+			break
+		}
+		if ctx.Err() != nil {
+			monitor()
+			return ctx.Err()
+		}
+	}
+	monitor()
+	if readErr != nil && readErr != io.EOF {
+		return readErr
+	}
+	if total > 0 && received.Load() != total {
+		return fmt.Errorf("下载不完整（%d / %d）", received.Load(), total)
+	}
+	return file.Close()
 }
 
 func (d *Desktop) UpdateCancel() Object {

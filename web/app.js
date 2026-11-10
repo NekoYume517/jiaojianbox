@@ -19,6 +19,7 @@ const paths = {
   file: '<path d="M5 3h9l5 5v13H5V3Z"/><path d="M14 3v6h5M9 13h6M9 17h5"/>',
 };
 const icon = name => `<svg viewBox="0 0 24 24" aria-hidden="true">${paths[name] || paths.file}</svg>`;
+const sizeText = size => size >= 1048576 ? (size / 1048576).toFixed(1) + ' MB' : size >= 1024 ? (size / 1024).toFixed(1) + ' KB' : size + ' B';
 const formatDate = (value, short = false) => value ? new Date(value).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', ...(short ? {} : { hour: '2-digit', minute: '2-digit' }), hour12: false }) : '未设置';
 const bytes = size => size >= 1024 ** 2 ? (size / 1024 ** 2).toFixed(1) + ' MB' : size >= 1024 ? (size / 1024).toFixed(1) + ' KB' : size + ' B';
 const states = { collecting: ['准备材料', 'orange'], ready: ['待提交', 'blue'], submitted: ['已提交', 'green'], archived: ['已归档', ''] };
@@ -72,6 +73,61 @@ async function api(route, method = 'GET', body) {
   }
   const result = await response.json();
   return window.pluginUI ? await window.pluginUI.afterResponse(request, response, result) : result;
+}
+async function apiUpload(route, body, onProgress) {
+  let request = { route, method: 'POST', body };
+  if (window.pluginUI) request = await window.pluginUI.beforeRequest(request);
+  if (!(request.body instanceof FormData)) throw new Error('上传请求必须是 FormData');
+  const result = await new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open(request.method, apiUrl(request.route));
+    xhr.responseType = 'text';
+    xhr.setRequestHeader('Authorization', 'Bearer ' + state.session.token);
+    xhr.upload.onprogress = event => onProgress?.(event);
+    xhr.onload = () => {
+      let data;
+      try { data = JSON.parse(xhr.responseText || '{}'); } catch { data = {}; }
+      if (xhr.status >= 200 && xhr.status < 300) resolve(data);
+      else {
+        const detail = data.detail;
+        const error = new Error(typeof detail === 'string' ? detail : detail?.message || (xhr.status === 413 ? '文件超过大小限制' : '上传失败'));
+        error.status = xhr.status; reject(error);
+      }
+    };
+    xhr.onerror = () => reject(new Error('网络连接中断，上传已停止'));
+    xhr.onabort = () => reject(new Error('上传已取消'));
+    xhr.send(request.body);
+  });
+  if (!window.pluginUI) return result;
+  const response = { ok: true, status: 200, url: apiUrl(request.route), json: async () => result };
+  return await window.pluginUI.afterResponse(request, response, result);
+}
+function showUploadProgress(name, value) {
+  const box = $('#upload-progress'); if (!box) return;
+  const total = Number(value.total) || 0;
+  const received = Number(value.received) || 0;
+  const progress = total ? Math.max(0, Math.min(1, received / total)) : 0;
+  const speed = Number(value.bytesPerSecond) || 0;
+  $('#upload-name').textContent = name;
+  $('#upload-percent').textContent = total ? Math.floor(progress * 100) + '%' : Math.floor(received / 1024) + ' KB';
+  $('#upload-fill').style.transform = `scaleX(${progress})`;
+  const bar = box.querySelector('[role=progressbar]');
+  bar.setAttribute('aria-valuenow', String(Math.round(progress * 100)));
+  bar.setAttribute('aria-valuetext', `${sizeText(received)} / ${sizeText(total)}`);
+  $('#upload-bytes').textContent = `${sizeText(received)} / ${sizeText(total)}`;
+  $('#upload-speed').textContent = speed > 0 ? sizeText(speed) + '/s' : '正在连接…';
+  box.hidden = false;
+}
+function hideUploadProgress() { const box = $('#upload-progress'); if (box) box.hidden = true; }
+function uploadTracker(name) {
+  let at = performance.now(), received = 0;
+  return event => {
+    const now = performance.now();
+    const elapsed = Math.max(0.05, (now - at) / 1000);
+    const speed = Math.max(0, (event.loaded - received) / elapsed);
+    at = now; received = event.loaded;
+    showUploadProgress(name, { received: event.loaded, total: event.total, bytesPerSecond: speed });
+  };
 }
 function online(value) {
   state.online = value;
@@ -574,12 +630,13 @@ async function uploadFiles(input, kind, taskId = state.taskId) {
   if(!task||task.pending)throw new Error('请先同步待办后添加文件');
   uploading = true;
   try { for (const file of files) {
-    toast('正在上传 ' + file.name);
+    showUploadProgress(file.name, { received: 0, total: file.size, bytesPerSecond: 0 });
     const form = new FormData(); form.append('file', file);
-    task = await api(`/api/tasks/${taskId}/files?version=${task.version}&kind=${kind}`, 'POST', form);
+    task = await apiUpload(`/api/tasks/${taskId}/files?version=${task.version}&kind=${kind}`, form, uploadTracker(file.name));
     const index = state.snapshot.tasks.findIndex(t => t.id === taskId); if (index >= 0) state.snapshot.tasks[index] = task;
     await refresh({ renderPage: false });
   } } finally { uploading = false; }
+  hideUploadProgress();
   cacheSoon(); render(); toast('文件已添加');
 }
 async function saveDownload(route, name) {
@@ -761,6 +818,8 @@ document.addEventListener('click', async event => {
   try {
     const nav = event.target.closest('[data-nav]'); if (nav) return await navigate(nav.dataset.nav);
     const context = event.target.closest('[data-context]'); if (context) return;
+    const rowAction = event.target.closest('[data-row-action]');
+    if (rowAction) { runAction.sourceId = rowAction.dataset.id; return await runAction(rowAction.dataset.rowAction, rowAction); }
     const row = event.target.closest('[data-message]');
     if (row) {
       // 就地切换选中态，不重建列表 DOM，保持滚动位置与勾选状态。
@@ -782,8 +841,6 @@ document.addEventListener('click', async event => {
     }
     const card = event.target.closest('[data-task]'); if (card) { state.taskId = card.dataset.task; return render(); }
     const action = event.target.closest('[data-action]'); if (action) { runAction.sourceId = null; return await runAction(action.dataset.action, action); }
-    const rowAction = event.target.closest('[data-row-action]');
-    if (rowAction) { runAction.sourceId = rowAction.dataset.id; return await runAction(rowAction.dataset.rowAction, rowAction); }
     const urgencyStep = event.target.closest('[data-set-urgency]');
     if (urgencyStep) { runAction.sourceId = urgencyStep.dataset.setUrgency; return await runAction('set-urgency'); }
     const removeReminder = event.target.closest('[data-remove-reminder]');

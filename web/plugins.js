@@ -632,7 +632,7 @@
   function page() {
     if (!window.desktop) return heading('插件', '插件只在桌面端运行。') + `<div class="panel">${empty('使用桌面版安装插件', '网页端不执行本机插件，也不保存插件代码。')}</div>`;
     const enabledCount = entries.filter(entry => entry.enabled).length;
-    return heading('桌面插件', '自由安装和开发插件。插件在本机运行，可以修改界面、访问应用 API 和调用本机工具。', `<button class="primary" id="plugin-import">${icon('plus')}导入插件</button><input type="file" id="plugin-file" accept=".json,.zip" hidden>`) +
+    return heading('桌面插件', '自由安装和开发插件。插件在本机运行，可以修改界面、访问应用 API 和调用本机工具。', `<button class="secondary" id="plugin-docs" data-external="https://github.com/NekoYume517/jiaojianbox/blob/main/docs/plugin-development.md">开发文档</button><button class="primary" id="plugin-import">${icon('plus')}导入插件</button><input type="file" id="plugin-file" accept=".json,.zip" hidden>`) +
       `<section class="panel plugin-overview"><div class="panel-head"><h3>开放桌面契约</h3><small>jjb-plugin-1 · 本机运行</small></div>
         <div class="plugin-capabilities">
           <div><strong>自由开发</strong><span>导入 JSON 或 ZIP，修改后重新导入即可升级。</span></div>
@@ -702,6 +702,11 @@
   }
 
   function mountManager() {
+    document.querySelector('#plugin-docs')?.addEventListener('click', async event => {
+      const url = event.currentTarget.dataset.external;
+      if (window.desktop) await desktop.external(url);
+      else window.open(url, '_blank', 'noopener,noreferrer');
+    });
     document.querySelector('#plugin-import')?.addEventListener('click', () => document.querySelector('#plugin-file').click());
     document.querySelector('#plugin-file')?.addEventListener('change', importInput);
   }

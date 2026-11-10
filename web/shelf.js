@@ -55,8 +55,8 @@
     if(state.page!=='files')show();if(!state.session)return;const generation=state.generation;
     for(const file of incoming){
       if(generation!==state.generation)return;const key=crypto.randomUUID();uploadingFiles.set(key,{name:file.name,status:'正在放入收纳框…'});renderShelf();
-      try{const form=new FormData();form.append('file',file);const saved=await api('/api/shelf','POST',form);if(generation!==state.generation)return;uploadingFiles.delete(key);updateFile(saved);analyzeFile(saved.id);refreshStorage();}
-      catch(error){uploadingFiles.set(key,{name:file.name,status:error.message+'，请重新拖入。'});renderShelf();}
+      try{const form=new FormData();form.append('file',file);const saved=await apiUpload('/api/shelf',form,uploadTracker(file.name));if(generation!==state.generation)return;uploadingFiles.delete(key);hideUploadProgress();updateFile(saved);analyzeFile(saved.id);refreshStorage();}
+      catch(error){hideUploadProgress();uploadingFiles.set(key,{name:file.name,status:error.message+'，请重新拖入。'});renderShelf();}
     }
   }
   $('#shelf-handle').addEventListener('click',show);$('#close-shelf').addEventListener('click',hide);backdrop.addEventListener('click',hide);

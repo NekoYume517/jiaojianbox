@@ -394,7 +394,8 @@ func (d *Desktop) Invoke(method string, args []any) (any, error) {
 				silent = true
 			}
 		}
-		return Object{"platform": platform, "version": d.version, "nativeTitlebar": true, "runtime": "wails", "silentStartup": silent}, nil
+		return Object{"platform": platform, "version": d.version, "nativeTitlebar": true, "runtime": "wails", "silentStartup": silent,
+			"pluginContract": pluginContract, "extensionPolicy": originalProgramNotice}, nil
 	case "tintTitlebar":
 		value := getObject(arg(args, 0))
 		for _, key := range []string{"r", "g", "b"} {

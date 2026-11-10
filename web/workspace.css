@@ -179,6 +179,7 @@ input:not([type=checkbox]):not([type=hidden]):not([type=file]),select{min-height
 .plugin-card:last-child{border-bottom:0}
 .plugin-board .plugin-card{transition:background-color 160ms var(--motion-ease)}
 .plugin-board .plugin-card:hover{background:color-mix(in srgb,var(--surface) 58%,transparent)}
+.plugin-board.plugin-drop-ready{background:color-mix(in srgb,var(--selected) 24%,transparent);box-shadow:inset 0 0 0 1px var(--focus)}
 .plugin-head{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:18px}
 .plugin-identity{display:flex;align-items:center;gap:14px;min-width:0}
 .plugin-mark{width:38px;height:38px;flex:none;display:grid;place-items:center;border:1px solid var(--selected-border);border-radius:8px;background:var(--surface);color:var(--green);font-size:.929rem;font-weight:650}
@@ -270,8 +271,10 @@ input:not([type=checkbox]):not([type=hidden]):not([type=file]),select{min-height
 .chart-mode>button:hover:not(:disabled),.page-tabs>button:hover:not(:disabled){color:var(--ink)}
 select.segment-source{position:absolute!important;width:1px!important;height:1px!important;min-height:0!important;min-width:0!important;margin:0!important;padding:0!important;opacity:0!important;clip-path:inset(50%)!important;pointer-events:none!important;border:0!important}
 .segment-choice{display:flex;max-width:100%;width:max-content;min-width:0;overflow-x:auto;scrollbar-width:none;overscroll-behavior-x:contain}
+.segment-choice.segment-wrap{flex-wrap:wrap;overflow:visible;width:100%;scrollbar-width:auto}
 .segment-choice::-webkit-scrollbar{display:none}
 .segment-choice>button{flex:none;min-width:0;max-width:240px;overflow:hidden;text-overflow:ellipsis}
+.segment-choice.segment-wrap>button{max-width:none}
 .form-grid>label,.appearance-fields>label{min-width:0}
 .toolbar .segment-choice{flex:0 1 auto}
 .segment-choice[aria-invalid=true]{outline:2px solid var(--red-text);outline-offset:2px}
@@ -285,6 +288,11 @@ select.segment-source{position:absolute!important;width:1px!important;height:1px
 .update-progress-track>i{display:block;height:100%;width:100%;background:var(--green);transform:scaleX(0);transform-origin:left;transition:transform 200ms linear;border-radius:99px}
 .update-progress-detail{margin-top:12px;font-size:.786rem;flex-wrap:wrap}
 .update-progress.indeterminate .update-progress-track>i{width:30%;animation:jjb-download-pending 1.6s linear infinite}
+.upload-progress{position:fixed;right:20px;bottom:24px;z-index:860;width:min(340px,calc(100vw - 32px));padding:16px;border:1px solid var(--soft-line);border-radius:10px;background:var(--panel);box-shadow:var(--shadow)}
+.upload-progress[hidden]{display:none}
+.upload-progress-heading,.upload-progress-detail{display:flex;align-items:center;justify-content:space-between;gap:12px;color:var(--muted);font-size:.8rem;font-variant-numeric:tabular-nums}
+.upload-progress-heading{margin-bottom:10px;color:var(--ink);font-size:.857143rem}
+.upload-progress-heading strong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:500}
 @keyframes jjb-download-pending{from{transform:translateX(-110%)}to{transform:translateX(450%)}}
 @media(max-width:620px){:root{--segment-height:44px}.segment-choice{width:100%}.segment-choice>button{min-height:44px;padding:8px 12px}.update-progress{padding:15px}.update-progress-detail{align-items:flex-start;gap:6px}}
 @media(prefers-reduced-motion:reduce){.update-progress-track>i{transition:none}.update-progress.indeterminate .update-progress-track>i{animation:none!important}}

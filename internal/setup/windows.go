@@ -6,12 +6,13 @@ import (
 	"context"
 	"errors"
 	"io"
-	"os"
 	"net/http"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"syscall"
+	"time"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
@@ -147,6 +148,76 @@ func DefaultDirectory() string {
 		}
 	}
 	return filepath.Join(os.Getenv("LOCALAPPDATA"), "Programs", "交件箱")
+}
+
+func underDirectory(processPath, target string) bool {
+	processPath = filepath.Clean(processPath)
+	target = filepath.Clean(target)
+	prefix := target + string(os.PathSeparator)
+	return len(processPath) > len(prefix) && strings.EqualFold(processPath[:len(prefix)], prefix)
+}
+
+func processImageName(handle windows.Handle) (string, bool) {
+	buffer := make([]uint16, 32768)
+	size := uint32(len(buffer))
+	if err := windows.QueryFullProcessImageName(handle, 0, &buffer[0], &size); err != nil {
+		return "", false
+	}
+	return windows.UTF16ToString(buffer[:size]), true
+}
+
+func terminateProcessHandle(handle windows.Handle) bool {
+	if err := windows.TerminateProcess(handle, 1); err != nil {
+		return false
+	}
+	code, err := windows.WaitForSingleObject(handle, 3000)
+	return err == nil && code == uint32(windows.WAIT_OBJECT_0)
+}
+
+// stopInstalledProcesses closes only old processes whose executable lives in
+// the selected installation. Other installations and unrelated same-name
+// processes are left alone.
+func stopInstalledProcesses(target string) {
+	target = filepath.Clean(target)
+	self, err := os.Executable()
+	if err == nil {
+		self = filepath.Clean(self)
+	} else {
+		self = ""
+	}
+	for round := 0; round < 2; round++ {
+		found := false
+		snapshot, err := windows.CreateToolhelp32Snapshot(windows.TH32CS_SNAPPROCESS, 0)
+		if err != nil {
+			return
+		}
+		entrySize := uint32(unsafe.Sizeof(windows.ProcessEntry32{}))
+		entry := windows.ProcessEntry32{Size: entrySize}
+		if err := windows.Process32First(snapshot, &entry); err == nil {
+			for {
+				processPath := ""
+				if entry.ProcessID != uint32(os.Getpid()) {
+					if handle, e := windows.OpenProcess(windows.PROCESS_QUERY_LIMITED_INFORMATION|windows.PROCESS_TERMINATE|windows.SYNCHRONIZE, false, entry.ProcessID); e == nil {
+						if name, ok := processImageName(handle); ok {
+							processPath = filepath.Clean(name)
+							if underDirectory(processPath, target) && !strings.EqualFold(processPath, self) {
+								found = terminateProcessHandle(handle) || found
+							}
+						}
+						windows.CloseHandle(handle)
+					}
+				}
+				if err := windows.Process32Next(snapshot, &entry); err != nil {
+					break
+				}
+			}
+		}
+		windows.CloseHandle(snapshot)
+		if !found {
+			return
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
 }
 
 func powershellEnv(extra ...string) []string {

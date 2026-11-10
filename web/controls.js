@@ -9,6 +9,7 @@
     if (!entry || !entry.box.isConnected) {
       const box = document.createElement('div');
       box.className = 'chart-mode segment-choice';
+      if (select.closest('.reminders-block,.statistics-controls') || select.dataset.segmentWrap === 'wrap') box.classList.add('segment-wrap');
       box.setAttribute('role', 'tablist');
       box.dataset.selectFor = select.id || select.dataset.updateInterval !== undefined && 'update-interval' || Object.entries(select.dataset).map(([key,value])=>key+':'+value).join('|') || 'choice-' + (++nextId);
       const label = select.getAttribute('aria-label') || [...(select.labels?.[0]?.childNodes || [])].filter(n => n.nodeType === 3).map(n => n.textContent).join('').trim() || '选择选项';
