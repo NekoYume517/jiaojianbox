@@ -320,6 +320,34 @@ def redact_error(text, config):
     return re.sub(r'(?i)Bearer\s+[^\s"\',]+','Bearer [redacted]',text)
 
 
+class ConfigInputError(ValueError):
+    def __init__(self, reason, **metadata):
+        super().__init__(reason)
+        self.metadata = {"reason": reason, **metadata}
+
+
+def read_config(stream):
+    # The parent always sends UTF-8 bytes. Never decode through the Windows locale.
+    source = getattr(stream, "buffer", stream)
+    raw = source.readline((8 << 20) + 1)
+    metadata = {"input_encoding": getattr(stream, "encoding", None), "input_length": len(raw)}
+    if not raw:
+        raise ConfigInputError("empty-input", **metadata)
+    if len(raw) > 8 << 20:
+        raise ConfigInputError("input-too-large", **metadata)
+    try:
+        text = raw.decode("utf-8-sig") if isinstance(raw, bytes) else raw.lstrip("\ufeff")
+    except UnicodeDecodeError as exc:
+        raise ConfigInputError("invalid-utf8", offset=exc.start, **metadata) from None
+    try:
+        config = json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise ConfigInputError("invalid-json", line=exc.lineno, column=exc.colno, **metadata) from None
+    if not isinstance(config, dict):
+        raise ConfigInputError("not-an-object", **metadata)
+    return config
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("command", choices=["run", "list-wechat", "list-qq", "self-test"])
@@ -337,12 +365,10 @@ def main():
         assert psutil.Process().pid > 0 and WeChatDB
         emit(state="ready", dependencies="ok", bundled=bool(getattr(sys, "frozen", False)))
         return
-    config = {}
     try:
-        config = json.loads(sys.stdin.readline())
-        if not isinstance(config,dict): raise ValueError("采集配置必须是 JSON 对象")
-    except (ValueError,TypeError):
-        emit(state="error",error_type="InvalidConfig",message="采集配置读取失败，请重新连接")
+        config = read_config(sys.stdin)
+    except ConfigInputError as exc:
+        emit(state="error", error_type="InvalidConfig", message="采集配置读取失败，请重新连接", config_input=exc.metadata)
         raise SystemExit(1)
     config["_wechat_cache_root"]=str(Path(args.state_dir).resolve()/"wechat-cache")
     config["_wechat_purpose"]="live" if args.command=="run" else "list"

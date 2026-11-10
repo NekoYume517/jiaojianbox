@@ -1,8 +1,10 @@
 package gui
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
+	"math"
 	"os"
 	"os/exec"
 	"strings"
@@ -47,5 +49,13 @@ func TestCollectorFailureLog(t *testing.T) {
 	d.recordCollector("run", cmd, config, failure, nil)
 	if _, err = os.Stat(d.collectorLogPath() + ".previous"); err != nil {
 		t.Fatal("log did not rotate", err)
+	}
+}
+
+func TestCollectorRejectsUnserializableConfig(t *testing.T) {
+	d := &Desktop{root: t.TempDir(), resources: t.TempDir()}
+	cmd, reader, err := d.collectorCommand(context.Background(), "run", Object{"invalid": math.NaN()})
+	if err == nil || cmd != nil || reader != nil {
+		t.Fatal("invalid configuration reached the process pipe")
 	}
 }

@@ -118,5 +118,6 @@ module.exports = async function verifyMotion(page, scratch) {
   await page.waitForTimeout(320);
   const after=await page.locator('#verify-shared-element>div').boundingBox();assert(Math.abs(after.x-before.x-100)<.5);
   await page.evaluate(()=>document.querySelector('#verify-shared-element').remove());
+  await require('./verify-controls.cjs')(page,scratch);
   console.log('Motion: first render, spring retargeting, press feedback, interrupted dialogs, menu re-entry/keyboard, reduced motion and narrow bounds passed.');
 };

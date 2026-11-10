@@ -6,7 +6,15 @@
  function paint(){paintTimer=null;document.querySelectorAll('[data-analysis-key]').forEach(el=>{const entry=entries.get(el.dataset.analysisKey);if(!entry)return;el.querySelector('[data-live-status]').textContent=description(entry);el.querySelector('[data-live-preview]').textContent=preview(entry.text);});}
  function update(key,value){const entry=entries.get(key);if(!entry)return;Object.assign(entry,value);if(value.delta)entry.text+=value.delta;if(!paintTimer)paintTimer=setTimeout(paint,80);}
  function markup(key){const entry=entries.get(key)||{stage:'starting',started:Date.now(),text:''};return '<div class="analysis-live" data-analysis-key="'+esc(key)+'" role="status"><p class="helper" data-live-status>'+esc(description(entry))+'</p><p class="analysis-live-preview" data-live-preview>'+esc(preview(entry.text))+'</p></div>';}
- function performance(value){const p=value?.performance;if(!p)return '';return '<p class="helper">首字 '+(p.first_token_ms==null||p.streamed!==true?'未记录':(p.first_token_ms/1000).toFixed(1)+' 秒')+' · 模型总耗时 '+(p.elapsed_ms/1000).toFixed(1)+' 秒 · 输入 '+p.input_chars+' 字（含规则）</p>';}
+ function performance(value){
+  const p=value?.performance;if(!p)return '';
+  const valid=n=>typeof n==='number'&&Number.isFinite(n)&&n>=0;
+  const items=[];
+  if(valid(p.first_token_ms)&&p.streamed===true)items.push('首字 '+(p.first_token_ms/1000).toFixed(1)+' 秒');
+  if(valid(p.elapsed_ms))items.push('模型总耗时 '+(p.elapsed_ms/1000).toFixed(1)+' 秒');
+  if(valid(p.input_chars))items.push('输入 '+p.input_chars.toLocaleString('zh-CN')+' 字（含规则）');
+  return items.length?'<p class="helper">'+items.join(' · ')+'</p>':'';
+ }
  async function run(route,body,key){const controller=new AbortController();entries.set(key,{stage:'starting',started:Date.now(),text:'',controller});const timeout=setTimeout(()=>controller.abort(),190000);let result,ended=false;
   try{const response=await fetch(apiUrl(route)+(route.includes('?')?'&':'?')+'stream=true',{method:'POST',redirect:'error',headers:{Authorization:'Bearer '+state.session.token,'Content-Type':'application/json'},body:JSON.stringify(body),signal:controller.signal});
    if(!response.ok){let data;try{data=await response.json();}catch{}throw Error(typeof data?.detail==='string'?data.detail:'分析请求失败（HTTP '+response.status+'）');}

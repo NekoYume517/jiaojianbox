@@ -132,6 +132,7 @@
     const status = value.status || 'idle';
     if (status === 'downloading') return value.progress ? `正在下载更新 ${Math.round(value.progress * 100)}%` : '正在下载更新…';
     if (status === 'downloaded') return `安装包已就绪（v${value.latest}），可以立即安装。`;
+    if (status === 'cancelled') return '下载已取消，可以重新下载。';
     if (status === 'error') return value.error || '更新下载失败。';
     if (status === 'available') return `发现新版本 v${value.latest}（当前 v${value.current || ''}）。`;
     if (status === 'current') return `已是最新版本 v${value.current || ''}`;
@@ -140,11 +141,11 @@
   }
 
   function renderUpdate(value, keepStatus) {
-    const launcher=document.querySelector('#settings-launcher');
-    if (!launcher) return;
-    if (value && value.received !== undefined && updateValue) value = { ...updateValue, ...value, status: 'downloading' };
+    if (value && value.received !== undefined && !value.status) value = { ...(updateValue || {}), ...value, status: 'downloading' };
     if (value) updateValue = value;
     const current = updateValue || {};
+    const launcher=document.querySelector('#settings-launcher');
+    if (!launcher) return;
     launcher.querySelectorAll('[data-update-option]').forEach(input => {
       const key = input.dataset.updateOption;
       input.checked = current[key] === undefined ? key !== 'autoDownload' : !!current[key];
@@ -153,14 +154,18 @@
     if (interval) interval.value = String(Math.max(30, Math.min(1440, Number(current.intervalMinutes) || 360)));
     const status = launcher.querySelector('[data-launch-status]');
     const actions = launcher.querySelector('[data-update-actions]');
-    if (status && !keepStatus) status.textContent = updateText(current);
+    if (status) status.textContent = updateText(current);
+    renderDownloadProgress(launcher,current);
+    const checkButton=launcher.querySelector('[data-action-check-update]');if(checkButton)checkButton.disabled=current.status==='downloading';
+    window.formControls?.schedule();
+    if (keepStatus) return;
     if (actions) {
       actions.replaceChildren();
       const state = current.status || 'idle';
-      if (state === 'available' && current.assetUrl) {
+      if (['available','cancelled','error'].includes(state) && current.assetUrl) {
         const download = document.createElement('button');
         download.className = 'secondary';
-        download.textContent = '下载更新';
+        download.textContent = state==='available'?'下载更新':'重新下载';
         download.addEventListener('click', async () => { try { await desktop.updateDownload(); } catch (error) { status.textContent = error.message; } });
         actions.append(download);
       }
@@ -186,6 +191,25 @@
     }
   }
 
+  function renderDownloadProgress(launcher,current) {
+    const box=launcher.querySelector('[data-update-progress]');if(!box)return;
+    const running=current.status==='downloading',done=current.status==='downloaded';
+    box.hidden=!running&&!done;if(box.hidden)return;
+    const received=Number(current.received)||0,total=Number(current.total)||0;
+    const progress=done?1:total>0?Math.max(0,Math.min(1,received/total)):0;
+    const size=n=>n>=1048576?(n/1048576).toFixed(1)+' MB':Math.round(n/1024)+' KB';
+    const bar=box.querySelector('[role=progressbar]');
+    box.classList.toggle('indeterminate',running&&total<=0);
+    box.querySelector('[data-update-progress-title]').textContent=done?'下载完成':'正在下载安装包';
+    box.querySelector('[data-update-percent]').textContent=done?'100%':total>0?Math.floor(progress*100)+'%':'已下载 '+size(received);
+    box.querySelector('[data-update-fill]').style.transform='scaleX('+(running&&total<=0?.3:progress)+')';
+    if(total>0||done)bar.setAttribute('aria-valuenow',String(Math.round(progress*100)));else bar.removeAttribute('aria-valuenow');
+    bar.setAttribute('aria-valuetext',done?'下载完成':size(received)+(total>0?' / '+size(total):''));
+    box.querySelector('[data-update-bytes]').textContent=done?'安装包已就绪':size(received)+(total>0?' / '+size(total):' · 正在接收');
+    const speed=Number(current.bytesPerSecond)||0,eta=Number(current.etaSeconds)||0;
+    box.querySelector('[data-update-speed]').textContent=done?'确认后开始安装':speed>0?size(speed)+'/s'+(eta>0?' · 约剩 '+(eta>=60?Math.ceil(eta/60)+' 分钟':Math.ceil(eta)+' 秒'):''):'正在连接下载服务器…';
+  }
+
   function buildLauncher() {
     const launcher=document.createElement('section');launcher.id='settings-launcher';launcher.className='panel appearance-panel';
     launcher.innerHTML='<h3>启动与更新</h3>'
@@ -195,6 +219,7 @@
       +'<label class="switch-line"><input type="checkbox" data-update-option="autoDownload"><span><strong>自动下载更新</strong><small>发现新版本时自动下载安装包，安装始终需要你确认。</small></span></label></div>'
       +'<div class="detail-actions"><button type="button" class="secondary" data-action-check-update>检查更新</button></div>'
       +'<div class="detail-actions" data-update-actions></div>'
+      +'<div class="update-progress" data-update-progress hidden><div class="update-progress-heading"><strong data-update-progress-title>准备下载</strong><span data-update-percent></span></div><div class="update-progress-track" role="progressbar" aria-label="更新下载进度" aria-valuemin="0" aria-valuemax="100"><i data-update-fill></i></div><div class="update-progress-detail"><span data-update-bytes></span><span data-update-speed></span></div></div>'
       +'<p class="helper" data-launch-status role="status"></p>';
     launcher.querySelector('[data-launch-option]').addEventListener('change',async e=>{const input=e.target;input.disabled=true;try{const value=await desktop.launcherSet({openAtLogin:input.checked});launcher.querySelector('[data-launch-status]').textContent=value.openAtLogin?'已开启开机自启，下次登录 Windows 自动运行':'已关闭开机自启';}catch(error){launcher.querySelector('[data-launch-status]').textContent=error.message;input.checked=!input.checked;}finally{input.disabled=false;}});
     const persistUpdate = async patch => {

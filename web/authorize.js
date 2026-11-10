@@ -3,10 +3,33 @@
   const code = new URLSearchParams(location.search).get('code') || '';
   const origin = location.origin;
   const elements = Object.fromEntries([
+    'authorize-signin-tab','authorize-signup-tab','authorize-form-title','authorize-username-caption','authorize-invitation-label','authorize-invitation','authorize-mail-note',
     'authorize-login', 'authorize-consent', 'authorize-complete', 'authorize-login-submit',
     'authorize-username', 'authorize-password', 'authorize-code', 'authorize-account',
     'authorize-approve', 'authorize-deny', 'authorize-status', 'authorize-error', 'authorize-complete-text',
   ].map(id => [id, document.getElementById(id)]));
+
+  let authMode='login',policy={mode:'closed'};
+  function setAuthMode(mode){
+    if(mode==='register'&&policy.mode==='closed')return;
+    const apply=()=>{
+      authMode=mode;const register=mode==='register';
+      elements['authorize-signin-tab'].classList.toggle('active',!register);elements['authorize-signup-tab'].classList.toggle('active',register);
+      elements['authorize-signin-tab'].setAttribute('aria-selected',String(!register));elements['authorize-signup-tab'].setAttribute('aria-selected',String(register));
+      elements['authorize-signin-tab'].tabIndex=register?-1:0;elements['authorize-signup-tab'].tabIndex=register?0:-1;
+      elements['authorize-form-title'].textContent=register?'注册网页账号':'登录网页账号';
+      elements['authorize-username-caption'].textContent=register?'邮箱':'邮箱 / 原有用户名';
+      elements['authorize-username'].type=register?'email':'text';elements['authorize-username'].maxLength=254;
+      elements['authorize-password'].autocomplete=register?'new-password':'current-password';
+      elements['authorize-invitation-label'].hidden=!register||policy.mode!=='invite';elements['authorize-invitation'].required=register&&policy.mode==='invite';
+      elements['authorize-login-submit'].textContent=register?'注册并继续':'登录并继续';elements['authorize-mail-note'].hidden=true;
+      showError('');uiMotion.syncSegments();
+    };
+    uiMotion.relayout(elements['authorize-login'],apply);
+  }
+  elements['authorize-signin-tab'].addEventListener('click',()=>setAuthMode('login'));
+  elements['authorize-signup-tab'].addEventListener('click',()=>setAuthMode('register'));
+  fetch('/api/auth/registration',{signal:AbortSignal.timeout(15000)}).then(r=>{if(!r.ok)throw Error();return r.json();}).then(value=>{policy=value;elements['authorize-signup-tab'].hidden=value.mode==='closed';uiMotion.syncSegments();}).catch(()=>{});
 
   const showStatus = message => { elements['authorize-status'].textContent = message || ''; };
   const showError = message => {
@@ -86,17 +109,20 @@
     showError('');
     showStatus('正在登录…');
     try {
-      const response = await fetch('/api/auth/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          username: elements['authorize-username'].value.trim(),
-          password: elements['authorize-password'].value,
-        }),
-        signal: AbortSignal.timeout(20000),
-      });
-      const data = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(typeof data.detail === 'string' ? data.detail : '请检查用户名与密码');
+      const credentials={username:elements['authorize-username'].value.trim(),password:elements['authorize-password'].value};
+      const publicPost=async(route,body)=>{
+        const r=await fetch(route,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body),signal:AbortSignal.timeout(25000)});
+        const data=await r.json().catch(()=>({}));if(!r.ok)throw Error(typeof data.detail==='string'?data.detail:'请求失败');return data;
+      };
+      if(authMode==='register'){
+        const registration=await publicPost('/api/auth/register',{...credentials,email:credentials.username,invitation_code:elements['authorize-invitation'].value.trim(),authorization_code:code});
+        if(registration.verification_required){
+          elements['authorize-password'].value='';elements['authorize-mail-note'].hidden=false;
+          elements['authorize-mail-note'].textContent='验证邮件已发送。完成邮箱验证后会自动登录，并回到这次客户端授权。';
+          showStatus('请在邮箱中打开验证链接。');return;
+        }
+      }
+      const data=await publicPost('/api/auth/login',credentials);
       saveSession({ ...data, server: origin });
       elements['authorize-password'].value = '';
       showStatus('正在读取授权请求…');
@@ -129,5 +155,6 @@
 
   elements['authorize-approve'].addEventListener('click', () => approve(true));
   elements['authorize-deny'].addEventListener('click', () => approve(false));
+  window.addEventListener('storage',event=>{if(event.key==='jjb-session'&&readSession())start();});
   start();
 })();

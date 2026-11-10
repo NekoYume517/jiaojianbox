@@ -22,10 +22,12 @@
 
       <form id="authorize-login" class="authorize-login" hidden>
         <div class="authorize-step">第一步</div>
-        <h2>登录网页账号</h2>
-        <label>邮箱 / 原有用户名<input id="authorize-username" required minlength="3" maxlength="64" autocomplete="username" placeholder="你的用户名"></label>
+        <div class="chart-mode authorize-auth-tabs" role="tablist" aria-label="账号操作"><button id="authorize-signin-tab" type="button" role="tab" aria-selected="true" class="active">登录</button><button id="authorize-signup-tab" type="button" role="tab" aria-selected="false" tabindex="-1" hidden>注册</button></div>
+        <h2 id="authorize-form-title">登录网页账号</h2>
+        <label><span id="authorize-username-caption">邮箱 / 原有用户名</span><input id="authorize-username" required minlength="3" maxlength="64" autocomplete="username" placeholder="你的用户名"></label>
         <label>密码<input id="authorize-password" type="password" required minlength="10" autocomplete="current-password" placeholder="至少 10 位"></label>
-        <button class="primary full" id="authorize-login-submit" type="submit">登录并继续</button>
+        <label id="authorize-invitation-label" hidden>邀请码<input id="authorize-invitation" maxlength="128" autocomplete="off" placeholder="管理员提供的邀请码"></label><p id="authorize-mail-note" class="helper" role="status" hidden></p>
+        <button class="primary full" data-motion-key="authorize-submit" id="authorize-login-submit" type="submit">登录并继续</button>
         <a class="link" href="/">打开网页工作台</a>
       </form>
 
@@ -50,6 +52,7 @@
       <p id="authorize-error" class="error" role="alert" hidden></p>
     </section>
   </main>
+  <script src="./motion.js" defer></script>
   <script src="./authorize.js" defer></script>
 </body>
 </html>

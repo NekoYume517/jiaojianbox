@@ -6,7 +6,7 @@ module.exports=async(page,scratch)=>{
   const sizes=()=>page.evaluate(()=>{
     const rect=el=>el.getBoundingClientRect();
     const nav=document.querySelector('[data-nav="settings"]'),field=document.querySelector('#appearance-density');
-    return {nav:rect(nav).height,font:parseFloat(getComputedStyle(nav).fontSize),field:rect(field).height,panel:parseFloat(getComputedStyle(document.querySelector('#settings-appearance')).paddingTop)};
+    return {nav:rect(nav).height,font:parseFloat(getComputedStyle(nav).fontSize),field:rect(field.nextElementSibling?.classList.contains('segment-choice')?field.nextElementSibling:field).height,panel:parseFloat(getComputedStyle(document.querySelector('#settings-appearance')).paddingTop)};
   });
   try{
     await page.setViewportSize({width:1280,height:860});
@@ -59,10 +59,10 @@ module.exports=async(page,scratch)=>{
       await page.evaluate(density=>appearance.update({density}),density);
       for(const width of [1280,1100,850,820,700,621,620,390,360]){
         await page.setViewportSize({width,height:860});
-        if(width>620)await page.waitForFunction(()=>{const sidebar=document.querySelector('.sidebar').getBoundingClientRect(),main=document.querySelector('.main').getBoundingClientRect();return Math.abs(sidebar.right-main.left)<=1.5;});
+        if(width>620){await page.waitForFunction(mode=>document.documentElement.dataset.sidebar===mode,width>820?'labels':'icons');}if(width>620)await page.waitForFunction(()=>{const sidebar=document.querySelector('.sidebar').getBoundingClientRect(),main=document.querySelector('.main').getBoundingClientRect();return Math.abs(sidebar.right-main.left)<=1.5;});
         const layout=await page.evaluate(()=>{
           const sidebar=document.querySelector('.sidebar').getBoundingClientRect(),main=document.querySelector('.main').getBoundingClientRect();
-          return {right:sidebar.right,main:main.left,navFont:parseFloat(getComputedStyle(document.querySelector('[data-nav="settings"]')).fontSize),label:getComputedStyle(document.querySelector('.brand>span')).display,field:document.querySelector('#appearance-density').getBoundingClientRect().height};
+          return {right:sidebar.right,main:main.left,navFont:parseFloat(getComputedStyle(document.querySelector('[data-nav="settings"]')).fontSize),label:getComputedStyle(document.querySelector('.brand>span')).display,field:document.querySelector('[data-select-for=appearance-density]').getBoundingClientRect().height};
         });
         if(width>820){assert(Math.abs(layout.right-layout.main)<=1.5,`sidebar gutter mismatch at ${width}`);assert.notEqual(layout.label,'none');assert(layout.navFont>10);}
         else if(width>620){assert(Math.abs(layout.right-layout.main)<=1.5,`sidebar gutter mismatch at ${width}`);assert.equal(layout.label,'none');assert(await page.locator('.page-tabs').isVisible());}

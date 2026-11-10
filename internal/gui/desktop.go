@@ -50,6 +50,7 @@ type Desktop struct {
 	pluginsMu                          sync.Mutex
 	updateMu                           sync.Mutex
 	updateCancel                       context.CancelFunc
+	updateProgress                     Object
 	offline                            Object
 	collector, drag                    *exec.Cmd
 	qq                                 *snowManager

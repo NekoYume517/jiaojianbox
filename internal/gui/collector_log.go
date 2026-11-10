@@ -60,6 +60,15 @@ func (d *Desktop) recordCollector(command string, cmd *exec.Cmd, config Object, 
 	if failure != nil {
 		record["message"] = redactCollector(getString(failure, "message"), config)
 		record["error_type"] = redactCollector(getString(failure, "error_type"), config)
+		if input := getObject(failure["config_input"]); len(input) > 0 {
+			safe := Object{}
+			for _, key := range []string{"reason", "input_encoding", "input_length", "offset", "line", "column"} {
+				if v, ok := input[key]; ok {
+					safe[key] = v
+				}
+			}
+			record["config_input"] = safe
+		}
 	}
 	if stderr, ok := cmd.Stderr.(*collectorErrorBuffer); ok && len(stderr.tail) > 0 {
 		record["stderr"] = redactCollector(string(stderr.tail), config)

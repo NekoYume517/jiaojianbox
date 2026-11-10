@@ -260,3 +260,64 @@ input:not([type=checkbox]):not([type=hidden]):not([type=file]),select{min-height
 .topbar .breadcrumb .breadcrumb-sub-label{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text)}
 .topbar .breadcrumb .breadcrumb-sub[hidden]{display:none}
 @media(max-width:620px){.topbar .breadcrumb{gap:8px;font-size:.786rem}.topbar .breadcrumb .breadcrumb-sub{gap:8px}.topbar .breadcrumb .breadcrumb-root,.topbar .breadcrumb .breadcrumb-root-separator{display:none}}
+
+/* Canonical horizontal segments. Geometry and colour stay identical across screens. */
+:root{--segment-radius:8px;--segment-pad:3px;--segment-height:calc(var(--field-height) - 8px);--segment-gap:1px}
+.chart-mode,.page-tabs{padding:var(--segment-pad);gap:var(--segment-gap);border:1px solid var(--soft-line);border-radius:var(--segment-radius);background:var(--segment)}
+.chart-mode>button,.page-tabs>button{min-height:var(--segment-height);height:auto;padding:5px 12px;border:0;border-radius:6px;background:transparent;color:var(--muted);font-size:.857143rem;font-weight:400;line-height:1.4;white-space:nowrap;transition:color 160ms var(--motion-ease),background-color 160ms var(--motion-ease)}
+.chart-mode>button.active,.page-tabs>button[aria-selected=true]{color:var(--ink);font-weight:500}
+.chart-mode.motion-segment>button.active,.page-tabs.motion-segment>button[aria-selected=true]{background:transparent;box-shadow:none}
+.chart-mode>button:hover:not(:disabled),.page-tabs>button:hover:not(:disabled){color:var(--ink)}
+select.segment-source{position:absolute!important;width:1px!important;height:1px!important;min-height:0!important;min-width:0!important;margin:0!important;padding:0!important;opacity:0!important;clip-path:inset(50%)!important;pointer-events:none!important;border:0!important}
+.segment-choice{display:flex;max-width:100%;width:max-content;min-width:0;overflow-x:auto;scrollbar-width:none;overscroll-behavior-x:contain}
+.segment-choice::-webkit-scrollbar{display:none}
+.segment-choice>button{flex:none;min-width:0;max-width:240px;overflow:hidden;text-overflow:ellipsis}
+.form-grid>label,.appearance-fields>label{min-width:0}
+.toolbar .segment-choice{flex:0 1 auto}
+.segment-choice[aria-invalid=true]{outline:2px solid var(--red-text);outline-offset:2px}
+.update-progress{padding:18px;margin:16px 0;border:1px solid var(--soft-line);border-radius:10px;background:var(--surface)}
+.update-progress[hidden]{display:none}
+.update-progress-heading,.update-progress-detail{display:flex;align-items:center;justify-content:space-between;gap:12px;font-variant-numeric:tabular-nums}
+.update-progress-heading{margin-bottom:12px;font-size:.857143rem}
+.update-progress-heading strong{font-weight:500;color:var(--ink)}
+.update-progress-heading>span,.update-progress-detail{color:var(--muted)}
+.update-progress-track{height:5px;overflow:hidden;border-radius:99px;background:var(--selected)}
+.update-progress-track>i{display:block;height:100%;width:100%;background:var(--green);transform:scaleX(0);transform-origin:left;transition:transform 200ms linear;border-radius:99px}
+.update-progress-detail{margin-top:12px;font-size:.786rem;flex-wrap:wrap}
+.update-progress.indeterminate .update-progress-track>i{width:30%;animation:jjb-download-pending 1.6s linear infinite}
+@keyframes jjb-download-pending{from{transform:translateX(-110%)}to{transform:translateX(450%)}}
+@media(max-width:620px){:root{--segment-height:44px}.segment-choice{width:100%}.segment-choice>button{min-height:44px;padding:8px 12px}.update-progress{padding:15px}.update-progress-detail{align-items:flex-start;gap:6px}}
+@media(prefers-reduced-motion:reduce){.update-progress-track>i{transition:none}.update-progress.indeterminate .update-progress-track>i{animation:none!important}}
+.authorize-auth-tabs{margin-bottom:18px}
+.authorize-auth-tabs>button[hidden]{display:none}
+
+/* Shared spacing rhythm for forms, supporting panels and operation groups. */
+:root{--field-space:16px;--section-space:24px;--action-gap:8px}
+:root[data-density=compact]{--field-space:14px;--section-space:20px}
+:is(.settings-panel,.appearance-panel,.advanced-body){padding:var(--panel-space)}
+:is(.settings-panel,.appearance-panel,.advanced-body) h3{margin:0 0 8px}
+:is(.settings-panel,.appearance-panel,.advanced-body)>p.helper,:is(.settings-panel,.appearance-panel,.advanced-body) form>p.helper{margin:0 0 var(--field-space);line-height:1.7}
+:is(.settings-panel,.appearance-panel,.advanced-body)>p.helper:empty,:is(.settings-panel,.appearance-panel,.advanced-body) form>p.helper:empty{margin:0;min-height:0}
+:is(.settings-panel,.appearance-panel,.advanced-body) label:not(.switch-line){margin-bottom:var(--field-space)}
+:is(.settings-panel,.appearance-panel,.advanced-body) .form-grid{gap:var(--field-space) 16px;margin-bottom:var(--field-space)}
+:is(.settings-panel,.appearance-panel,.advanced-body) .form-grid>label{margin:0}
+:is(.settings-panel,.appearance-panel,.advanced-body) label input:not([type=checkbox]),:is(.settings-panel,.appearance-panel,.advanced-body) label textarea{margin-top:8px}
+:is(.settings-panel,.appearance-panel,.advanced-body) .segment-choice{margin-top:8px}
+:is(.settings-panel,.appearance-panel,.advanced-body) .switch-line{margin:0;padding-block:var(--list-space)}
+:is(.settings-panel,.appearance-panel,.advanced-body) .switch-line small{margin-top:4px;line-height:1.7}
+:is(.settings-panel,.appearance-panel,.advanced-body) .switch-line+.form-grid,:is(.settings-panel,.appearance-panel,.advanced-body) .switch-line+label:not(.switch-line){margin-top:var(--field-space)}
+:is(.settings-panel,.appearance-panel,.advanced-body) .divider{height:1px;background:var(--soft-line);margin:var(--section-space) 0}
+.detail-actions,.source-actions,.small-actions{gap:var(--action-gap);align-items:center;flex-wrap:wrap}
+:is(.settings-panel,.appearance-panel,.advanced-body) .detail-actions+.detail-actions,.appearance-panel .detail-actions+.detail-actions{margin-top:12px}
+#settings-launcher>.detail-actions+.detail-actions{margin-top:12px}
+#settings-launcher [data-launch-status]{margin-top:var(--field-space);margin-bottom:0}
+#settings-launcher [data-launch-status]:empty{margin:0}
+.panel-head{gap:12px}
+.toolbar{gap:8px;margin-bottom:var(--layout-gap)}
+.toolbar>label,.statistics-controls>label{margin-bottom:0}
+.source-actions{margin-top:var(--field-space)}
+.files-table .file-controls{gap:12px}
+:is(.settings-panel,.appearance-panel,.advanced-body) .update-progress{margin-block:var(--field-space)}
+@media(max-width:620px){:is(.settings-panel,.appearance-panel,.advanced-body) .form-grid{gap:var(--field-space)}.page-heading{row-gap:14px}.detail-actions,.source-actions{row-gap:10px}}
+
+:is(.settings-panel,.appearance-panel,.advanced-body) .appearance-fields>label{margin:0}

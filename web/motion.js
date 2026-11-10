@@ -94,6 +94,17 @@
     });
   }
 
+  function adoptSegment(box, from) {
+    syncSegments();const entry=segments.get(box);
+    if(!entry||keyboard||reduced.matches||document.hidden)return;
+    const selected=entry.selected,rect=entry.thumb.getBoundingClientRect();
+    stop(entry);
+    const to={transform:entry.thumb.style.transform,width:entry.thumb.style.width,height:entry.thumb.style.height};
+    const start={transform:`translate(${selected.offsetLeft+from.left-rect.left}px,${selected.offsetTop+from.top-rect.top}px)`,width:from.width+'px',height:from.height+'px'};
+    entry.animations=[play(entry.thumb,[start,to],{duration:280,easing:'cubic-bezier(.2,.8,.2,1)'})];
+    entry.animations[0]?.finished.catch(()=>{});
+  }
+
   document.addEventListener('keydown',event=>{
     const box=event.target.closest('.chart-mode[role=tablist]');
     if(!box||!['ArrowLeft','ArrowRight','Home','End'].includes(event.key))return;
@@ -307,6 +318,6 @@
     const deadline=setTimeout(()=>element.remove(),320);
     animation.finished.catch(()=>{}).finally(()=>{clearTimeout(deadline);element.remove();});
   }
-  window.uiMotion = { relayout, openDialog, closeDialog, syncNavigation, syncSegments, hideMenu, transitionPage, swapPage, revealSubnavigation, hideSubnavigation };
+  window.uiMotion = { adoptSegment, relayout, openDialog, closeDialog, syncNavigation, syncSegments, hideMenu, transitionPage, swapPage, revealSubnavigation, hideSubnavigation };
   syncSegments();
 })();

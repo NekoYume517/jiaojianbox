@@ -315,7 +315,8 @@ func (s *Server) chat(ctx context.Context, config Object, key string, messages [
 	if len(tools) > 0 {
 		body["tools"] = tools
 	}
-	notify(p, Object{"stage": "request", "input_chars": len(store.JSON(messages))})
+	out.Metrics["input_chars"] = len([]rune(store.JSON(messages)))
+	notify(p, Object{"stage": "request", "input_chars": out.Metrics["input_chars"]})
 	for retries := 0; retries < 4; retries++ {
 		req, err := http.NewRequestWithContext(ctx, "POST", endpoint(str(config, "base_url"), "chat/completions"), strings.NewReader(store.JSON(body)))
 		check(err)
@@ -506,6 +507,7 @@ func mergeMetrics(previous, current Object) Object {
 		return out
 	}
 	out["elapsed_ms"] = num(previous, "elapsed_ms") + num(current, "elapsed_ms")
+	out["input_chars"] = num(previous, "input_chars") + num(current, "input_chars")
 	for _, k := range []string{"prompt_tokens", "completion_tokens", "total_tokens"} {
 		if previous[k] != nil && current[k] != nil {
 			out[k] = num(previous, k) + num(current, k)

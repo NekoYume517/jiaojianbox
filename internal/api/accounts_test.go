@@ -56,3 +56,27 @@ func TestResetTokenIsOneUseAndPreservesAccount(t *testing.T) {
 		t.Fatal(code, session)
 	}
 }
+
+func TestRegistrationVerificationReturnsBrowserSession(t *testing.T) {
+	s := testServer(t)
+	ctx := context.Background()
+	salt, digest, err := store.NewPassword("verification-fixture-password")
+	if err != nil {
+		t.Fatal(err)
+	}
+	secret := store.Token()
+	payload := Object{"username": "new-fixture@example.test", "salt": salt, "password": digest, "invite_hash": store.Hash(""), "authorization_code": "ABCDEF12"}
+	exec(ctx, s.Store.DB, "INSERT INTO mail_tokens VALUES(?,?,?,?,?,?)", store.Hash(secret), "register", payload["username"], store.JSON(payload), timestamp()+60, timestamp())
+	code, result := call(t, s, "POST", "/api/auth/mail/confirm", "", Object{"token": secret})
+	session := object(result["session"])
+	if code != 200 || str(session, "token") == "" || str(result, "continue_path") != "/authorize?code=ABCDEF12" {
+		t.Fatal(code, result)
+	}
+	code, profile := call(t, s, "GET", "/api/auth/me", str(session, "token"), nil)
+	if code != 200 || !boolean(profile, "verified") || str(profile, "username") != "new-fixture@example.test" {
+		t.Fatal(code, profile)
+	}
+	if code, _ := call(t, s, "POST", "/api/auth/mail/confirm", "", Object{"token": secret}); code != 400 {
+		t.Fatal("verification token replayed", code)
+	}
+}

@@ -5,10 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os/exec"
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -87,6 +87,13 @@ func (d *Desktop) UpdateGet() Object {
 	out := d.updatePrefs()
 	for key, value := range d.updateState() {
 		out[key] = value
+	}
+	if getString(out, "status") == "downloading" {
+		d.updateMu.Lock()
+		for key, value := range d.updateProgress {
+			out[key] = value
+		}
+		d.updateMu.Unlock()
 	}
 	out["current"] = d.version
 	return out
@@ -172,7 +179,7 @@ func (d *Desktop) UpdateCheck() (Object, error) {
 		"url":      release["url"],
 		"asset":    release["asset"],
 		"assetUrl": release["assetUrl"],
-		"progress": 0,
+		"progress": 0, "received": 0, "total": 0, "bytesPerSecond": 0, "etaSeconds": 0,
 	})
 	state["updatable"] = updatable
 	state["current"] = d.version
@@ -223,7 +230,10 @@ func (d *Desktop) UpdateDownload() (Object, error) {
 	}
 	d.updateCancel = cancel
 	d.updateMu.Unlock()
-	d.setUpdateState(Object{"status": "downloading", "progress": 0})
+	d.updateMu.Lock()
+	d.updateProgress = nil
+	d.updateMu.Unlock()
+	d.setUpdateState(Object{"status": "downloading", "progress": 0, "received": 0, "total": 0, "bytesPerSecond": 0, "etaSeconds": 0})
 	destination := filepath.Join(d.downloadsDir(), fmt.Sprintf("JiaojianBox-Setup-%s-x64.exe", latest))
 	partial := destination + ".partial"
 	go func() {
@@ -250,6 +260,7 @@ func (d *Desktop) UpdateDownload() (Object, error) {
 			written := int64(0)
 			buffer := make([]byte, 512<<10)
 			lastEmit := time.Now()
+			lastWritten := int64(0)
 			for {
 				read, readErr := response.Body.Read(buffer)
 				if read > 0 {
@@ -257,9 +268,24 @@ func (d *Desktop) UpdateDownload() (Object, error) {
 						return writeErr
 					}
 					written += int64(read)
-					if total > 0 && time.Since(lastEmit) >= 400*time.Millisecond {
+					if time.Since(lastEmit) >= 400*time.Millisecond {
+						seconds := time.Since(lastEmit).Seconds()
+						speed := float64(written-lastWritten) / seconds
+						progress := float64(0)
+						eta := float64(0)
+						if total > 0 {
+							progress = float64(written) / float64(total)
+							if speed > 0 {
+								eta = float64(total-written) / speed
+							}
+						}
 						lastEmit = time.Now()
-						d.emit("update-download", Object{"received": written, "total": total, "progress": float64(written) / float64(total)})
+						lastWritten = written
+						snapshot := Object{"received": written, "total": total, "progress": progress, "bytesPerSecond": speed, "etaSeconds": eta}
+						d.updateMu.Lock()
+						d.updateProgress = snapshot
+						d.updateMu.Unlock()
+						d.emit("update-download", snapshot)
 					}
 				}
 				if readErr != nil {

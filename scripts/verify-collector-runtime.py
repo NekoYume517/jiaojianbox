@@ -16,7 +16,7 @@ helper = args.helper.resolve()
 with tempfile.TemporaryDirectory(prefix='jjb-collector-runtime-') as state:
     env = dict(os.environ, ALL_PROXY='socks5h://127.0.0.1:1',
                HTTP_PROXY='socks5://127.0.0.1:1', HTTPS_PROXY='socks5://127.0.0.1:1',
-               NO_PROXY='', SSL_CERT_FILE=str(Path(state) / 'absent.pem'))
+               NO_PROXY='', PYTHONIOENCODING='gbk', PYTHONUTF8='0', SSL_CERT_FILE=str(Path(state) / 'absent.pem'))
     child = subprocess.Popen([str(helper), 'run', '--state-dir', state], cwd=helper.parent,
                              stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                              text=True, encoding='utf-8', env=env,
@@ -29,7 +29,9 @@ with tempfile.TemporaryDirectory(prefix='jjb-collector-runtime-') as state:
     reader = threading.Thread(target=read_events, daemon=True)
     reader.start()
     child.stdin.write(json.dumps({'server_url': 'http://127.0.0.1:1', 'server_token': 'fixture',
-                                 'user_id': 'packaging-smoke', 'qq_chats': [], 'wechat_chats': []}) + '\n')
+                                 'user_id': 'packaging-smoke', 'qq_chats': [], 'wechat_chats': [],
+                                 'conversation_names': {'private:1': '中文群聊：交件箱 😀'},
+                                 'wechat_db_dir': 'D:/微信备份/消息'}, ensure_ascii=False) + '\n')
     child.stdin.flush()
     try:
         deadline = time.monotonic() + 45
@@ -43,7 +45,7 @@ with tempfile.TemporaryDirectory(prefix='jjb-collector-runtime-') as state:
             if event.get('source') == 'queue':
                 assert child.poll() is None
                 print(json.dumps({'collectorRun': True, 'proxyEnvironmentIsolated': True,
-                                  'certificateEnvironmentIsolated': True, 'bundled': True}))
+                                  'certificateEnvironmentIsolated': True, 'utf8ChineseConfig': True, 'bundled': True}))
                 break
         else: raise AssertionError('Bundled collector did not finish startup within 45 seconds')
     finally:

@@ -58,7 +58,11 @@ func (d *Desktop) collectorCommand(ctx context.Context, command string, config O
 	hideProcess(cmd)
 	cmd.Dir = d.resources
 	cmd.Env = append(os.Environ(), "PYTHONIOENCODING=utf-8")
-	cmd.Stdin = strings.NewReader(asJSON(config) + "\n")
+	payload, encodeErr := json.Marshal(config)
+	if encodeErr != nil {
+		return nil, nil, errors.New("采集配置无法编码，请重新选择会话后连接")
+	}
+	cmd.Stdin = strings.NewReader(string(payload) + "\n")
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return nil, nil, err

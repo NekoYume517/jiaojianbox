@@ -130,6 +130,10 @@ func (s *Server) authRoutes() {
 		salt, digest, err := store.NewPassword(password)
 		check(err)
 		pending := Object{"username": username, "salt": salt, "password": digest, "invite_hash": store.Hash(strings.ToUpper(strings.TrimSpace(str(b, "invitation_code"))))}
+		authorizationCode := strings.ToUpper(strings.ReplaceAll(strings.TrimSpace(str(b, "authorization_code")), "-", ""))
+		if len(authorizationCode) == 8 && strings.Trim(authorizationCode, "0123456789ABCDEF") == "" {
+			pending["authorization_code"] = authorizationCode
+		}
 		verify := boolean(s.mailConfig(r.Context(), s.Store.DB), "verification_required")
 		s.transaction(r.Context(), func(db store.SQL) any {
 			s.invite(r.Context(), db, str(pending, "invite_hash"), !verify)

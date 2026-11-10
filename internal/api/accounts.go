@@ -176,10 +176,18 @@ func (s *Server) accountRoutes() {
 				fail(400, "链接已使用或已过期，请重新申请")
 			}
 			p := store.Payload(row)
+			result := Object{"confirmed": true, "message": "操作完成，请返回登录页面"}
 			switch str(row, "purpose") {
 			case "register":
 				s.invite(r.Context(), db, str(p, "invite_hash"), true)
 				s.createUser(r.Context(), db, p, true)
+				user := one(r.Context(), db, "SELECT id,username FROM users WHERE username=?", p["username"])
+				result["session"] = Object{"token": s.newSession(r.Context(), db, str(user, "id")), "user_id": user["id"], "username": user["username"]}
+				result["message"] = "邮箱验证成功，已自动登录"
+				code := str(p, "authorization_code")
+				if len(code) == 8 && strings.Trim(code, "0123456789ABCDEF") == "" {
+					result["continue_path"] = "/authorize?code=" + code
+				}
 			case "email":
 				if len(query(r.Context(), db, "SELECT 1 FROM profiles WHERE email=? AND user_id<>?", row["email"], p["user_id"])) > 0 {
 					fail(409, "此邮箱已绑定其他账号")
@@ -200,7 +208,7 @@ func (s *Server) accountRoutes() {
 				fail(400, "验证用途无效")
 			}
 			exec(r.Context(), db, "DELETE FROM mail_tokens WHERE hash=?", row["hash"])
-			return Object{"confirmed": true, "message": "操作完成，请返回登录页面"}
+			return result
 		})
 	})
 	s.route("GET /api/admin/mail", "admin", func(r request) any { return s.publicMail(r.Context(), s.Store.DB) })
