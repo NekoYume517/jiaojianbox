@@ -54,7 +54,7 @@
     }
   }
   function sync() {
-    document.querySelectorAll('#view select,dialog select,.file-shelf select').forEach(syncSelect);
+    document.querySelectorAll('#view select,dialog select,.file-shelf select,.share-surface select').forEach(syncSelect);
     window.uiMotion?.syncSegments();
     document.querySelectorAll('.segment-choice').forEach(box=>{const previous=pending.get(box.dataset.selectFor);if(!previous)return;if(previous.box!==box&&performance.now()-previous.at<1000)window.uiMotion?.adoptSegment(box,previous.rect);pending.delete(box.dataset.selectFor);});
   }

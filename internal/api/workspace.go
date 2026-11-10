@@ -44,7 +44,7 @@ func version(t Object, expected int) {
 	}
 }
 func taskInput(input Object) Object {
-	out := Object{"title": "", "description": "", "due_at": nil, "status": "collecting", "urgency": nil, "reminders": []any{}, "requirements": []any{}, "max_total_bytes": nil, "naming_hint": "", "filename_pattern": "", "submit_url": "", "source_message_id": nil, "client_id": nil, "version": 0}
+	out := Object{"title": "", "description": "", "due_at": nil, "status": "collecting", "urgency": nil, "reminders": []any{}, "requirements": []any{}, "max_total_bytes": nil, "naming_hint": "", "filename_pattern": "", "submit_url": "", "source_message_id": nil, "client_id": nil, "collection": nil, "version": 0}
 	for k := range out {
 		if v, ok := input[k]; ok {
 			out[k] = v
@@ -60,6 +60,11 @@ func taskInput(input Object) Object {
 			if _, ok := out[key].(string); !ok {
 				fail(422, "字段类型无效："+key)
 			}
+		}
+	}
+	if out["collection"] != nil {
+		if _, ok := out["collection"].(bool); !ok {
+			fail(422, "字段类型无效：collection")
 		}
 	}
 	for _, key := range []string{"reminders", "requirements"} {
@@ -154,6 +159,9 @@ func (s *Server) taskRoutes() {
 			if id := str(b, "source_message_id"); id != "" {
 				one(r.Context(), db, "SELECT id FROM messages WHERE id=? AND user_id=?", id, r.User)
 			}
+			if b["collection"] == nil {
+				b["collection"] = false
+			}
 			b["id"] = store.ID()
 			b["version"] = 1
 			b["created_at"] = store.Now()
@@ -170,6 +178,9 @@ func (s *Server) taskRoutes() {
 		return s.transaction(r.Context(), func(db store.SQL) any {
 			t := s.task(r.Context(), db, r.User, r.PathValue("task_id"))
 			version(t, int(num(b, "version")))
+			if b["collection"] == nil {
+				b["collection"] = t["collection"]
+			}
 			if b["urgency"] == nil {
 				b["urgency"] = t["urgency"]
 			}

@@ -28,4 +28,30 @@
                 CREATE TABLE IF NOT EXISTS invitations(id TEXT PRIMARY KEY, code_hash TEXT UNIQUE NOT NULL,
                     prefix TEXT, label TEXT, max_uses INTEGER, uses INTEGER DEFAULT 0,
                     expires REAL, revoked INTEGER DEFAULT 0, created_by TEXT REFERENCES users(id));
+        CREATE TABLE IF NOT EXISTS shares(
+            id TEXT PRIMARY KEY,
+            user_id TEXT REFERENCES users(id) ON DELETE CASCADE,
+            task_id TEXT REFERENCES tasks(id) ON DELETE CASCADE,
+            token_hash TEXT UNIQUE NOT NULL,
+            token_cipher TEXT NOT NULL,
+            payload TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL);
+        CREATE INDEX IF NOT EXISTS ix_shares_owner ON shares(user_id,created_at);
+        CREATE INDEX IF NOT EXISTS ix_shares_task ON shares(task_id);
+        CREATE TABLE IF NOT EXISTS share_submissions(
+            id TEXT PRIMARY KEY,
+            share_id TEXT REFERENCES shares(id) ON DELETE CASCADE,
+            task_id TEXT REFERENCES tasks(id) ON DELETE CASCADE,
+            user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+            name TEXT NOT NULL DEFAULT '',
+            contact TEXT NOT NULL DEFAULT '',
+            note TEXT NOT NULL DEFAULT '',
+            ip_hash TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL);
+        CREATE INDEX IF NOT EXISTS ix_share_submissions_share ON share_submissions(share_id,created_at);
+        CREATE TABLE IF NOT EXISTS share_submission_files(
+            submission_id TEXT REFERENCES share_submissions(id) ON DELETE CASCADE,
+            attachment_id TEXT REFERENCES attachments(id) ON DELETE CASCADE,
+            PRIMARY KEY(submission_id,attachment_id));
 

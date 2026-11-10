@@ -17,7 +17,7 @@ import (
 	assets "github.com/NekoYume517/jiaojianbox/web"
 )
 
-var version = "0.6.9"
+var version = "0.6.10"
 
 func main() {
 	health := flag.String("healthcheck", "", "probe a running server")

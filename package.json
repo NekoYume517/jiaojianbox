@@ -1,7 +1,7 @@
 {
   "name": "jiaojianbox",
   "productName": "交件箱",
-  "version": "0.6.9",
+  "version": "0.6.10",
   "description": "通知、待办与文件，一处整理",
   "author": "zzy",
   "private": true,

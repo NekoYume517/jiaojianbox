@@ -16,7 +16,9 @@ const path=require('node:path'),fs=require('node:fs/promises'),net=require('node
     await page.locator('#username').fill('ui_student');await page.locator('#password').fill('strong-test-password');await page.locator('#auth-submit').click();await page.locator('#workspace').waitFor({state:'visible'});
     await page.evaluate(async()=>{await api('/api/tasks','POST',{title:'网页界面验收待办'});await refresh();await navigate('tasks');});
     await require('./verify-inbox-actions.cjs')(page);
-    await require('./verify-motion.cjs')(page,scratch);await require('./verify-auth-browser.cjs')(browser,base,scratch);assert.deepEqual(errors,[]);
+    await require('./verify-motion.cjs')(page,scratch);await require('./verify-auth-browser.cjs')(browser,base,scratch);
+    await require('./verify-shares.cjs')(page,browser,base,scratch);
+    assert.deepEqual(errors,[]);
     console.log(JSON.stringify({browserExperience:true,serverIsolated:true,pageErrors:errors.length,evidence:scratch}));
   }finally{await browser?.close();server.kill();}
 })().catch(error=>{console.error(error);process.exitCode=1});

@@ -193,6 +193,7 @@ func New(database *store.Store, assets fs.FS, version string) (*Server, error) {
 		s.accountRoutes()
 		s.transferRoutes()
 		s.statisticsRoutes()
+		s.shareRoutes()
 		s.route("GET /health", "", func(r request) any { return Object{"status": "ok", "version": s.Version, "runtime": "go"} })
 		s.Mux.HandleFunc("GET /authorize", func(w http.ResponseWriter, r *http.Request) {
 			asset, err := s.Assets.Open("authorize.html")
@@ -207,6 +208,21 @@ func New(database *store.Store, assets fs.FS, version string) (*Server, error) {
 				return
 			}
 			http.ServeContent(w, r, "authorize.html", stat.ModTime(), asset.(io.ReadSeeker))
+		})
+		s.Mux.HandleFunc("GET /s/{token}", func(w http.ResponseWriter, r *http.Request) {
+			asset, err := s.Assets.Open("share.html")
+			if err != nil {
+				http.NotFound(w, r)
+				return
+			}
+			defer asset.Close()
+			stat, err := asset.Stat()
+			if err != nil {
+				http.NotFound(w, r)
+				return
+			}
+			w.Header().Set("Cache-Control", "no-store")
+			http.ServeContent(w, r, "share.html", stat.ModTime(), asset.(io.ReadSeeker))
 		})
 		s.Mux.Handle("GET /", http.FileServerFS(s.Assets))
 		exec(context.Background(), s.Store.DB, "UPDATE analysis_jobs SET state='queued' WHERE state='running'")
@@ -276,7 +292,8 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(204)
 		return
 	}
-	if r.Method == "POST" && choice(r.URL.Path, "/api/auth/login", "/api/auth/register", "/api/auth/device/start", "/api/auth/forgot-password", "/api/auth/mail/confirm", "/api/account/email") && !s.allowAuth(r.RemoteAddr) {
+	throttled := choice(r.URL.Path, "/api/auth/login", "/api/auth/register", "/api/auth/device/start", "/api/auth/forgot-password", "/api/auth/mail/confirm", "/api/account/email") || strings.HasPrefix(r.URL.Path, "/api/shared/")
+	if r.Method == "POST" && throttled && !s.allowAuth(r.RemoteAddr) {
 		writeJSON(w, 429, Object{"detail": "操作过于频繁，请稍后再试"})
 		return
 	}

@@ -329,3 +329,75 @@ select.segment-source{position:absolute!important;width:1px!important;height:1px
 @media(max-width:620px){:is(.settings-panel,.appearance-panel,.advanced-body) .form-grid{gap:var(--field-space)}.page-heading{row-gap:14px}.detail-actions,.source-actions{row-gap:10px}}
 
 :is(.settings-panel,.appearance-panel,.advanced-body) .appearance-fields>label{margin:0}
+
+/* ---------- 分享与收集 ---------- */
+.field{display:block;margin-bottom:var(--field-space)}
+.field-label{display:block;font-size:0.857143rem;font-weight:500;margin-bottom:8px}
+.share-task-actions{display:flex;flex-wrap:wrap;gap:var(--action-gap);align-items:center}
+.share-task-actions+.section-heading{margin-top:var(--section-space)}
+.share-list{display:grid;gap:var(--layout-gap)}
+.share-card{border:1px solid var(--line);border-radius:12px;background:var(--panel);padding:18px;box-shadow:0 1px 2px #00000003;transition:border-color 160ms var(--motion-ease),background-color 160ms var(--motion-ease)}
+.share-card:hover{border-color:var(--selected-border);background:var(--surface)}
+.share-card-head{display:flex;gap:16px;justify-content:space-between;align-items:flex-start;flex-wrap:wrap}
+.share-card-title{display:grid;gap:8px;min-width:0}
+.share-card-title strong{font-size:1rem;line-height:1.5;overflow-wrap:anywhere}
+.share-card-actions{display:flex;gap:var(--action-gap);flex-wrap:wrap}
+.share-url{margin-top:14px;padding:9px 12px;border:1px solid var(--soft-line);border-radius:8px;background:var(--input);color:var(--muted);font-size:0.785714rem;font-family:ui-monospace,SFMono-Regular,"Cascadia Mono",Consolas,monospace;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;user-select:all;cursor:text}
+.share-card-meta{display:flex;gap:16px;flex-wrap:wrap;margin-top:12px;font-size:0.785714rem;color:var(--muted)}
+.share-submissions{margin-top:14px;border-top:1px solid var(--soft-line);padding-top:12px}
+.share-submissions summary{cursor:pointer;font-size:0.857143rem;color:var(--text);list-style:none;transition:color 160ms var(--motion-ease)}
+.share-submissions summary::-webkit-details-marker{display:none}
+.share-submissions summary::before{content:"";display:inline-block;width:6px;height:6px;margin-right:8px;border-right:1.5px solid currentColor;border-bottom:1.5px solid currentColor;transform:translateY(-1px) rotate(-45deg);transition:transform 160ms var(--motion-ease)}
+.share-submissions[open] summary::before{transform:translateY(-2px) rotate(45deg)}
+.share-submissions summary:hover{color:var(--ink)}
+.share-submissions-body{display:grid;gap:12px;margin-top:12px}
+.share-submission{border:1px solid var(--soft-line);border-radius:9px;background:var(--surface);padding:12px 14px}
+.share-submission-head{display:flex;justify-content:space-between;gap:12px;align-items:baseline}
+.share-submission-head time{font-size:0.785714rem;color:var(--muted)}
+.share-submission p{margin:8px 0 0;font-size:0.857143rem;line-height:1.7;white-space:pre-wrap;overflow-wrap:anywhere}
+.share-submission-files{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
+.share-submission-files button{border:1px solid var(--soft-line);border-radius:7px;padding:5px 10px;background:var(--input)}
+@media(max-width:620px){.share-card-head{display:grid}.share-card-actions{justify-content:flex-start}}
+
+/* ---------- 独立分享页面 ---------- */
+.share-page{min-height:100vh;padding:32px 20px 48px;background:var(--canvas);display:flex;justify-content:center;align-items:flex-start}
+.share-shell{width:min(760px,100%);display:grid;gap:16px}
+.share-brand{display:flex;align-items:center;gap:10px;font-weight:600;color:var(--ink)}
+.share-brand small{display:block;font-size:0.785714rem;font-weight:400;color:var(--muted)}
+.share-surface{padding:24px;display:grid;gap:18px}
+.share-footnote{margin:0;text-align:center}
+.share-state{display:grid;justify-items:center;gap:10px;text-align:center;padding:20px 0 8px}
+.share-state h1{margin:0;font-size:1.285714rem}
+.share-state p{margin:0;max-width:420px}
+.share-state-icon{display:grid;place-items:center;width:44px;height:44px;border-radius:12px;background:var(--soft);color:var(--green)}
+.share-state-icon svg{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
+.share-form-inline{display:grid;gap:12px;justify-items:stretch;width:min(360px,100%);margin-top:8px}
+.share-banner{display:grid;gap:4px;border-bottom:1px solid var(--soft-line);padding-bottom:14px}
+.share-banner strong{font-size:1.142857rem;line-height:1.5;overflow-wrap:anywhere}
+.share-banner span{font-size:0.857143rem;color:var(--muted)}
+.share-block{display:grid;gap:10px}
+.share-block h2{margin:0;font-size:0.928571rem;font-weight:600;color:var(--ink)}
+.share-text{margin:0;font-size:0.928571rem;line-height:1.8;white-space:pre-wrap;overflow-wrap:anywhere}
+.share-meta-row{display:flex;justify-content:space-between;gap:16px;align-items:baseline;padding:10px 0;border-bottom:1px solid var(--soft-line);font-size:0.857143rem}
+.share-meta-row span{color:var(--muted)}
+.share-meta-row:last-child{border-bottom:0}
+.share-requirements{list-style:none;margin:0;padding:0;display:grid;gap:8px}
+.share-requirements li{display:grid;gap:2px;border:1px solid var(--soft-line);border-radius:9px;padding:10px 12px;background:var(--surface)}
+.share-requirements small{color:var(--muted);font-size:0.785714rem}
+.share-files{display:grid;gap:8px}
+.share-file-row{display:flex;align-items:center;gap:12px;border:1px solid var(--soft-line);border-radius:9px;padding:10px 12px;background:var(--surface)}
+.share-file-name{flex:1;min-width:0;font-size:0.857143rem;overflow-wrap:anywhere}
+.share-file-name small{display:block;color:var(--muted);font-size:0.785714rem;margin-top:2px}
+.share-form{display:grid;gap:var(--field-space)}
+.share-form label:not(.share-drop){display:block}
+.share-form input,.share-form textarea,.share-form select{width:100%;margin-top:8px}
+.share-drop{display:grid;place-items:center;border:1px dashed var(--line);background:var(--surface);border-radius:9px;min-height:84px;padding:18px;color:var(--muted);font-size:0.857143rem;transition:border-color 160ms var(--motion-ease),background-color 160ms var(--motion-ease)}
+.share-drop:hover{border-color:var(--green);background:var(--soft)}
+.share-drop input{margin-top:10px;width:auto}
+.share-progress{display:grid;gap:8px}
+@media(max-width:620px){.share-page{padding:20px 12px 36px}.share-surface{padding:18px;border-radius:12px}}
+/* 分享表单沿用可换行分段控件，窄屏保持完整可读。 */
+#share-dialog{width:min(680px,calc(100vw - 24px))}#share-dialog .chart-mode{flex-wrap:wrap;width:fit-content;max-width:100%}#share-dialog .field>label{margin-top:12px}#share-dialog .switch-line{margin-bottom:0}#share-dialog .dialog-footer{gap:8px;flex-wrap:wrap}#share-url-line{overflow-wrap:anywhere}#share-form-preview{width:min(680px,calc(100vw - 24px))}#share-form-preview .share-surface{border:0}
+.share-file-row{flex-wrap:wrap}.share-submission-head{flex-wrap:wrap}.share-submission-files button{max-width:100%;overflow-wrap:anywhere;text-align:left}.share-form-inline label{text-align:left;width:100%}.share-form-inline input{width:100%;margin-top:8px}.share-page .authorize-utilities{position:fixed;right:18px;top:16px}.share-brand{padding-right:110px}.share-page{overflow-x:clip}
+
+.share-card-actions>button{min-height:32px;padding:6px 10px}.share-card-actions{gap:8px}.share-task-actions{row-gap:10px}

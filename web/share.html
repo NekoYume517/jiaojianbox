@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'">
+  <title>分享 · 交件箱</title>
+  <script src="/theme.js"></script>
+  <link rel="icon" href="/icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/app.css">
+  <link rel="stylesheet" href="/palettes.css">
+  <link rel="stylesheet" href="/workspace.css">
+  <link rel="stylesheet" href="/motion.css">
+</head>
+<body>
+  <main class="share-page">
+    <div class="authorize-utilities"><div data-theme-picker></div></div>
+    <div class="share-shell">
+      <header class="share-brand"><img src="/icon.svg" alt="" width="34" height="34"><span>交件箱<small>分享与收集</small></span></header>
+      <section class="panel share-surface" id="share-root">
+        <p id="share-status" class="helper" role="status">正在读取分享…</p>
+      </section>
+      <p class="share-footnote helper">分享链接由交件箱生成。转发前请确认访问权限与截止时间。</p>
+    </div>
+  </main>
+  <div id="share-toast" class="toast" role="status" hidden><span id="share-toast-text"></span></div>
+  <script src="/motion.js" defer></script>
+  <script src="/controls.js" defer></script>
+  <script src="/share.js" defer></script>
+</body>
+</html>
