@@ -5,7 +5,7 @@ import (
 	"log"
 )
 
-var version = "0.6.5-dev"
+var version = "0.6.6"
 
 func main() {
 	if err := gui.Run(version); err != nil {
