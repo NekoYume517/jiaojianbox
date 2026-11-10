@@ -8,10 +8,10 @@ import (
 	"github.com/NekoYume517/jiaojianbox/internal/store"
 )
 
-// aiServiceConfig is the site-wide managed ("免配置") AI service: users without
-// their own API key run analysis through this upstream and pay with credits.
+// aiServiceConfig defines the site-wide managed AI endpoint and its capabilities.
 type aiServiceConfig struct {
 	Enabled         bool
+	VisionEnabled   bool
 	DefaultCredits  float64
 	TokensPerCredit float64
 	CheckinEnabled  bool
@@ -34,6 +34,7 @@ func (s *Server) aiService(ctx context.Context) aiServiceConfig {
 	v := store.Payload(row)
 	out.Enabled = boolean(v, "enabled")
 	out.CheckinEnabled = boolean(v, "checkin_enabled")
+	out.VisionEnabled = boolean(v, "vision_enabled")
 	out.DefaultCredits = positiveOr(v, "default_credits", out.DefaultCredits)
 	out.TokensPerCredit = positiveOr(v, "tokens_per_credit", out.TokensPerCredit)
 	out.CheckinCredits = positiveOr(v, "checkin_credits", out.CheckinCredits)
@@ -75,8 +76,7 @@ func (s *Server) aiSpend(ctx context.Context, user string, tokens float64) {
 	exec(ctx, s.Store.DB, "UPDATE ai_credits SET balance=MAX(0,balance-?),updated_at=? WHERE user_id=?", tokens/per, store.Now(), user)
 }
 
-// resolveLLM returns the chat configuration for a user: their own endpoint when
-// configured, otherwise the managed service when the admin enabled it.
+// resolveLLM uses the selected service; managed capabilities always come from site settings.
 func (s *Server) resolveLLM(ctx context.Context, user string) (Object, string) {
 	config, key := s.llmConfig(ctx, user)
 	if str(config, "service_mode") == "custom" || (str(config, "service_mode") == "" && str(config, "base_url") != "" && str(config, "model") != "") {
@@ -100,6 +100,7 @@ func (s *Server) resolveLLM(ctx context.Context, user string) (Object, string) {
 	managed["base_url"] = svc.UpstreamURL
 	managed["model"] = svc.UpstreamModel
 	managed["managed"] = true
+	managed["vision_enabled"] = svc.VisionEnabled
 	return managed, svc.UpstreamKey
 }
 
@@ -108,7 +109,7 @@ func (s *Server) aiCreditRoutes() {
 		balance, svc := s.aiBalance(r.Context(), r.User)
 		day := time.Now().In(zone).Format(time.DateOnly)
 		checked := first(query(r.Context(), s.Store.DB, "SELECT 1 AS ok FROM ai_checkins WHERE user_id=? AND day=?", r.User, day)) != nil
-		return Object{"enabled": svc.Enabled, "balance": balance, "tokens_per_credit": svc.TokensPerCredit, "checked_today": checked, "checkin_enabled": svc.CheckinEnabled, "checkin_credits": svc.CheckinCredits}
+		return Object{"enabled": svc.Enabled, "vision_enabled": svc.VisionEnabled, "balance": balance, "tokens_per_credit": svc.TokensPerCredit, "checked_today": checked, "checkin_enabled": svc.CheckinEnabled, "checkin_credits": svc.CheckinCredits}
 	})
 	s.route("POST /api/ai/credit/checkin", "owner", func(r request) any {
 		balance, svc := s.aiBalance(r.Context(), r.User)
@@ -128,12 +129,12 @@ func (s *Server) aiCreditRoutes() {
 	})
 	s.route("GET /api/admin/ai-service", "admin", func(r request) any {
 		svc := s.aiService(r.Context())
-		return Object{"enabled": svc.Enabled, "default_credits": svc.DefaultCredits, "tokens_per_credit": svc.TokensPerCredit, "checkin_enabled": svc.CheckinEnabled, "checkin_credits": svc.CheckinCredits, "upstream_url": svc.UpstreamURL, "upstream_model": svc.UpstreamModel, "has_key": svc.UpstreamKey != ""}
+		return Object{"enabled": svc.Enabled, "vision_enabled": svc.VisionEnabled, "default_credits": svc.DefaultCredits, "tokens_per_credit": svc.TokensPerCredit, "checkin_enabled": svc.CheckinEnabled, "checkin_credits": svc.CheckinCredits, "upstream_url": svc.UpstreamURL, "upstream_model": svc.UpstreamModel, "has_key": svc.UpstreamKey != ""}
 	})
 	s.route("PUT /api/admin/ai-service", "admin", func(r request) any {
 		b := r.body()
 		svc := s.aiService(r.Context())
-		for _, key := range []string{"enabled", "checkin_enabled"} {
+		for _, key := range []string{"enabled", "checkin_enabled", "vision_enabled"} {
 			if b[key] == nil {
 				continue
 			}
@@ -143,6 +144,8 @@ func (s *Server) aiCreditRoutes() {
 			}
 			if key == "enabled" {
 				svc.Enabled = value
+			} else if key == "vision_enabled" {
+				svc.VisionEnabled = value
 			} else {
 				svc.CheckinEnabled = value
 			}
@@ -188,13 +191,13 @@ func (s *Server) aiCreditRoutes() {
 			}
 			svc.UpstreamKey = key
 		}
-		payload := Object{"enabled": svc.Enabled, "default_credits": svc.DefaultCredits, "tokens_per_credit": svc.TokensPerCredit, "checkin_enabled": svc.CheckinEnabled, "checkin_credits": svc.CheckinCredits, "upstream_url": svc.UpstreamURL, "upstream_model": svc.UpstreamModel}
+		payload := Object{"enabled": svc.Enabled, "vision_enabled": svc.VisionEnabled, "default_credits": svc.DefaultCredits, "tokens_per_credit": svc.TokensPerCredit, "checkin_enabled": svc.CheckinEnabled, "checkin_credits": svc.CheckinCredits, "upstream_url": svc.UpstreamURL, "upstream_model": svc.UpstreamModel}
 		if svc.UpstreamKey != "" {
 			encrypted, err := s.Store.Encrypt(svc.UpstreamKey)
 			check(err)
 			payload["upstream_key_encrypted"] = encrypted
 		}
 		exec(r.Context(), s.Store.DB, "INSERT OR REPLACE INTO site_settings VALUES('ai_service',?)", store.JSON(payload))
-		return Object{"enabled": svc.Enabled, "default_credits": svc.DefaultCredits, "tokens_per_credit": svc.TokensPerCredit, "checkin_enabled": svc.CheckinEnabled, "checkin_credits": svc.CheckinCredits, "upstream_url": svc.UpstreamURL, "upstream_model": svc.UpstreamModel, "has_key": svc.UpstreamKey != ""}
+		return Object{"enabled": svc.Enabled, "vision_enabled": svc.VisionEnabled, "default_credits": svc.DefaultCredits, "tokens_per_credit": svc.TokensPerCredit, "checkin_enabled": svc.CheckinEnabled, "checkin_credits": svc.CheckinCredits, "upstream_url": svc.UpstreamURL, "upstream_model": svc.UpstreamModel, "has_key": svc.UpstreamKey != ""}
 	})
 }

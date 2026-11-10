@@ -48,7 +48,8 @@
     applySidebarMode(sidebarQuery.matches?'icons':'labels');
   });
   const view = document.querySelector('#view');
-  const breadcrumb=document.createElement('span');breadcrumb.className='breadcrumb-sub';document.querySelector('.breadcrumb').append(breadcrumb);
+  const breadcrumb=document.createElement('span');breadcrumb.className='breadcrumb-sub';breadcrumb.hidden=true;breadcrumb.innerHTML='<span class="breadcrumb-separator" aria-hidden="true">/</span><span class="breadcrumb-sub-label" aria-current="page"></span>';document.querySelector('.breadcrumb').append(breadcrumb);
+  const breadcrumbLabel=breadcrumb.querySelector('.breadcrumb-sub-label');
   const mobileTabs=document.createElement('div');mobileTabs.className='page-tabs';mobileTabs.setAttribute('role','tablist');mobileTabs.setAttribute('aria-label','栏目内页面');view.before(mobileTabs);
   mobileTabs.addEventListener('click',e=>{const b=e.target.closest('[data-subnav]');if(b)select(b.dataset.subnav);});
   mobileTabs.addEventListener('keydown',e=>{if(!['ArrowLeft','ArrowRight','Home','End'].includes(e.key))return;e.preventDefault();e.stopPropagation();const rows=[...mobileTabs.querySelectorAll('button')],i=rows.indexOf(document.activeElement),target=rows[e.key==='Home'?0:e.key==='End'?rows.length-1:(i+(e.key==='ArrowLeft'?-1:1)+rows.length)%rows.length];select(target.dataset.subnav);target.focus({preventScroll:true});});
@@ -83,7 +84,7 @@
       }
       show(node('.statistics-grid'),key!=='recent');
       show(node('#statistics-summary'),key==='overview');
-      show(node('#statistics-credit'),key==='overview'&&node('[data-chart-mode=managed]')?.classList.contains('active'));
+      show(node('#statistics-credit'),key==='overview'&&view.dataset.statisticsSource==='managed');
       show(node('#statistics-models'),['overview','tokens'].includes(key));
       show(node('#statistics-recent')?.closest('section'),['overview','recent'].includes(key));
     }
@@ -110,7 +111,8 @@
     glide(selected,true);uiMotion.syncSegments();
     const apply=()=>{
       visibleGroups(page,key);
-      breadcrumb.textContent=' / '+selected.textContent;breadcrumb.hidden=false;
+      if(breadcrumbLabel.textContent!==selected.textContent)breadcrumbLabel.textContent=selected.textContent;breadcrumb.hidden=false;
+      document.getElementById('breadcrumb').removeAttribute('aria-current');
       view.setAttribute('role','tabpanel');view.setAttribute('aria-label',selected.textContent);
       const description=node('.page-heading p');
       if(page==='settings'&&description&&description.textContent!==descriptions[key])description.textContent=descriptions[key]||'';
@@ -129,7 +131,7 @@
     const fresh=next!==signature;
     if(fresh){
       signature=next;selectionAnimation?.cancel();document.querySelectorAll('.nav-sub.leaving').forEach(box=>box.remove());if(currentBox)uiMotion.hideSubnavigation(currentBox);currentBox=null;mobileTabs.replaceChildren();mobileTabs.hidden=!items.length;breadcrumb.hidden=!items.length;
-      if(!items.length){view.removeAttribute('role');view.removeAttribute('aria-label');}
+      if(!items.length){document.getElementById('breadcrumb').setAttribute('aria-current','page');view.removeAttribute('role');view.removeAttribute('aria-label');}
       document.querySelectorAll('[data-nav]').forEach(b=>{b.removeAttribute('aria-expanded');b.removeAttribute('aria-controls');});
       if(items.length){
         currentBox=document.createElement('div');currentBox.className='nav-sub';currentBox.id='page-subnav';

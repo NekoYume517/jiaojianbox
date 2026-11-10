@@ -250,3 +250,13 @@ input:not([type=checkbox]):not([type=hidden]):not([type=file]),select{min-height
 .sidebar button:focus-visible,.sidebar a:focus-visible{outline:none;outline-offset:0}
 .statistics-wide .panel-head{gap:12px;flex-wrap:wrap}
 .statistics-wide .panel-head>small{margin-left:auto}
+
+/* One breadcrumb contract: equal separators, shared baseline, predictable truncation. */
+.topbar .breadcrumb{display:flex;align-items:center;gap:12px;min-width:0;font-size:.857143rem;line-height:1.5}
+.topbar .breadcrumb span{display:inline-block;margin:0;font-size:inherit}
+.topbar .breadcrumb-root,.topbar .breadcrumb-separator{flex:none;color:var(--muted)}
+.topbar .breadcrumb>strong{flex:0 1 auto;min-width:2em;max-width:10em;overflow:hidden;text-overflow:ellipsis;font-size:inherit}
+.topbar .breadcrumb .breadcrumb-sub{display:inline-flex;align-items:center;gap:12px;min-width:0;flex:0 1 auto}
+.topbar .breadcrumb .breadcrumb-sub-label{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text)}
+.topbar .breadcrumb .breadcrumb-sub[hidden]{display:none}
+@media(max-width:620px){.topbar .breadcrumb{gap:8px;font-size:.786rem}.topbar .breadcrumb .breadcrumb-sub{gap:8px}.topbar .breadcrumb .breadcrumb-root,.topbar .breadcrumb .breadcrumb-root-separator{display:none}}

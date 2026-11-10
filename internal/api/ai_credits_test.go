@@ -116,3 +116,42 @@ func TestServiceSelectionPreservesCustomSettings(t *testing.T) {
 		}
 	}
 }
+
+func TestManagedVisionIsControlledByAdmin(t *testing.T) {
+	s := testServer(t)
+	adminToken, adminID := login(t, s, "vision-admin")
+	userToken, user := login(t, s, "vision-user")
+	exec(context.Background(), s.Store.DB, "INSERT OR REPLACE INTO user_roles VALUES(?,'superadmin')", adminID)
+	service := Object{"enabled": true, "vision_enabled": true, "upstream_url": "https://managed.example/v1", "upstream_model": "vision-model", "upstream_key": "fixture-key"}
+	if code, _ := call(t, s, "PUT", "/api/admin/ai-service", userToken, service); code != 403 {
+		t.Fatal("ordinary user changed server model", code)
+	}
+	code, saved := call(t, s, "PUT", "/api/admin/ai-service", adminToken, service)
+	if code != 200 || !boolean(saved, "vision_enabled") {
+		t.Fatal(code, saved)
+	}
+	call(t, s, "PUT", "/api/settings/llm", userToken, Object{"service_mode": "managed", "vision_enabled": false})
+	config, _ := s.resolveLLM(context.Background(), user)
+	if !boolean(config, "vision_enabled") {
+		t.Fatal("user setting disabled managed vision")
+	}
+	_, credit := call(t, s, "GET", "/api/ai/credit", userToken, nil)
+	if !boolean(credit, "vision_enabled") {
+		t.Fatal("public capability missing", credit)
+	}
+	call(t, s, "PUT", "/api/admin/ai-service", adminToken, Object{"vision_enabled": false})
+	call(t, s, "PUT", "/api/settings/llm", userToken, Object{"service_mode": "managed", "vision_enabled": true})
+	config, _ = s.resolveLLM(context.Background(), user)
+	if boolean(config, "vision_enabled") {
+		t.Fatal("user setting enabled unsupported managed vision")
+	}
+	_, saved = call(t, s, "GET", "/api/admin/ai-service", adminToken, nil)
+	if boolean(saved, "vision_enabled") || !boolean(saved, "has_key") {
+		t.Fatal("capability or existing key not preserved", saved)
+	}
+	call(t, s, "PUT", "/api/settings/llm", userToken, Object{"service_mode": "custom", "vision_enabled": true, "base_url": "https://custom.example/v1", "model": "custom-model"})
+	config, _ = s.resolveLLM(context.Background(), user)
+	if !boolean(config, "vision_enabled") || boolean(config, "managed") {
+		t.Fatal("custom vision incorrectly overridden")
+	}
+}

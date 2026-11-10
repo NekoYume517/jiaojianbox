@@ -27,7 +27,14 @@ module.exports=async(page,scratch)=>{
     assert(comfortable.field>compact.field&&comfortable.panel>compact.panel,'fields and panels must share density');
     await page.locator('#appearance-text-size').selectOption('large');const large=await sizes();
     assert(large.font>compact.font*1.1,'navigation text must respond to text size');
-    await selectTab('model');await page.locator('#llm-model').fill('保留未保存草稿');
+    await selectTab('model');
+    const breadcrumbSpacing=await page.evaluate(()=>{
+      const root=document.querySelector('.breadcrumb-root').getBoundingClientRect(),separator=document.querySelector('.breadcrumb-root-separator').getBoundingClientRect(),main=document.querySelector('#breadcrumb').getBoundingClientRect(),subSeparator=document.querySelector('.breadcrumb-sub .breadcrumb-separator').getBoundingClientRect(),sub=document.querySelector('.breadcrumb-sub-label').getBoundingClientRect();
+      return [separator.left-root.right,main.left-separator.right,subSeparator.left-main.right,sub.left-subSeparator.right];
+    });
+    assert(breadcrumbSpacing.every(gap=>Math.abs(gap-12)<.5),'breadcrumb separators must have equal spacing at every level');
+    assert.equal(await page.locator('.breadcrumb [aria-current=page]').count(),1);
+    await page.locator('#llm-model').fill('保留未保存草稿');
     await selectTab('general');await selectTab('model');assert.equal(await page.locator('#llm-model').inputValue(),'保留未保存草稿');
     const previous=await page.locator('.nav-sub [data-subnav="model"]').evaluate(el=>el.previousElementSibling.dataset.subnav);
     await page.keyboard.press('ArrowUp');assert.equal(await page.locator('.nav-sub:not(.leaving) [aria-selected="true"]').getAttribute('data-subnav'),previous);
