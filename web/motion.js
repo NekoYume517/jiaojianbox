@@ -236,8 +236,8 @@
     pageAnimations.get(element)?.cancel();
     if (keyboard || reduced.matches || document.hidden || !element.getClientRects().length) {
       renderPage();
-      element.scrollTop = 0;
-      document.scrollingElement.scrollTop = 0;
+      // Only main page switches restart from the top; subsection swaps keep the reading position.
+      if (!subsection) { element.scrollTop = 0; document.scrollingElement.scrollTop = 0; }
       return;
     }
     const drawn = getComputedStyle(element);
@@ -251,8 +251,7 @@
     if (token !== pageSwapToken) return;
     exit?.cancel();
     renderPage();
-    element.scrollTop = 0;
-    document.scrollingElement.scrollTop = 0;
+    if (!subsection) { element.scrollTop = 0; document.scrollingElement.scrollTop = 0; }
     const entry = play(element, [
       { opacity: subsection ? .5 : 0, transform: subsection ? 'translateY(2px)' : 'translateY(6px)' },
       { opacity: 1, transform: 'none' },

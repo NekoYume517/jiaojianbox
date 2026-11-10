@@ -116,7 +116,8 @@
       uiMotion.syncSegments();
     };
     if(animate)uiMotion.swapPage(view,apply,{subsection:true});
-    else{apply();document.scrollingElement.scrollTop=0;}
+    // The render-driven sync path must never move the viewport.
+    else apply();
   }
   function sync() {
     const page=state.page;
