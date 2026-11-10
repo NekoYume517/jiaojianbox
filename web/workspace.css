@@ -214,3 +214,39 @@ input:not([type=checkbox]):not([type=hidden]):not([type=file]),select{min-height
 @media(max-width:1000px){.plugin-capabilities{grid-template-columns:1fr}.plugin-capabilities>div{border-right:0;border-bottom:1px solid var(--soft-line)}.plugin-capabilities>div:last-child{border-bottom:0}}
 @media(max-width:820px){.plugin-card{padding:20px}.plugin-footer{align-items:flex-start;flex-direction:column;gap:10px}}
 @media(max-width:620px){.sidebar nav>button[data-plugin-tab]{display:none}.plugin-head{grid-template-columns:minmax(0,1fr);gap:12px}.plugin-switch{justify-self:start}.plugin-tags{margin-top:10px}.plugin-debug>summary{align-items:flex-start;flex-direction:column;min-height:0;padding:12px}.plugin-debug>summary small{margin-top:3px}.plugin-actions .secondary,.plugin-actions .plain-button{flex:1;min-width:0}}
+
+/* Magpie service controls: shared segments, balance and daily check-in. */
+.chart-mode{width:max-content;max-width:100%;align-items:center;flex-shrink:0}
+.chart-mode[hidden],.managed-overview[hidden],#model-settings[hidden]{display:none}
+.chart-mode button{min-height:30px;min-width:64px;padding:5px 14px;white-space:nowrap;transition:color 160ms var(--motion-ease),background-color 160ms var(--motion-ease)}
+.service-toolbar{display:flex;align-items:center;flex-wrap:wrap;gap:14px;margin-bottom:18px}
+.service-toolbar .helper{margin:0}
+.service-toolbar:has(.chart-mode[hidden]):has(.helper:empty){display:none}
+.managed-overview{display:grid;grid-template-columns:minmax(0,1.4fr) minmax(0,1fr);gap:16px;margin-bottom:20px}
+.managed-overview:has(.checkin-panel[hidden]),.managed-overview:not(:has(.checkin-panel)){grid-template-columns:minmax(0,1fr)}
+.credit-panel,.checkin-panel{padding:var(--panel-space,24px)}
+.credit-panel>strong{display:block;margin:12px 0 8px;font-size:2.5rem;line-height:1.2;letter-spacing:-1px;font-weight:600;color:var(--ink);font-variant-numeric:tabular-nums}
+.credit-panel .helper{margin:0;line-height:1.7}
+.service-badge{display:inline-flex;margin-top:16px;align-items:center;gap:6px;color:var(--muted);font-size:.786rem}
+.service-badge::before{content:'';width:6px;height:6px;border-radius:50%;background:var(--green)}
+.checkin-panel{display:flex;flex-direction:column;align-items:flex-start;gap:14px;justify-content:space-between}
+.checkin-panel h3{margin:0 0 7px;font-size:.929rem}
+.checkin-panel .helper{margin:0;line-height:1.7}
+.checkin-panel>strong{font-size:1.286rem;font-weight:500;color:var(--green)}
+#model-settings[data-mode=managed] .settings-side{display:none}
+#model-settings[data-mode=managed] .settings-grid{grid-template-columns:minmax(0,1fr)}
+#llm-provider-fields{padding-bottom:18px;margin-bottom:22px;border-bottom:1px solid var(--soft-line)}
+#llm-provider-fields[hidden]{display:none}
+#llm-provider-fields .form-grid{grid-template-columns:minmax(0,1fr)}
+#llm-context{max-width:240px}
+.statistics-controls{flex-wrap:wrap;gap:16px}
+.statistics-controls .helper{margin:0}
+.statistics-controls .chart-mode{margin-right:auto}
+.statistics-summary{grid-template-columns:repeat(4,minmax(0,1fr))}
+#statistics-unit{margin-left:auto}
+@media(max-width:1000px){.statistics-summary{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:620px){.managed-overview{grid-template-columns:minmax(0,1fr);gap:12px}.credit-panel>strong{font-size:2rem}.checkin-panel{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center}.checkin-panel>div{grid-column:1/-1}.chart-mode button{min-height:38px}.statistics-controls{flex-direction:row;align-items:center}.statistics-controls>#statistics-state{flex-basis:100%}.service-toolbar{gap:10px}.credit-panel,.checkin-panel{padding:18px}}
+/* Sidebar selection is sufficient feedback; keyboard input must not add an outer ring. */
+.sidebar button:focus-visible,.sidebar a:focus-visible{outline:none;outline-offset:0}
+.statistics-wide .panel-head{gap:12px;flex-wrap:wrap}
+.statistics-wide .panel-head>small{margin-left:auto}

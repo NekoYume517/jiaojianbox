@@ -23,7 +23,7 @@ func endpoint(base, action string) string {
 	return base + "/" + action
 }
 func defaultLLM() Object {
-	return Object{"base_url": "", "model": "", "context_count": 12, "auto_analyze": false, "auto_task": false, "vision_enabled": false, "include_keywords": "", "exclude_keywords": "", "instruction": ""}
+	return Object{"service_mode": "", "base_url": "", "model": "", "context_count": 12, "auto_analyze": false, "auto_task": false, "vision_enabled": false, "include_keywords": "", "exclude_keywords": "", "instruction": ""}
 }
 func (s *Server) llmConfig(ctx context.Context, user string) (Object, string) {
 	config := defaultLLM()
@@ -45,7 +45,10 @@ func llmInput(body Object) Object {
 			out[k] = v
 		}
 	}
-	for _, key := range []string{"base_url", "model", "include_keywords", "exclude_keywords", "instruction"} {
+	if !choice(str(out, "service_mode"), "", "managed", "custom") {
+		fail(422, "AI 服务类型无效")
+	}
+	for _, key := range []string{"service_mode", "base_url", "model", "include_keywords", "exclude_keywords", "instruction"} {
 		if _, ok := out[key].(string); !ok {
 			fail(422, "AI 配置类型无效："+key)
 		}

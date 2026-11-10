@@ -22,6 +22,19 @@ func (s *Server) statisticsRoutes() {
 		now := time.Now().In(zone)
 		start := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, zone).AddDate(0, 0, 1-days)
 		rows := query(r.Context(), s.Store.DB, "SELECT kind,model,status,started_at,duration_ms,CASE WHEN streamed=1 THEN first_token_ms ELSE NULL END AS first_token_ms,prompt_tokens,completion_tokens,total_tokens,http_status,usage_reported,streamed,managed FROM llm_calls WHERE user_id=? AND started_at>=? ORDER BY started_at DESC", r.User, start.UTC().Format(time.RFC3339Nano))
+		source := r.URL.Query().Get("source")
+		if source != "" && !choice(source, "managed", "custom") {
+			fail(422, "统计来源无效")
+		}
+		if source != "" {
+			filtered := []Object{}
+			for _, row := range rows {
+				if boolean(row, "managed") == (source == "managed") {
+					filtered = append(filtered, row)
+				}
+			}
+			rows = filtered
+		}
 		daily := []Object{}
 		byDate := map[string]Object{}
 		latencies := map[string][]float64{}

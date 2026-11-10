@@ -21,7 +21,7 @@ module.exports=async(page,scratch)=>{
     await page.locator('#appearance-density').selectOption('comfortable');const comfortable=await sizes();
     await page.screenshot({path:path.join(scratch,'density-comfortable.png')});
     await page.locator('#appearance-density').selectOption('compact');const compact=await sizes();
-    await page.waitForFunction(()=>{const a=document.querySelector('.sidebar [data-nav].active').getBoundingClientRect(),b=document.querySelector('.nav-highlight').getBoundingClientRect();return Math.abs(a.y-b.y)<.5&&Math.abs(a.height-b.height)<.5;});
+    await page.waitForFunction(()=>{const active=document.querySelector('.sidebar nav [data-nav].active');if(!active)return document.querySelector('.nav-highlight').hidden;const a=active.getBoundingClientRect(),b=document.querySelector('.nav-highlight').getBoundingClientRect();return Math.abs(a.y-b.y)<.5&&Math.abs(a.height-b.height)<.5;});
     await page.screenshot({path:path.join(scratch,'density-compact.png')});
     assert(comfortable.nav>=compact.nav+6,'navigation density must change the actual click area');
     assert(comfortable.field>compact.field&&comfortable.panel>compact.panel,'fields and panels must share density');

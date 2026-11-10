@@ -79,11 +79,14 @@ func (s *Server) aiSpend(ctx context.Context, user string, tokens float64) {
 // configured, otherwise the managed service when the admin enabled it.
 func (s *Server) resolveLLM(ctx context.Context, user string) (Object, string) {
 	config, key := s.llmConfig(ctx, user)
-	if str(config, "base_url") != "" && str(config, "model") != "" {
+	if str(config, "service_mode") == "custom" || (str(config, "service_mode") == "" && str(config, "base_url") != "" && str(config, "model") != "") {
 		return config, key
 	}
 	svc := s.aiService(ctx)
 	if !svc.Enabled || svc.UpstreamURL == "" || svc.UpstreamModel == "" || svc.UpstreamKey == "" {
+		if str(config, "service_mode") == "managed" {
+			fail(503, "服务器 AI 服务暂不可用，请联系管理员或切换自定义接口")
+		}
 		return config, key
 	}
 	balance, _ := s.aiBalance(ctx, user)

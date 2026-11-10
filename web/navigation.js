@@ -6,7 +6,7 @@
       ['general','常规','#settings-appearance'],
       ['quick','快捷收集','#settings-quick'],
       ['startup','启动与更新','#settings-launcher'],
-      ['model','模型连接','.settings-grid'],
+      ['model','模型连接','#model-settings'],
       ['account','账号与数据','#account-panel'],
       ['admin','站点管理','#admin-panel'],
     ],
@@ -20,7 +20,7 @@
     ],
   };
   const chosen = new Map();
-  const descriptions={general:'选择适合当前设备的颜色、文字和信息密度。',quick:'设置快捷收集的启用方式和窗口内容。',startup:'管理开机启动与客户端更新。',model:'使用自己的模型接口，决定怎样整理通知。',account:'管理个人资料、登录方式和工作区数据。',admin:'管理站点注册、邀请码与账号。'};
+  const descriptions={general:'选择适合当前设备的颜色、文字和信息密度。',quick:'设置快捷收集的启用方式和窗口内容。',startup:'管理开机启动与客户端更新。',model:'选择服务器提供的 AI，或连接自己的模型接口。',account:'管理个人资料、登录方式和工作区数据。',admin:'管理站点注册、邀请码与账号。'};
   let signature='', currentBox, queued=false, selectionAnimation;
   const sidebarQuery=matchMedia('(max-width:820px)');
   const sidebarKey='jjb-sidebar-mode';
@@ -83,6 +83,7 @@
       }
       show(node('.statistics-grid'),key!=='recent');
       show(node('#statistics-summary'),key==='overview');
+      show(node('#statistics-credit'),key==='overview'&&node('[data-chart-mode=managed]')?.classList.contains('active'));
       show(node('#statistics-models'),['overview','tokens'].includes(key));
       show(node('#statistics-recent')?.closest('section'),['overview','recent'].includes(key));
     }

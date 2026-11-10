@@ -74,7 +74,7 @@
   }
 
   function syncSegments() {
-    document.querySelectorAll('.theme-picker,.page-tabs').forEach(box => {
+    document.querySelectorAll('.theme-picker,.page-tabs,.chart-mode').forEach(box => {
       const selected = box.querySelector('button.active,button[aria-selected=true]');
       if (!selected?.offsetWidth || !box.getClientRects().length) return;
       let entry = segments.get(box);
@@ -84,15 +84,25 @@
       }
       const before = entry.thumb.style.width ? getComputedStyle(entry.thumb) : null;
       const from = before && { transform: before.transform, width: before.width, height: before.height };
-      stop(entry);
       const to = { transform: `translate(${selected.offsetLeft}px,${selected.offsetTop}px)`, width: selected.offsetWidth + 'px', height: selected.offsetHeight + 'px' };
+      if(entry.selected===selected && Object.entries(to).every(([key,value])=>entry.thumb.style[key]===value)){if(keyboard||reduced.matches||document.hidden)stop(entry);return;}
+      stop(entry);entry.animations=[];
       Object.assign(entry.thumb.style, to);
       if (from && entry.selected !== selected && !keyboard && !reduced.matches) entry.animations = [play(entry.thumb, [from, to], { duration: 280, easing: 'cubic-bezier(.2,.8,.2,1)' })];
       entry.selected = selected;
-      if (entry.animations.length) entry.animations[0]?.finished.finally(() => syncSegments()).catch(() => {});
+      if (entry.animations.length) entry.animations[0]?.finished.catch(() => {});
     });
   }
 
+  document.addEventListener('keydown',event=>{
+    const box=event.target.closest('.chart-mode[role=tablist]');
+    if(!box||!['ArrowLeft','ArrowRight','Home','End'].includes(event.key))return;
+    const buttons=[...box.querySelectorAll('button:not(:disabled)')];
+    const index=buttons.indexOf(event.target);if(index<0)return;
+    event.preventDefault();event.stopPropagation();
+    const next=buttons[event.key==='Home'?0:event.key==='End'?buttons.length-1:(index+(event.key==='ArrowLeft'?-1:1)+buttons.length)%buttons.length];
+    next.focus({preventScroll:true});next.click();
+  });
   function sourceRect(entry) {
     if (!entry?.source?.isConnected) return null;
     const r = entry.source.getBoundingClientRect();
@@ -214,6 +224,7 @@
   document.addEventListener('scroll', () => hideMenu(), { capture: true, passive: true });
   document.addEventListener('visibilitychange', () => { hideMenu(); syncNavigation(true); });
   reduced.addEventListener('change', () => {
+    document.querySelectorAll('[data-motion-key]').forEach(el=>layoutAnimations.get(el)?.cancel());
     document.querySelectorAll('#view,.nav-sub,.nav-sub button,.subnav-highlight').forEach(el=>el.getAnimations().forEach(a=>a.cancel()));
     if(reduced.matches){document.documentElement.classList.remove('theming');document.querySelectorAll('.nav-sub.leaving').forEach(el=>el.remove());}
     syncNavigation(true); syncSegments(); hideMenu();
@@ -258,6 +269,25 @@
     ], { duration: subsection ? 220 : 240, easing: 'cubic-bezier(.2,.8,.2,1)' });
     if (entry) pageAnimations.set(element, entry);
   }
+  // Shared controls keep their screen-space position across a synchronous layout change.
+  const layoutAnimations = new WeakMap();
+  function relayout(container, change) {
+    if(!container){change();return;}
+    const rects=new Map();
+    container.querySelectorAll('[data-motion-key]').forEach(el=>{
+      if(el.getClientRects().length)rects.set(el.dataset.motionKey,el.getBoundingClientRect());
+    });
+    container.querySelectorAll('[data-motion-key]').forEach(el=>layoutAnimations.get(el)?.cancel());
+    change();
+    if(keyboard||reduced.matches||document.hidden)return;
+    container.querySelectorAll('[data-motion-key]').forEach(el=>{
+      if(!el.getClientRects().length)return;
+      const from=rects.get(el.dataset.motionKey),to=el.getBoundingClientRect();
+      const frames=from?[{transform:`translate(${from.left-to.left}px,${from.top-to.top}px)`},{transform:'none'}]:[{opacity:0,transform:'translateY(2px)'},{opacity:1,transform:'none'}];
+      const animation=play(el,frames,{duration:280,easing:'cubic-bezier(.2,.8,.2,1)'});
+      if(animation)layoutAnimations.set(el,animation);
+    });
+  }
   function revealSubnavigation(element) {
     if (keyboard || reduced.matches || document.hidden) return;
     const css=getComputedStyle(element),navEase='cubic-bezier(.32,.72,0,1)';
@@ -277,6 +307,6 @@
     const deadline=setTimeout(()=>element.remove(),320);
     animation.finished.catch(()=>{}).finally(()=>{clearTimeout(deadline);element.remove();});
   }
-  window.uiMotion = { openDialog, closeDialog, syncNavigation, syncSegments, hideMenu, transitionPage, swapPage, revealSubnavigation, hideSubnavigation };
+  window.uiMotion = { relayout, openDialog, closeDialog, syncNavigation, syncSegments, hideMenu, transitionPage, swapPage, revealSubnavigation, hideSubnavigation };
   syncSegments();
 })();

@@ -87,5 +87,36 @@ module.exports = async function verifyMotion(page, scratch) {
   await page.setViewportSize({width:1280,height:860});await page.locator('[data-nav="tasks"]').click();
   await page.waitForFunction(()=>getComputedStyle(document.querySelector('#view')).opacity==='1');
   await require('./verify-experience.cjs')(page,scratch);
+  // The service controls share Magpie's moving segment and keyboard behavior.
+  await page.evaluate(()=>{
+    const box=document.createElement('div');box.id='verify-service-segment';box.className='chart-mode';box.setAttribute('role','tablist');
+    box.innerHTML='<button role="tab" class="active" aria-selected="true">默认</button><button role="tab" aria-selected="false">自定义</button>';
+    Object.assign(box.style,{position:'fixed',top:'100px',right:'24px',zIndex:'1005'});document.body.append(box);
+    box.addEventListener('click',e=>{if(e.target.tagName!=='BUTTON')return;box.querySelectorAll('button').forEach(b=>{const selected=b===e.target;b.classList.toggle('active',selected);b.setAttribute('aria-selected',String(selected));b.tabIndex=selected?0:-1;});uiMotion.syncSegments();});
+    uiMotion.syncSegments();
+  });
+  const segment=page.locator('#verify-service-segment');
+  await segment.locator('button').nth(1).click();
+  await page.waitForTimeout(320);
+  assert.equal(await segment.locator('.segment-highlight').count(),1);
+  assert(await segment.evaluate(box=>{const a=box.querySelector('.active').getBoundingClientRect(),b=box.querySelector('.segment-highlight').getBoundingClientRect();return Math.abs(a.x-b.x)<.5&&Math.abs(a.width-b.width)<.5;}));
+  await segment.locator('button').nth(1).focus();await page.keyboard.press('ArrowLeft');
+  assert.equal(await segment.locator('[aria-selected=true]').innerText(),'默认');
+  await page.evaluate(()=>document.querySelector('#verify-service-segment').remove());
+  await page.locator('[data-nav=inbox]').focus();await page.keyboard.press('Shift');
+  assert.equal(await page.locator('[data-nav=inbox]').evaluate(el=>getComputedStyle(el).outlineStyle),'none');
+  await page.evaluate(()=>{
+    document.documentElement.dataset.inputMethod='pointer';
+    const box=document.createElement('div');box.id='verify-shared-element';box.style.cssText='position:fixed;left:300px;top:120px;z-index:1005';
+    box.innerHTML='<div data-motion-key="shared" style="width:50px;height:30px;background:gray"></div>';document.body.append(box);
+  });
+  await page.mouse.click(700,90);
+  const before=await page.locator('#verify-shared-element>div').boundingBox();
+  await page.evaluate(()=>uiMotion.relayout(document.querySelector('#verify-shared-element'),()=>{document.querySelector('#verify-shared-element>div').style.marginLeft='100px';}));
+  const during=await page.locator('#verify-shared-element>div').boundingBox();
+  assert(during.x<before.x+95,'shared element must move from its old position');
+  await page.waitForTimeout(320);
+  const after=await page.locator('#verify-shared-element>div').boundingBox();assert(Math.abs(after.x-before.x-100)<.5);
+  await page.evaluate(()=>document.querySelector('#verify-shared-element').remove());
   console.log('Motion: first render, spring retargeting, press feedback, interrupted dialogs, menu re-entry/keyboard, reduced motion and narrow bounds passed.');
 };
