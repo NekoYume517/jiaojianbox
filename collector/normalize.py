@@ -20,8 +20,9 @@ def wechat(row, account, chat, chat_name="", sender_name=""):
         sender = sender or match[1]
         raw = raw[match.end():]
     text = raw
+    message_type = str(row.get("type", "文本"))
     metadata = {}
-    if raw.lstrip().startswith("<"):
+    if raw.lstrip().startswith("<") and message_type != "文本":
         try:
             root = ET.fromstring(raw[:100000])
             title = root.findtext(".//appmsg/title") or root.findtext(".//title") or ""
@@ -36,15 +37,15 @@ def wechat(row, account, chat, chat_name="", sender_name=""):
                 metadata["card"] = {"title": title, "url": url,
                     "extension": root.findtext(".//fileext") or "", "size": root.findtext(".//totallen") or ""}
             else:
-                text = "[" + str(row.get("type", "媒体消息")) + "]"
+                text = "[" + message_type + "]"
         except ET.ParseError:
-            text = "[" + str(row.get("type", "消息")) + "]"
+            text = "[" + message_type + "]"
     external = f"{row.get('shard', '')}:{row.get('local_id', 0)}:{row.get('sort_seq', 0)}"
     return {"source": "wechat", "account_id": str(account), "conversation_id": chat,
             "conversation_name": chat_name or chat, "external_id": external,
             "sender_id": sender, "sender_name": sender_name or sender,
             "text": text[:30000], "sent_at": timestamp(row.get("create_time")),
-            "message_type": str(row.get("type", "文本")), "metadata": metadata}
+            "message_type": message_type, "metadata": metadata}
 
 
 def qq(event, names=None):

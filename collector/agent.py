@@ -356,6 +356,7 @@ def main():
     if args.command == "self-test":
         import sqlite3
         import psutil
+        import zstandard
         from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
         from wechatauto.db import WeChatDB
         db = sqlite3.connect(":memory:")
@@ -363,7 +364,7 @@ def main():
         db.close()
         Cipher(algorithms.AES(bytes(32)), modes.CBC(bytes(16))).encryptor().finalize()
         assert psutil.Process().pid > 0 and WeChatDB
-        emit(state="ready", dependencies="ok", bundled=bool(getattr(sys, "frozen", False)))
+        emit(state="ready", dependencies="ok", zstd=zstandard.__version__, bundled=bool(getattr(sys, "frozen", False)))
         return
     try:
         config = read_config(sys.stdin)

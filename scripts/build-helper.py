@@ -22,8 +22,8 @@ common = [
 ]
 jobs = [
     ['--name', 'collector-agent', '--paths', str(root), '--paths', str(root / 'runtime-vendor' / 'wechatauto-replica'),
-     '--hidden-import', 'wechatauto.db', '--hidden-import', 'psutil', str(root / 'build' / 'collector_entry.py')],
-
+     '--hidden-import', 'wechatauto.db', '--hidden-import', 'psutil', '--hidden-import', 'zstandard',
+     str(root / 'build' / 'collector_entry.py')],
 ]
 for extra in jobs:
     subprocess.run(common + extra, check=True)

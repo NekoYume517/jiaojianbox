@@ -118,9 +118,20 @@ func (d *Desktop) startCollector(config Object) (any, error) {
 	if getString(config, "server_token") == "" || getString(config, "user_id") == "" {
 		return nil, errors.New("请先登录")
 	}
-	prepared, err := d.qq.prepare(config)
-	if err != nil {
-		return nil, err
+	prepared := getObjectCopy(config)
+	qqChats, _ := config["qq_chats"].([]any)
+	wechatChats, _ := config["wechat_chats"].([]any)
+	if len(qqChats) > 0 {
+		var err error
+		prepared, err = d.qq.prepare(config)
+		if err != nil {
+			if len(wechatChats) == 0 {
+				return nil, err
+			}
+			d.publish(Object{"state": "error", "source": "qq", "message": "QQ 连接失败，微信采集继续：" + err.Error()})
+			prepared = getObjectCopy(config)
+			prepared["qq_chats"] = []any{}
+		}
 	}
 	d.stopCollector()
 	cmd, stdout, err := d.collectorCommand(d.ctx, "run", prepared)

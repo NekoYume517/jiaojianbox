@@ -212,6 +212,8 @@ def test_normalization_shards_group_prefix_quote_and_qq_segments():
     value = qq(event)
     assert value["conversation_id"] == "group:301" and value["metadata"]["reply_id"] == "123"
     assert value["text"] == "提交报告[图片]"
+    text_row = {"type": "文本", "content": "<没写完的标记", "local_id": 2, "sort_seq": 101, "create_time": 1794000000, "shard": "message_0"}
+    assert wechat(text_row, "account", "chat")["text"] == "<没写完的标记"
 
 
 def test_reopen_preserves_data_and_mobile_assets(tmp_path):
