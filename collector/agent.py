@@ -11,6 +11,8 @@ import signal
 import sqlite3
 import sys
 import threading
+import re
+import traceback
 import time
 from pathlib import Path
 
@@ -103,7 +105,7 @@ def list_wechat(config):
 async def list_qq(config):
     base = config.get("qq_http_url", "http://127.0.0.1:3000").rstrip("/")
     headers = {"Authorization": "Bearer " + config["qq_token"]} if config.get("qq_token") else {}
-    async with httpx.AsyncClient(timeout=20, headers=headers, follow_redirects=False) as client:
+    async with httpx.AsyncClient(timeout=20, headers=headers, follow_redirects=False, trust_env=False) as client:
         async def action(name):
             response = await client.post(base + "/" + name, json={})
             response.raise_for_status()
@@ -237,7 +239,7 @@ async def qq_loop(config, queue, stopped):
     while not stopped.is_set():
         try:
             async with websockets.connect(config.get("qq_ws_url", "ws://127.0.0.1:3001"), extra_headers=headers, max_size=2**20, ping_interval=20) as ws:
-                async with httpx.AsyncClient(headers=headers, timeout=20, follow_redirects=False) as client:
+                async with httpx.AsyncClient(headers=headers, timeout=20, follow_redirects=False, trust_env=False) as client:
                     try:
                         await recover(client)
                     except (httpx.HTTPError, ValueError, KeyError, TypeError):
@@ -262,7 +264,7 @@ async def qq_loop(config, queue, stopped):
 async def uploader(config, queue, stopped):
     base = config["server_url"].rstrip("/")
     headers = {"Authorization": "Bearer " + config["server_token"]}
-    async with httpx.AsyncClient(headers=headers, timeout=30, follow_redirects=False) as client:
+    async with httpx.AsyncClient(headers=headers, timeout=30, follow_redirects=False, trust_env=False) as client:
         while not stopped.is_set():
             rows = queue.pending()
             try:
@@ -310,6 +312,14 @@ async def run(config, state_dir):
         worker.join(timeout=5)
 
 
+def redact_error(text, config):
+    for key, value in config.items():
+        if isinstance(value,str) and value and any(part in key.lower() for part in ('token','password','secret','api_key')):
+            text=text.replace(value,'[redacted]')
+    text=re.sub(r'(?i)(https?|socks5h?)://[^\s/@]+:[^\s/@]+@',r'\1://[redacted]@',text)
+    return re.sub(r'(?i)Bearer\s+[^\s"\',]+','Bearer [redacted]',text)
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("command", choices=["run", "list-wechat", "list-qq", "self-test"])
@@ -327,7 +337,13 @@ def main():
         assert psutil.Process().pid > 0 and WeChatDB
         emit(state="ready", dependencies="ok", bundled=bool(getattr(sys, "frozen", False)))
         return
-    config = json.loads(sys.stdin.readline())
+    config = {}
+    try:
+        config = json.loads(sys.stdin.readline())
+        if not isinstance(config,dict): raise ValueError("采集配置必须是 JSON 对象")
+    except (ValueError,TypeError):
+        emit(state="error",error_type="InvalidConfig",message="采集配置读取失败，请重新连接")
+        raise SystemExit(1)
     config["_wechat_cache_root"]=str(Path(args.state_dir).resolve()/"wechat-cache")
     config["_wechat_purpose"]="live" if args.command=="run" else "list"
     try:
@@ -341,7 +357,9 @@ def main():
         if args.command=="list-wechat":
             from .wechat_reader import record_error
             record_error(config,exc,"list-conversations")
-        emit(state="error", message=f"采集进程出错（{type(exc).__name__}），请检查 Python 依赖、登录状态与连接配置")
+        detail=redact_error(str(exc),config)[:400]
+        print(redact_error(traceback.format_exc(),config),file=sys.stderr,flush=True)
+        emit(state="error", error_type=type(exc).__name__, message=f"采集进程出错（{type(exc).__name__}）：{detail}")
         raise SystemExit(1)
 
 

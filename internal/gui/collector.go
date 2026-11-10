@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -64,7 +63,7 @@ func (d *Desktop) collectorCommand(ctx context.Context, command string, config O
 	if err != nil {
 		return nil, nil, err
 	}
-	cmd.Stderr = io.Discard
+	cmd.Stderr = &collectorErrorBuffer{}
 	return cmd, stdout, nil
 }
 func scanEvents(reader io.Reader, onEvent func(Object)) error {
@@ -94,12 +93,15 @@ func (d *Desktop) listConversations(source string, config Object) (any, error) {
 	if err != nil {
 		return nil, err
 	}
+	d.appendCollectorRecord(Object{"at": time.Now().Format(time.RFC3339Nano), "command": "list-wechat", "state": "starting", "version": d.version, "executable": cmd.Path})
 	if err = cmd.Start(); err != nil {
-		return nil, errors.New("内置微信采集组件无法启动，请重新安装完整版本")
+		d.recordCollector("list-wechat", cmd, config, nil, err)
+		return nil, errors.New("内置微信采集组件无法启动，请在高级与调试中查看日志")
 	}
 	var result Object
 	scanEvents(stdout, func(value Object) { result = value })
 	err = cmd.Wait()
+	d.recordCollector("list-wechat", cmd, config, result, err)
 	if err != nil || result["conversations"] == nil {
 		if message := getString(result, "message"); message != "" {
 			return nil, errors.New(message)
@@ -121,16 +123,29 @@ func (d *Desktop) startCollector(config Object) (any, error) {
 	if err != nil {
 		return nil, err
 	}
+	d.appendCollectorRecord(Object{"at": time.Now().Format(time.RFC3339Nano), "command": "run", "state": "starting", "version": d.version, "executable": cmd.Path})
 	if err = cmd.Start(); err != nil {
-		return nil, errors.New("内置采集组件无法启动，请重新安装完整版本")
+		d.recordCollector("run", cmd, prepared, nil, err)
+		return nil, errors.New("内置采集组件无法启动，请在高级与调试中查看日志")
 	}
 	d.mu.Lock()
 	d.collector = cmd
 	d.mu.Unlock()
 	d.publish(Object{"state": "starting", "message": "正在连接所选会话"})
 	go func() {
-		scanEvents(stdout, d.publish)
+		var failure Object
+		scanErr := scanEvents(stdout, func(value Object) {
+			if getString(value, "state") == "error" && getString(value, "source") == "" {
+				failure = getObjectCopy(value)
+				value["message"] = redactCollector(getString(value, "message"), prepared)
+			}
+			d.publish(value)
+		})
 		err := cmd.Wait()
+		if scanErr != nil && err == nil {
+			err = scanErr
+		}
+		record := d.recordCollector("run", cmd, prepared, failure, err)
 		d.mu.Lock()
 		active := d.collector == cmd
 		if active {
@@ -142,7 +157,10 @@ func (d *Desktop) startCollector(config Object) (any, error) {
 			if err != nil && cmd.ProcessState != nil {
 				code = cmd.ProcessState.ExitCode()
 			}
-			d.publish(Object{"state": "stopped", "message": fmt.Sprintf("采集组件已退出（%d），可在消息来源中重新连接", code)})
+			if failure != nil {
+				failure["message"] = redactCollector(getString(failure, "message"), prepared)
+			}
+			d.publish(Object{"state": "stopped", "message": collectorExitMessage(code, failure), "diagnostic": record, "log_path": d.collectorLogPath()})
 		}
 	}()
 	return Object{"ok": true}, nil
@@ -163,6 +181,23 @@ func (d *Desktop) diagnostics() Object {
 	d.mu.Unlock()
 	out := d.qq.diagnostics()
 	out["collector"] = state
+	out["collector_log_path"] = d.collectorLogPath()
+	d.collectorLogMu.Lock()
+	if data, err := os.ReadFile(d.collectorLogPath()); err == nil {
+		lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+		if len(lines) > 10 {
+			lines = lines[len(lines)-10:]
+		}
+		entries := []Object{}
+		for _, line := range lines {
+			var item Object
+			if json.Unmarshal([]byte(line), &item) == nil {
+				entries = append(entries, item)
+			}
+		}
+		out["collector_logs"] = entries
+	}
+	d.collectorLogMu.Unlock()
 	file := filepath.Join(d.root, "collector", "wechat-diagnostics.jsonl")
 	if data, err := os.ReadFile(file); err == nil {
 		lines := strings.Split(strings.TrimSpace(string(data)), "\n")

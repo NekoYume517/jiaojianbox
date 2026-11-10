@@ -5,6 +5,7 @@ import hashlib
 import json
 import subprocess
 import tempfile
+import sys
 import time
 
 root=Path(__file__).resolve().parents[1]
@@ -21,6 +22,7 @@ assert 'runtime/snowluma/node.exe' in manifest['files']
 for name,expected in manifest['files'].items():
  with (target/name).open('rb') as f:assert hashlib.file_digest(f,'sha256').hexdigest()==expected,name
 subprocess.run([str(target/'runtime/collector-agent/collector-agent.exe'),'self-test'],check=True,timeout=20)
+subprocess.run([sys.executable,str(root/'scripts/verify-collector-runtime.py'),str(target/'runtime/collector-agent/collector-agent.exe')],check=True,timeout=60)
 # Unknown files must survive both upgrade and uninstall.
 sentinel=target/'user-kept.txt';sentinel.write_text('preserve-me',encoding='utf-8')
 subprocess.run(command,check=True,timeout=180);assert sentinel.read_text()=='preserve-me'

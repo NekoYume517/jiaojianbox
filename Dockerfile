@@ -14,7 +14,7 @@ RUN go mod download
 COPY internal ./internal
 COPY cmd/jiaojianbox-server ./cmd/jiaojianbox-server
 COPY web ./web
-ARG VERSION=0.6.6
+ARG VERSION=0.6.7
 RUN go build -trimpath -ldflags="-s -w -X main.version=$VERSION" -o /jiaojianbox-server ./cmd/jiaojianbox-server
 
 FROM base

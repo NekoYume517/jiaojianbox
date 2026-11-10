@@ -39,6 +39,7 @@ type Desktop struct {
 	http                               *http.Server
 	mu                                 sync.Mutex
 	appearanceMu                       sync.Mutex
+	collectorLogMu                     sync.Mutex
 	quickMu                            sync.Mutex
 	positionMu                         sync.Mutex
 	positionTimer                      *time.Timer
