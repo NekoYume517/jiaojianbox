@@ -268,6 +268,72 @@ func (d *Desktop) acceptFiles(paths []string, target, kind string, quick bool) {
 	}
 }
 
+// Dropping onto a form file input hands the picked files back to the page instead
+// of collecting them, so the page keeps its own preview and validation.
+const (
+	maxDropFileBytes = 32 << 20
+	maxDropFiles     = 20
+)
+
+var dropContentTypes = map[string]string{
+	".csv":  "text/csv",
+	".txt":  "text/plain",
+	".json": "application/json",
+	".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+	".xls":  "application/vnd.ms-excel",
+	".png":  "image/png",
+	".jpg":  "image/jpeg",
+	".jpeg": "image/jpeg",
+	".webp": "image/webp",
+	".gif":  "image/gif",
+	".pdf":  "application/pdf",
+	".zip":  "application/zip",
+}
+
+func dropContentType(path string) string {
+	if value, ok := dropContentTypes[strings.ToLower(filepath.Ext(path))]; ok {
+		return value
+	}
+	return "application/octet-stream"
+}
+
+func (d *Desktop) deliverDroppedFiles(picker string, paths []string) {
+	files := make([]Object, 0, len(paths))
+	skipped := 0
+	for _, path := range paths {
+		if len(files) >= maxDropFiles {
+			skipped++
+			continue
+		}
+		file, err := os.Open(path)
+		if err != nil {
+			skipped++
+			continue
+		}
+		info, err := file.Stat()
+		if err != nil || !info.Mode().IsRegular() || info.Size() > maxDropFileBytes {
+			file.Close()
+			skipped++
+			continue
+		}
+		data, err := io.ReadAll(io.LimitReader(file, maxDropFileBytes))
+		file.Close()
+		if err != nil {
+			skipped++
+			continue
+		}
+		files = append(files, Object{"name": filepath.Base(path), "type": dropContentType(path), "data": base64.StdEncoding.EncodeToString(data)})
+	}
+	if len(files) == 0 {
+		d.emit("native-status", "拖入的文件无法读取，单个文件请控制在 32 MB 内")
+		return
+	}
+	if skipped > 0 {
+		d.emit("native-status", fmt.Sprintf("已放入 %d 个文件，%d 个超过 32 MB 被跳过", len(files), skipped))
+	}
+	d.emit("native-files", Object{"picker": picker, "files": files})
+}
+
 func (d *Desktop) acceptPluginPackages(paths []string) {
 	accepted := 0
 	for _, path := range paths {
@@ -319,7 +385,7 @@ func (d *Desktop) acceptPluginPackages(paths []string) {
 	}
 }
 
-var downloadPattern = regexp.MustCompile(`^/api/(files/[0-9a-f-]{36}|tasks/[0-9a-f-]{36}/package)$`)
+var downloadPattern = regexp.MustCompile(`^/api/(files/[0-9a-f-]{36}|tasks/[0-9a-f-]{36}/package|workspace/export|shares/[0-9a-f-]{36}/export(\?[^#]*)?)$`)
 
 func (d *Desktop) download(route, name string) (any, error) {
 	if !downloadPattern.MatchString(route) {

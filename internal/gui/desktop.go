@@ -194,14 +194,19 @@ func Run(version string) error {
 	d.main.OnWindowEvent(events.Common.WindowClosing, func(e *application.WindowEvent) { e.Cancel(); d.main.Hide() })
 	d.main.OnWindowEvent(events.Common.WindowFilesDropped, func(e *application.WindowEvent) {
 		details := e.Context().DropTargetDetails()
-		target, kind := "", "material"
+		target, kind, picker := "", "material", ""
 		if details != nil {
 			target = details.Attributes["data-native-task"]
 			if v := details.Attributes["data-native-kind"]; v != "" {
 				kind = v
 			}
+			picker = details.Attributes["data-native-picker"]
 		}
 		files := append([]string(nil), e.Context().DroppedFiles()...)
+		if kind == "picker" && picker != "" {
+			go d.deliverDroppedFiles(picker, files)
+			return
+		}
 		go d.acceptFiles(files, target, kind, false)
 	})
 	go func() {

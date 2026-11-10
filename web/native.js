@@ -46,17 +46,20 @@
   };
   function markTargets() {
     document.body?.setAttribute('data-file-drop-target', '');
-    document.querySelectorAll('.drop-zone,[data-task],.shelf-drop,.plugin-board').forEach(target => {
+    document.querySelectorAll('.drop-zone,[data-task],.shelf-drop,.plugin-board,.share-drop,.file-picker').forEach(target => {
       target.setAttribute('data-file-drop-target', '');
+      const picker = target.matches('.share-drop,.file-picker');
+      if (picker && !target.dataset.nativePicker) target.dataset.nativePicker = 'picker-' + Math.random().toString(36).slice(2, 10);
       const task = target.dataset.task || (target.classList.contains('drop-zone') && typeof state !== 'undefined' ? state.taskId : '');
-      if (task) target.dataset.nativeTask = task; else delete target.dataset.nativeTask;
-      target.dataset.nativeKind = target.classList.contains('plugin-board') ? 'plugin'
+      if (task && !picker) target.dataset.nativeTask = task; else delete target.dataset.nativeTask;
+      target.dataset.nativeKind = picker ? 'picker'
+        : target.classList.contains('plugin-board') ? 'plugin'
         : target.querySelector('#receipt-upload') ? 'receipt' : 'material';
     });
   }
   document.addEventListener('DOMContentLoaded', () => {
     document.documentElement.dataset.runtime = 'wails'; markTargets();
-    const view = document.getElementById('view'); if (view) new MutationObserver(markTargets).observe(view, { childList: true, subtree: true });
+    new MutationObserver(markTargets).observe(document.body, { childList: true, subtree: true });
   });
   on('update-state', value => { if (typeof updateUI !== 'undefined') updateUI(value); });
   on('update-download', value => { if (typeof updateUI !== 'undefined') updateUI(value, true); });

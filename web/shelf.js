@@ -62,11 +62,11 @@
   $('#shelf-handle').addEventListener('click',show);$('#close-shelf').addEventListener('click',hide);backdrop.addEventListener('click',hide);
   $('#shelf-file-input').addEventListener('change',event=>{const list=[...event.target.files];event.target.value='';addFiles(list);});
   const isFileDrag=event=>[...event.dataTransfer?.types||[]].includes('Files');
-  const explicitTarget=target=>target instanceof Element?target.closest('.drop-zone,input[type="file"],.share-drop,.file-picker,.shelf-drop,[data-task]'):null;
+  const explicitTarget=target=>target instanceof Element?target.closest('.drop-zone,input[type="file"],.shelf-drop,[data-task]'):null;
   function clearDrag(){clearTimeout(dragTimer);document.body.classList.remove('dragging-files');document.querySelectorAll('.drag-target').forEach(el=>el.classList.remove('drag-target'));}
   function markTarget(target){document.querySelectorAll('.drag-target').forEach(el=>{if(el!==target)el.classList.remove('drag-target');});target?.classList.add('drag-target');}
-  document.addEventListener('dragenter',event=>{if(isFileDrag(event)){clearTimeout(dragTimer);markTarget(event.target instanceof Element?event.target.closest('.drop-zone,.share-drop,.file-picker,[data-task]'):null);}});
-  document.addEventListener('dragover',event=>{if(!isFileDrag(event))return;event.preventDefault();event.dataTransfer.dropEffect='copy';markTarget(event.target instanceof Element?event.target.closest('.drop-zone,.share-drop,.file-picker,[data-task]'):null);});
+  document.addEventListener('dragenter',event=>{if(isFileDrag(event)){clearTimeout(dragTimer);markTarget(event.target instanceof Element?event.target.closest('.drop-zone,[data-task]'):null);}});
+  document.addEventListener('dragover',event=>{if(!isFileDrag(event))return;event.preventDefault();event.dataTransfer.dropEffect='copy';markTarget(event.target instanceof Element?event.target.closest('.drop-zone,[data-task]'):null);});
   document.addEventListener('drop',async event=>{
     if(window.desktop?.nativeFileDrop){clearDrag();return;}
     if(!event.dataTransfer?.files.length)return;
@@ -74,8 +74,7 @@
     if(target){
       if(target.dataset.task){event.preventDefault();event.stopPropagation();if(uploading){toast('正在上传，请稍候再放入文件');return;}try{await uploadFiles({files:incoming,value:''},'material',target.dataset.task);}catch(error){toast(error.message);}return;}
       const input=target.matches('input[type="file"]')?target:target.querySelector('input[type="file"]');
-      if(!input||input.id==='shelf-file-input')return; // Explicit shelf picker uses its own input change handler.
-      if(input.closest('.file-picker,.share-drop')){event.preventDefault();event.stopPropagation();input.files=event.dataTransfer.files;input.dispatchEvent(new Event('input',{bubbles:true}));input.dispatchEvent(new Event('change',{bubbles:true}));return;}
+      if(!input||input.id==='shelf-file-input')return; // Text inputs and the shelf picker keep their own handlers.
       if(!['material-upload','receipt-upload'].includes(input.id))return;
       event.preventDefault();event.stopPropagation();
       if(input.disabled||uploading){toast(input.disabled?'请先同步待办后添加文件':'正在上传，请稍候再放入文件');return;}
