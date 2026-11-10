@@ -8,7 +8,7 @@ module.exports=async(page,browser,scratch)=>{
  await page.locator('[data-studio-save]').click();
  await page.locator('#studio-status').filter({hasText:'已保存'}).waitFor();
  const builder={fields:[{id:'name',label:'姓名',type:'text',required:true},{id:'student',label:'学号',type:'text',required:true,length:12,unique:true,pattern:'^[0-9]{12}$'},{id:'screenshot',label:'截图',type:'file',required:true,accept:'.png,.jpg'}],once:true,allow_edit:true,duplicate:'reject',export_name:'{student}-{name}',javascript:"return values.name === '张三' ? '' : '姓名不正确';"};
- await page.route('**/api/collection/ai',r=>r.fulfill({status:200,contentType:'application/json',body:JSON.stringify({builder})}));
+ await page.route('**/api/collection/ai*',r=>r.fulfill({status:200,contentType:'application/json',body:JSON.stringify({builder})}));
  await page.locator('#studio-prompt').fill('姓名、12位学号、上传截图，每人只能填一次');
  await page.locator('[data-studio-ai]').click();
  await page.locator('#studio-status').filter({hasText:'已生成草稿'}).waitFor();

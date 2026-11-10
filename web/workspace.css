@@ -241,6 +241,8 @@ input:not([type=checkbox]):not([type=hidden]):not([type=file]),select{min-height
 #llm-provider-fields .form-grid{grid-template-columns:minmax(0,1fr)}
 #llm-context{max-width:240px}
 .statistics-controls{flex-wrap:wrap;gap:16px}
+.statistics-controls label{flex:1 1 min(560px,100%);min-width:0;white-space:normal}
+.statistics-controls .segment-choice.segment-wrap{width:100%;max-width:760px}
 .statistics-controls .helper{margin:0}
 .statistics-controls .chart-mode{margin-right:auto}
 .statistics-summary{grid-template-columns:repeat(4,minmax(0,1fr))}
@@ -391,9 +393,13 @@ select.segment-source{position:absolute!important;width:1px!important;height:1px
 .share-form{display:grid;gap:var(--field-space)}
 .share-form label:not(.share-drop){display:block}
 .share-form input,.share-form textarea,.share-form select{width:100%;margin-top:8px}
-.share-drop{display:grid;place-items:center;border:1px dashed var(--line);background:var(--surface);border-radius:9px;min-height:84px;padding:18px;color:var(--muted);font-size:0.857143rem;transition:border-color 160ms var(--motion-ease),background-color 160ms var(--motion-ease)}
+.share-drop,.file-picker{position:relative;display:grid;place-items:center;border:1px dashed var(--line);background:var(--surface);border-radius:9px;min-height:84px;padding:18px;color:var(--muted);font-size:0.857143rem;transition:border-color 160ms var(--motion-ease),background-color 160ms var(--motion-ease)}
 .share-drop:hover{border-color:var(--green);background:var(--soft)}
-.share-drop input{margin-top:10px;width:auto}
+.share-drop:hover,.file-picker:hover{border-color:var(--green);background:var(--soft)}
+.share-drop .picker-name,.file-picker .picker-name{max-width:100%;margin-top:8px;color:var(--text);font-size:.8rem;line-height:1.6;overflow-wrap:anywhere;text-align:center}
+:is(.drop-zone,.share-drop,.file-picker,.shelf-drop)>input[type=file]{position:absolute!important;width:1px!important;height:1px!important;min-height:0!important;min-width:0!important;margin:0!important;padding:0!important;opacity:0!important;clip-path:inset(50%)!important;pointer-events:none!important;border:0!important}
+:is(.drop-zone,.share-drop,.file-picker,.shelf-drop):focus-within{outline:2px solid var(--focus);outline-offset:3px}
+:is(.drop-zone,.share-drop,.file-picker,.shelf-drop).drag-target{border-style:solid;border-color:var(--green);background:var(--selected)}
 .share-progress{display:grid;gap:8px}
 @media(max-width:620px){.share-page{padding:20px 12px 36px}.share-surface{padding:18px;border-radius:12px}}
 /* 分享表单沿用可换行分段控件，窄屏保持完整可读。 */

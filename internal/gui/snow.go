@@ -159,7 +159,7 @@ func (s *snowManager) start(preferred string) error {
 	cmd := exec.CommandContext(s.d.ctx, node, "--experimental-loader", loader, filepath.Join(root, "index.mjs"))
 	hideProcess(cmd)
 	cmd.Dir = working
-	cmd.Env = append(os.Environ(), "JJB_MANAGED_SNOW=1", "JJB_SNOW_STDIO=1", "JJB_SNOW_ENTRY="+filepath.Join(root, "index.mjs"), "JJB_SNOW_BRIDGE="+bridge, "SNOWLUMA_UPDATE_ROOT="+root)
+	cmd.Env = append(os.Environ(), "JJB_MANAGED_SNOW=1", "JJB_SNOW_STDIO=1", "JJB_SNOW_PARENT_PID="+strconv.Itoa(os.Getpid()), "JJB_SNOW_ENTRY="+filepath.Join(root, "index.mjs"), "JJB_SNOW_BRIDGE="+bridge, "SNOWLUMA_UPDATE_ROOT="+root)
 	cmd.Stderr = io.Discard
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
