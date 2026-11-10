@@ -63,8 +63,8 @@ async function api(route, method = 'GET', body) {
   if (window.pluginUI) request = await window.pluginUI.beforeRequest(request);
   const headers = { Authorization: 'Bearer ' + state.session.token };
   if (request.body !== undefined && !(request.body instanceof FormData)) headers['Content-Type'] = 'application/json';
-  const timeoutRoute = route === '/api/analyze' || route.endsWith('/suggest') ? route : request.route;
-  const response = await fetch(apiUrl(request.route), { method: request.method, headers, body: request.body instanceof FormData ? request.body : request.body === undefined ? undefined : JSON.stringify(request.body), signal: AbortSignal.timeout((timeoutRoute === '/api/analyze'||timeoutRoute.endsWith('/suggest')) ? 100000 : 45000) });
+  const timeoutRoute = route === '/api/collection/ai' || route === '/api/analyze' || route.endsWith('/suggest') ? route : request.route;
+  const response = await fetch(apiUrl(request.route), { method: request.method, headers, body: request.body instanceof FormData ? request.body : request.body === undefined ? undefined : JSON.stringify(request.body), signal: AbortSignal.timeout((timeoutRoute === '/api/collection/ai'||timeoutRoute === '/api/analyze'||timeoutRoute.endsWith('/suggest')) ? 100000 : 45000) });
   if (!response.ok) {
     let detail;
     try { detail = (await response.json()).detail; } catch { detail = '服务端返回错误'; }

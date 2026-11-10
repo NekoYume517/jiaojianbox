@@ -257,7 +257,7 @@
       <div class="share-task-actions">
         <button class="secondary" data-share-task="${esc(task.id)}">${viewing ? '管理分享' : '分享待办'}</button>
         <button class="secondary" data-collect-toggle="${esc(task.id)}" data-enabled="${collect ? 'true' : 'false'}">${collect ? '关闭收集表单' : '开启收集表单'}</button>
-        ${collect && linked ? `<button class="plain-button" data-collect-preview="${esc(linked.id)}">预览表单</button><button class="plain-button" data-share-edit="${esc(linked.id)}">表单设置</button>` : ''}
+        ${collect && linked ? `<button class="plain-button" data-collect-preview="${esc(linked.id)}">预览表单</button><button class="plain-button" data-collection-studio="${esc(linked.id)}">收集工作台</button>` : ''}
       </div>`;
   }
 

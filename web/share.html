@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; frame-src 'self' about:; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'">
   <title>分享 · 交件箱</title>
   <script src="/theme.js"></script>
   <link rel="icon" href="/icon.svg" type="image/svg+xml">
@@ -26,6 +26,7 @@
   <div id="share-toast" class="toast" role="status" hidden><span id="share-toast-text"></span></div>
   <script src="/motion.js" defer></script>
   <script src="/controls.js" defer></script>
+  <script src="/collection-form.js" defer></script>
   <script src="/share.js" defer></script>
 </body>
 </html>

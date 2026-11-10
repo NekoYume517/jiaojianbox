@@ -55,3 +55,6 @@
             attachment_id TEXT REFERENCES attachments(id) ON DELETE CASCADE,
             PRIMARY KEY(submission_id,attachment_id));
 
+
+CREATE TABLE IF NOT EXISTS collection_entries(id TEXT PRIMARY KEY REFERENCES share_submissions(id) ON DELETE CASCADE,share_id TEXT NOT NULL,browser_hash TEXT NOT NULL,payload TEXT NOT NULL,updated_at TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS ix_collection_entries ON collection_entries(share_id,browser_hash);

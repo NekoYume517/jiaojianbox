@@ -43,6 +43,7 @@ func shareForm(payload Object) Object {
 		"allow_receipt":     false,
 		"allow_note":        true,
 		"submit_message":    "",
+		"builder":           Object{},
 	}
 	for key, value := range object(payload["form"]) {
 		out[key] = value
@@ -154,6 +155,10 @@ func shareFormInput(input Object, existing Object) Object {
 	for key := range form {
 		value, ok := raw[key]
 		if !ok {
+			continue
+		}
+		if key == "builder" {
+			form[key] = validateBuilder(object(value))
 			continue
 		}
 		if key == "submit_message" {
@@ -422,6 +427,9 @@ func (s *Server) sharedData(ctx context.Context, db store.SQL, row, payload Obje
 	}
 	if str(payload, "purpose") == "collect" {
 		share["form"] = shareForm(payload)
+		publicBuilder := object(share["form"].(map[string]any)["builder"])
+		delete(publicBuilder, "roster")
+		share["form"].(map[string]any)["builder"] = publicBuilder
 		share["submission_count"] = num(one(ctx, db, "SELECT COUNT(*) AS count FROM share_submissions WHERE share_id=?", row["id"]), "count")
 	}
 	out := Object{
@@ -534,6 +542,11 @@ func (s *Server) shareRoutes() {
 		}
 		rows := query(r.Context(), s.Store.DB, "SELECT * FROM share_submissions WHERE share_id=? ORDER BY created_at DESC LIMIT 500", row["id"])
 		for _, item := range rows {
+			extra := first(query(r.Context(), s.Store.DB, "SELECT payload,updated_at FROM collection_entries WHERE id=?", item["id"]))
+			if extra != nil {
+				item["values"] = store.Payload(extra)
+				item["updated_at"] = extra["updated_at"]
+			}
 			item["files"] = query(r.Context(), s.Store.DB, "SELECT a.id,a.name,a.size,a.kind FROM share_submission_files m JOIN attachments a ON a.id=m.attachment_id WHERE m.submission_id=? ORDER BY a.rowid", item["id"])
 		}
 		return Object{"submissions": rows}
@@ -699,6 +712,7 @@ func (s *Server) shareRoutes() {
 		os.Remove(s.blob(r.PathValue("file_id")))
 		return Object{"ok": true}
 	})
+	s.collectionRoutes()
 	s.route("POST /api/shared/{token}/submit", "", func(r request) any {
 		row, payload, viewer := s.shared(r, "")
 		if str(payload, "purpose") != "collect" {
@@ -763,13 +777,15 @@ func (s *Server) shareRoutes() {
 					os.Remove(path)
 					fail(413, "单个文件超过上传上限")
 				}
-				uploads = append(uploads, Object{"id": id, "path": path, "name": safeName(header.Filename), "size": size, "sha256": hex.EncodeToString(hash.Sum(nil)), "kind": group.kind})
+				uploads = append(uploads, Object{"id": id, "path": path, "name": safeName(header.Filename), "size": size, "sha256": hex.EncodeToString(hash.Sum(nil)), "kind": group.kind, "field": r.FormValue("file_field_" + header.Filename)})
 			}
 		}
-		if len(uploads) == 0 && !(note != "" && boolean(form, "allow_note")) {
+		if len(uploads) == 0 && r.FormValue("values") == "" && !(note != "" && boolean(form, "allow_note")) {
 			fail(422, "请添加要提交的文件或填写说明")
 		}
 		owner, taskID := str(row, "user_id"), str(row, "task_id")
+		values := decodeValues(r.FormValue("values"))
+		browser := r.FormValue("browser_key")
 		var ownerID any
 		if viewer != "" {
 			ownerID = viewer
@@ -778,19 +794,20 @@ func (s *Server) shareRoutes() {
 		message := fallback(str(form, "submit_message"), "提交成功，收集者已收到")
 		s.transaction(r.Context(), func(db store.SQL) any {
 			task := s.task(r.Context(), db, owner, taskID)
+			replaceID := s.validateEntry(r, db, row, form, values, browser, uploads)
+			if replaceID != "" {
+				submissionID = replaceID
+				if len(uploads) > 0 {
+					exec(r.Context(), db, "DELETE FROM share_submission_files WHERE submission_id=?", submissionID)
+				}
+			}
 			total := int64(0)
 			for _, file := range uploads {
 				total += int64(num(file, "size"))
 			}
 			s.checkUserQuota(r.Context(), db, owner, total)
-			totals := one(r.Context(), db, "SELECT COALESCE(SUM(size),0) AS size FROM attachments WHERE task_id=?", taskID)
-			if num(totals, "size")+float64(total) > 200<<20 {
-				fail(413, "该项待办文件总大小不能超过 200 MB")
-			}
-			if len(objects(task["attachments"]))+len(uploads) > 50 {
-				fail(413, "该项待办最多保存 50 个文件")
-			}
-			exec(r.Context(), db, "INSERT INTO share_submissions VALUES(?,?,?,?,?,?,?,?,?)", submissionID, row["id"], taskID, ownerID, name, contact, note, store.Hash(r.RemoteAddr), store.Now())
+			exec(r.Context(), db, "INSERT INTO share_submissions VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,contact=excluded.contact,note=excluded.note", submissionID, row["id"], taskID, ownerID, name, contact, note, store.Hash(r.RemoteAddr), store.Now())
+			exec(r.Context(), db, "INSERT INTO collection_entries VALUES(?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET payload=excluded.payload,updated_at=excluded.updated_at", submissionID, row["id"], store.Hash(browser), store.JSON(values), store.Now())
 			for _, file := range uploads {
 				exec(r.Context(), db, "INSERT INTO attachments VALUES(?,?,?,?,?,?,?)", file["id"], owner, taskID, file["name"], file["size"], file["sha256"], file["kind"])
 				exec(r.Context(), db, "INSERT INTO share_submission_files VALUES(?,?)", submissionID, file["id"])

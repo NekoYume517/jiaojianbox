@@ -89,6 +89,7 @@
   }
   function collectForm(data) {
     const form = data.share.form || {};
+    if(form.builder?.fields?.length)return window.collectionForm.render(data);
     const fields = [];
     if (form.allow_note) {
       fields.push(`<label>你的名字<input id="submit-name" maxlength="80" placeholder="方便收集者核对"></label>
@@ -130,6 +131,7 @@
       attachmentList(task, !!permissions.download) +
       (collect ? collectForm(data) : '') +
       (permissions.edit ? editForm(task) : '');});
+    window.collectionForm?.mount();
   }
 
   async function load() {
@@ -171,6 +173,7 @@
     const receipt = form.querySelector('#submit-receipt');
     for (const file of material?.files || []) body.append('material_files', file);
     for (const file of receipt?.files || []) body.append('receipt_files', file);
+    if(current.share.form?.builder?.fields?.length)window.collectionForm.append(body);
     return body;
   }
   function progress(value) {
@@ -223,13 +226,15 @@
       const button = form.querySelector('[type=submit]');
       button.disabled = true;
       document.querySelector('#share-submit-error').textContent = '';
+      try{await window.collectionForm?.validate();}catch(error){button.disabled=false;document.querySelector('#share-submit-error').textContent=error.message;return;}
       progress(2);
       const result = await upload(submitForm(form));
       button.disabled = false;
       const box = document.querySelector('#share-progress');
       if (result.ok) {
         if (box) box.hidden = true;
-        statusCard('提交成功', result.data.message || '收集者已收到你的提交。');
+        statusCard('提交成功', result.data.message || '收集者已收到你的提交。','<button class="secondary" id="collection-return">查看或修改提交</button>');
+        document.querySelector('#collection-return').onclick=()=>load();
         return;
       }
       if (box) box.hidden = true;
