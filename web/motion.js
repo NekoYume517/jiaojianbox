@@ -73,24 +73,56 @@
     }
   }
 
+  // Segment boxes are rebuilt by page renders and dialog repaints; the moving
+  // highlight survives by remembering the last resting rect per logical tab
+  // group and flying from it, the way Magpie's selection never teleports.
+  const segmentMemory = new Map();
+  const segmentKey = box => box.dataset.selectFor || box.id
+    || (box.getAttribute('aria-label') ? 'label:' + box.getAttribute('aria-label') : [...box.classList].join('.'));
+  function rememberSegment(box, entry) {
+    if (entry.animations.length) return;
+    const rect = entry.thumb.getBoundingClientRect();
+    if (!rect.width || !box.getClientRects().length) return;
+    if (segmentMemory.size > 60) {
+      let oldest = null;
+      for (const [key, value] of segmentMemory) if (!oldest || value.at < oldest[1].at) oldest = [key, value];
+      if (oldest) segmentMemory.delete(oldest[0]);
+    }
+    segmentMemory.set(segmentKey(box), { rect: { left: rect.left, top: rect.top, width: rect.width, height: rect.height }, at: performance.now() });
+  }
   function syncSegments() {
     document.querySelectorAll('.theme-picker,.page-tabs,.chart-mode').forEach(box => {
       const selected = box.querySelector('button.active,button[aria-selected=true]');
       if (!selected?.offsetWidth || !box.getClientRects().length) return;
       let entry = segments.get(box);
+      const fresh = !entry;
       if (!entry) {
         const thumb = document.createElement('span'); thumb.className = 'segment-highlight'; thumb.setAttribute('aria-hidden', 'true');
-        box.prepend(thumb); entry = { thumb, selected: null, animations: [] }; segments.set(box, entry); box.classList.add('motion-segment');
+        box.prepend(thumb); entry = { thumb, selected: null, animations: [], to: null }; segments.set(box, entry); box.classList.add('motion-segment');
       }
       const before = entry.thumb.style.width ? getComputedStyle(entry.thumb) : null;
       const from = before && { transform: before.transform, width: before.width, height: before.height };
       const to = { transform: `translate(${selected.offsetLeft}px,${selected.offsetTop}px)`, width: selected.offsetWidth + 'px', height: selected.offsetHeight + 'px' };
-      if(entry.selected===selected && Object.entries(to).every(([key,value])=>entry.thumb.style[key]===value)){if(keyboard||reduced.matches||document.hidden)stop(entry);return;}
+      if(entry.selected===selected && entry.to && Object.entries(to).every(([key,value])=>entry.to[key]===value)){if(keyboard||reduced.matches||document.hidden)stop(entry);rememberSegment(box,entry);return;}
       stop(entry);entry.animations=[];
       Object.assign(entry.thumb.style, to);
+      entry.to = to;
       if (from && entry.selected !== selected && !keyboard && !reduced.matches) entry.animations = [play(entry.thumb, [from, to], { duration: 280, easing: 'cubic-bezier(.2,.8,.2,1)' })];
+      else if (fresh && !keyboard && !reduced.matches && !document.hidden) {
+        const memory = segmentMemory.get(segmentKey(box));
+        if (memory && performance.now() - memory.at < 1200) {
+          const rect = entry.thumb.getBoundingClientRect();
+          if (Math.abs(memory.rect.left - rect.left) + Math.abs(memory.rect.top - rect.top) > 2) {
+            entry.animations = [play(entry.thumb, [
+              { transform: `translate(${selected.offsetLeft + memory.rect.left - rect.left}px,${selected.offsetTop + memory.rect.top - rect.top}px)`, width: memory.rect.width + 'px', height: memory.rect.height + 'px' },
+              to,
+            ], { duration: 280, easing: 'cubic-bezier(.2,.8,.2,1)' })];
+          }
+        }
+      }
       entry.selected = selected;
-      if (entry.animations.length) entry.animations[0]?.finished.catch(() => {});
+      if (entry.animations.length) entry.animations[0]?.finished.catch(() => {}).then(() => rememberSegment(box, entry));
+      else rememberSegment(box, entry);
     });
   }
 

@@ -37,7 +37,7 @@ window.jjbAdmin = (() => {
       if (generation !== state.generation || state.page !== 'settings' || !profile.is_admin) return;
       const host = $('#view');
       if ($('#admin-panel')) return;
-      host.insertAdjacentHTML('beforeend', `<section id="admin-panel" class="panel settings-panel admin-panel"><h3>站点管理</h3><p class="helper">超级管理员 · 注册方式、邀请码、存储配额和 AI 服务对整个服务端生效。其他账号的聊天、待办和模型密钥保持独立。</p><form id="registration-form"><label>注册方式<select id="registration-mode"><option value="closed">关闭注册</option><option value="public">公开注册</option><option value="invite">仅邀请码注册</option></select></label><button class="primary" type="submit">保存注册方式</button><p id="registration-status" class="helper" role="status"></p></form><div class="divider"></div><h3>邀请码</h3><form id="invitation-form"><label>备注<input id="invitation-note" maxlength="100" placeholder="例如：内测同学"></label><div class="form-grid"><label>使用次数<input id="invitation-uses" type="number" min="1" max="1000" value="1" required></label><label>有效天数<input id="invitation-days" type="number" min="1" max="365" value="7" required></label></div><button class="secondary" type="submit">生成邀请码</button><p class="helper">邀请码只在生成时显示，请及时复制保存。关闭注册时，已有邀请码也无法注册。</p><label id="new-invitation-label" hidden>新邀请码<input id="new-invitation" readonly aria-label="新邀请码，点击全选"></label><p id="invitation-status" class="helper" role="status"></p></form><div id="invitation-list"></div><div class="divider"></div><h3>AI 服务</h3><p class="helper">启用免配置 AI 后，选择默认服务的账号会通过服务器模型运行分析，按积分扣费。1 积分可兑换的 tokens 数由管理员设定。</p><form id="ai-service-form"><label class="switch-line"><input id="ai-enabled" type="checkbox"><span><strong>启用免配置 AI 服务</strong><small>用户选择默认服务后，使用服务器模型并消耗积分。</small></span></label><div class="form-grid"><label>新用户默认积分<input id="ai-default-credits" type="number" min="1" step="1" value="10"></label><label>1 积分等于 tokens<input id="ai-tokens-per-credit" type="number" min="1" step="1" value="1000000"></label></div><label class="switch-line"><input id="ai-checkin" type="checkbox"><span><strong>开启每日签到</strong><small>未签到时，客户端会在右下角提示签到领取积分。</small></span></label><div class="form-grid"><label>每次签到奖励积分<input id="ai-checkin-credits" type="number" min="1" step="1" value="1"></label></div><div class="form-grid"><label>上游 API 地址<input id="ai-upstream-url" type="url" placeholder="https://api.example.com/v1"></label><label>上游模型<input id="ai-upstream-model" placeholder="填写模型名称"></label></div><label class="switch-line"><input id="ai-vision" type="checkbox"><span><strong>默认模型支持图片分析</strong><small>按上游模型的实际能力设置，对使用默认服务的所有用户生效。</small></span></label><label>上游 API Key<input id="ai-upstream-key" type="password" autocomplete="new-password" placeholder="留空保留已保存的 Key"><span id="ai-key-note" class="helper"></span></label><button class="primary" type="submit">保存 AI 服务设置</button><p id="ai-service-status" class="helper" role="status"></p></form><div class="divider"></div><h3>账号列表</h3><div id="admin-users" class="helper"></div></section>`);
+      host.insertAdjacentHTML('beforeend', `<section id="admin-panel" class="panel settings-panel admin-panel"><h3>站点管理</h3><p class="helper">超级管理员 · 注册方式、邀请码、存储配额和 AI 服务对整个服务端生效。其他账号的聊天、待办和模型密钥保持独立。</p><form id="registration-form"><label>注册方式<select id="registration-mode"><option value="closed">关闭注册</option><option value="public">公开注册</option><option value="invite">仅邀请码注册</option></select></label><button class="primary" type="submit">保存注册方式</button><p id="registration-status" class="helper" role="status"></p></form><div class="divider"></div><h3>邀请码</h3><form id="invitation-form"><label>备注<input id="invitation-note" maxlength="100" placeholder="例如：内测同学"></label><div class="form-grid"><label>使用次数<input id="invitation-uses" type="number" min="1" max="1000" value="1" required></label><label>有效天数<input id="invitation-days" type="number" min="1" max="365" value="7" required></label></div><button class="secondary" type="submit">生成邀请码</button><p class="helper">邀请码只在生成时显示，请及时复制保存。关闭注册时，已有邀请码也无法注册。</p><label id="new-invitation-label" hidden>新邀请码<input id="new-invitation" readonly aria-label="新邀请码，点击全选"></label><p id="invitation-status" class="helper" role="status"></p></form><div id="invitation-list"></div><div class="divider"></div><h3>AI 服务</h3><p class="helper">启用免配置 AI 后，选择默认服务的账号会通过服务器模型运行分析，按积分扣费。1 积分可兑换的 tokens 数由管理员设定。</p><form id="ai-service-form"><label class="switch-line"><input id="ai-enabled" type="checkbox"><span><strong>启用免配置 AI 服务</strong><small>用户选择默认服务后，使用服务器模型并消耗积分。</small></span></label><div class="form-grid"><label>新用户默认积分<input id="ai-default-credits" type="number" min="1" step="1" value="10"></label><label>1 积分等于 tokens<input id="ai-tokens-per-credit" type="number" min="1" step="1" value="1000000"></label></div><label class="switch-line"><input id="ai-checkin" type="checkbox"><span><strong>开启每日签到</strong><small>未签到时，客户端会在右下角提示签到领取积分。</small></span></label><div class="form-grid"><label>每次签到奖励积分<input id="ai-checkin-credits" type="number" min="1" step="1" value="1"></label></div><div class="form-grid"><label>上游 API 地址<input id="ai-upstream-url" type="url" placeholder="https://api.example.com/v1"></label><label>上游模型<input id="ai-upstream-model" placeholder="填写模型名称"></label></div><label class="switch-line"><input id="ai-vision" type="checkbox"><span><strong>默认模型支持图片分析</strong><small>按上游模型的实际能力设置，对使用默认服务的所有用户生效。</small></span></label><label>上游 API Key<input id="ai-upstream-key" type="password" autocomplete="new-password" placeholder="留空保留已保存的 Key"><span id="ai-key-note" class="helper"></span></label><button class="primary" type="submit">保存 AI 服务设置</button><p id="ai-service-status" class="helper" role="status"></p></form><div id="mail-section"></div><div class="divider"></div><h3>账号列表</h3><div id="admin-users" class="helper"></div></section>`);
       const policy = await api('/api/admin/registration');
       if (!$('#registration-mode') || generation !== state.generation) return;
       $('#registration-mode').value = policy.mode;
@@ -83,6 +83,8 @@ window.jjbAdmin = (() => {
           finally { button.disabled = false; }
         });
       }
+      try { await mountMail(generation); }
+      catch (error) { if ($('#mail-section')) $('#mail-section').innerHTML = `<p class="error">${esc(error.message)}</p>`; }
       const users = await api('/api/admin/users');
       if ($('#admin-users') && generation === state.generation) {
         const gb = value => `${(value / 1073741824).toFixed(value % 1073741824 === 0 ? 0 : 1).replace(/\.0$/, '')} GB`;
@@ -100,6 +102,33 @@ window.jjbAdmin = (() => {
         $$('.quota-row').forEach(renderQuotaRow);
       }
     } catch (error) { if ($('#admin-panel')) $('#admin-panel').insertAdjacentHTML('beforeend', `<p class="error">${esc(error.message)}</p>`); }
+  }
+  async function mountMail(generation) {
+    const box = $('#mail-section'); if (!box) return;
+    const c = await api('/api/admin/mail');
+    if (generation !== state.generation || !$('#mail-section')) return;
+    box.innerHTML = `<div class="divider"></div><h3>服务器邮件</h3><p class="helper">注册验证、找回密码等邮件默认使用交件箱样式模板，发件配置对整个服务端生效。</p><form id="smtp-form"><div class="form-grid"><label>SMTP 地址<input id="smtp-host" value="${esc(c.host)}" placeholder="smtp.example.com"></label><label>端口<input id="smtp-port" type="number" min="1" max="65535" value="${c.port}" required></label></div><label>加密方式<select id="smtp-security"><option value="ssl">SSL/TLS（通常 465）</option><option value="starttls">STARTTLS（通常 587）</option></select></label><label>SMTP 登录账号<input id="smtp-user" value="${esc(c.username)}" autocomplete="off"></label><label>SMTP 密码 / 授权码<input id="smtp-password" type="password" autocomplete="new-password" placeholder="${c.has_password ? '已配置，留空保留' : '填写邮箱授权码'}"></label><div class="form-grid"><label>发件邮箱<input id="smtp-sender" type="email" value="${esc(c.sender)}"></label><label>发件人名称<input id="smtp-name" value="${esc(c.sender_name)}" maxlength="80"></label></div><label>邮件链接对应的服务地址<input id="smtp-url" type="url" value="${esc(c.public_url || state.session.server)}" required></label><label class="switch-line"><input id="smtp-verify" type="checkbox" ${c.verification_required ? 'checked' : ''}><span><strong>新账号必须验证邮箱后才创建</strong><small>开启后，注册邮件里的确认链接完成之前账号不会生效。</small></span></label><button class="primary" type="submit">保存邮件设置</button></form><form id="smtp-test-form"><label>测试收件邮箱<input id="smtp-test" type="email" required></label><button class="secondary" type="submit">发送样式测试邮件</button></form><p id="smtp-status" class="helper" role="status"></p>`;
+    $('#smtp-security').value = c.security;
+    $('#smtp-form').addEventListener('submit', async e => {
+      e.preventDefault(); await submitAdminForm(e, $('#smtp-status'), async () => {
+        await api('/api/admin/mail', 'PUT', {
+          host: $('#smtp-host').value.trim(), port: Number($('#smtp-port').value), security: $('#smtp-security').value,
+          username: $('#smtp-user').value, password: $('#smtp-password').value || null,
+          sender: $('#smtp-sender').value, sender_name: $('#smtp-name').value,
+          public_url: $('#smtp-url').value, verification_required: $('#smtp-verify').checked
+        });
+        $('#smtp-password').value = '';
+      }, '邮件设置已保存');
+    });
+    $('#smtp-test-form').addEventListener('submit', async e => {
+      e.preventDefault(); await submitAdminForm(e, $('#smtp-status'), () => api('/api/admin/mail/test', 'POST', {email: $('#smtp-test').value}), '测试邮件已发送，请检查收件箱');
+    });
+  }
+  async function submitAdminForm(event, status, action, message) {
+    const button = event.submitter; button.disabled = true;
+    try { await action(); status.textContent = message; }
+    catch (error) { status.textContent = error.message; }
+    finally { button.disabled = false; }
   }
   function renderQuotaRow(row) {
     const gb = value => `${(value / 1073741824).toFixed(value % 1073741824 === 0 ? 0 : 1).replace(/\.0$/, '')} GB`;

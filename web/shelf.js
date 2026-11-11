@@ -28,7 +28,7 @@
     const options=[['','暂不关联待办'],...tasks.map(t=>[t.id,t.title+(t.status==='archived'?'（已归档）':t.status==='submitted'?'（已提交）':'')])];
     if(taskId&&!tasks.some(t=>t.id===taskId))options.push([taskId,'当前关联待办（未加载）']);
     const kinds=taskId?[['material','待办材料'],['receipt','提交回执']]:[['inbox','待整理'],['reference','参考资料'],['receipt','未关联回执'],['other','其他文件']];
-    return `<div class="shelf-placement"><label class="shelf-select-label">归属待办<select data-shelf-task="${file.id}" aria-label="${esc(file.name)}的归属待办">${options.map(([id,title])=>`<option value="${esc(id)}" ${id===taskId?'selected':''}>${esc(title)}</option>`).join('')}</select></label><label class="shelf-select-label">文件用途<select data-shelf-kind="${file.id}" aria-label="${esc(file.name)}的文件用途">${kinds.map(([id,title])=>`<option value="${id}" ${id===kind?'selected':''}>${title}</option>`).join('')}</select></label></div>${draft?'<p class="helper shelf-draft-note">选择尚未应用，点击“应用”后才会改变实际归属。</p>':''}`;
+    return `<div class="shelf-placement"><label class="shelf-select-label">归属待办<select data-shelf-task="${file.id}" data-segment-wrap="wrap" aria-label="${esc(file.name)}的归属待办">${options.map(([id,title])=>`<option value="${esc(id)}" ${id===taskId?'selected':''}>${esc(title)}</option>`).join('')}</select></label><label class="shelf-select-label">文件用途<select data-shelf-kind="${file.id}" data-segment-wrap="wrap" aria-label="${esc(file.name)}的文件用途">${kinds.map(([id,title])=>`<option value="${id}" ${id===kind?'selected':''}>${title}</option>`).join('')}</select></label></div>${draft?'<p class="helper shelf-draft-note">选择尚未应用，点击“应用”后才会改变实际归属。</p>':''}`;
   }
   function renderShelf(){
     const list=document.querySelector('#files-page-list');if(list)list.innerHTML=fileRows();

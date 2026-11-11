@@ -11,12 +11,169 @@ import (
 	"errors"
 	"github.com/wailsapp/wails/v3/pkg/application"
 	"golang.org/x/sys/windows"
+	"golang.org/x/sys/windows/registry"
+	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"syscall"
+	"sync"
+	"time"
 	"unsafe"
 )
+
+// Windows users enable proxies in system settings (WinINet), which Go's
+// default transport ignores — it only reads environment variables. The
+// updater therefore asks the registry directly and refreshes the cached
+// result periodically so toggling the proxy does not require a restart.
+type systemProxyConfig struct {
+	at       time.Time
+	proxy    *url.URL
+	bypass   []string
+	disabled bool
+}
+
+var systemProxyCache struct {
+	sync.Mutex
+	config systemProxyConfig
+}
+
+func systemProxyFor(request *http.Request) (*url.URL, error) {
+	if candidate, err := http.ProxyFromEnvironment(request); candidate != nil || err != nil {
+		return candidate, err
+	}
+	now := time.Now()
+	systemProxyCache.Lock()
+	config := systemProxyCache.config
+	systemProxyCache.Unlock()
+	if now.Sub(config.at) > 10*time.Second {
+		config = readSystemProxyConfig(now)
+		systemProxyCache.Lock()
+		systemProxyCache.config = config
+		systemProxyCache.Unlock()
+	}
+	if config.proxy == nil || config.disabled || systemProxyBypassed(config.bypass, request.URL.Hostname()) {
+		return nil, nil
+	}
+	return config.proxy, nil
+}
+
+func readSystemProxyConfig(now time.Time) systemProxyConfig {
+	config := systemProxyConfig{at: now}
+	key, err := registry.OpenKey(registry.CURRENT_USER, `Software\Microsoft\Windows\CurrentVersion\Internet Settings`, registry.QUERY_VALUE)
+	if err != nil {
+		return config
+	}
+	defer key.Close()
+	if enabled, _, err := key.GetIntegerValue("ProxyEnable"); err != nil || enabled == 0 {
+		config.disabled = true
+		return config
+	}
+	server, _, err := key.GetStringValue("ProxyServer")
+	if err != nil || strings.TrimSpace(server) == "" {
+		config.disabled = true // PAC-only setups (AutoConfigURL) are not evaluated.
+		return config
+	}
+	proxy, bypass := parseWinINetProxyServer(server), parseWinINetBypass(overrideValue(key))
+	if proxy == nil {
+		config.disabled = true
+		return config
+	}
+	config.proxy = proxy
+	config.bypass = bypass
+	return config
+}
+
+func parseWinINetProxyServer(server string) *url.URL {
+	protocols := map[string]string{}
+	single := ""
+	for _, item := range strings.Split(server, ";") {
+		token := strings.TrimSpace(item)
+		if token == "" {
+			continue
+		}
+		if key, value, found := strings.Cut(token, "="); found {
+			protocols[strings.ToLower(strings.TrimSpace(key))] = strings.TrimSpace(value)
+			continue
+		}
+		single = token
+	}
+	build := func(raw string) *url.URL {
+		if raw == "" {
+			return nil
+		}
+		if strings.HasPrefix(strings.ToLower(raw), "socks://") {
+			raw = "socks5://" + strings.TrimPrefix(strings.TrimPrefix(raw, "socks://"), "//")
+		}
+		if !strings.Contains(raw, "://") {
+			raw = "http://" + raw
+		}
+		parsed, err := url.Parse(raw)
+		if err != nil || parsed.Host == "" {
+			return nil
+		}
+		return parsed
+	}
+	for _, key := range []string{"https", "http"} {
+		if raw := protocols[key]; raw != "" {
+			if parsed := build(raw); parsed != nil {
+				return parsed
+			}
+		}
+	}
+	if raw := protocols["socks"]; raw != "" {
+		if parsed := build(raw); parsed != nil {
+			return parsed
+		}
+	}
+	return build(single)
+}
+
+func overrideValue(key registry.Key) string {
+	value, _, err := key.GetStringValue("ProxyOverride")
+	if err != nil {
+		return ""
+	}
+	return value
+}
+
+func parseWinINetBypass(raw string) []string {
+	items := []string{}
+	for _, item := range strings.Split(raw, ";") {
+		token := strings.TrimSpace(strings.ToLower(item))
+		token = strings.TrimPrefix(token, "https://")
+		token = strings.TrimPrefix(token, "http://")
+		token = strings.TrimSuffix(token, ":*")
+		if token != "" {
+			items = append(items, token)
+		}
+	}
+	return items
+}
+
+func systemProxyBypassed(rules []string, hostname string) bool {
+	host := strings.ToLower(hostname)
+	for _, rule := range rules {
+		if rule == "<local>" {
+			if !strings.Contains(host, ".") {
+				return true
+			}
+			continue
+		}
+		if strings.HasPrefix(rule, "*.") {
+			if host == strings.TrimPrefix(rule, "*.") || strings.HasSuffix(host, "."+strings.TrimPrefix(rule, "*.")) {
+				return true
+			}
+			continue
+		}
+		if host == rule {
+			return true
+		}
+	}
+	return false
+}
 
 func protect(plain []byte) ([]byte, error) {
 	if len(plain) == 0 {
@@ -85,6 +242,28 @@ func unprotectLegacy(data []byte, root string) ([]byte, error) {
 func hideProcess(cmd *exec.Cmd) { cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true} }
 
 var user32 = windows.NewLazySystemDLL("user32.dll")
+var shell32 = windows.NewLazySystemDLL("shell32.dll")
+
+// The updater runs the downloaded installer through the shell so its own
+// window shows normally and Windows can prompt for elevation when needed.
+func launchInstaller(path string) error {
+	open, err := syscall.UTF16PtrFromString("open")
+	if err != nil {
+		return err
+	}
+	target, err := syscall.UTF16PtrFromString(path)
+	if err != nil {
+		return err
+	}
+	instance, _, callErr := shell32.NewProc("ShellExecuteW").Call(0, uintptr(unsafe.Pointer(open)), uintptr(unsafe.Pointer(target)), 0, 0, 1)
+	if instance <= 32 {
+		if callErr != syscall.Errno(0) {
+			return callErr
+		}
+		return errors.New("安装程序无法启动，请重新下载")
+	}
+	return nil
+}
 
 func cursorWithin(window *application.WebviewWindow) bool {
 	if window == nil || !window.IsVisible() {

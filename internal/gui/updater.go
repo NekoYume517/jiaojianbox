@@ -10,7 +10,6 @@ import (
 	"sync"
 	"sync/atomic"
 	"io"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -26,9 +25,14 @@ const updateThreadCount = 4
 
 var updateTransport = http.DefaultTransport.(*http.Transport).Clone()
 
+func init() {
+	// Honor the Windows system proxy (and env vars) for update traffic.
+	updateTransport.Proxy = systemProxyFor
+}
+
 var updateClient = &http.Client{Transport: updateTransport}
 
-var updateDefaults = Object{"autoCheck": true, "intervalMinutes": 360.0, "autoDownload": false, "channel": "stable"}
+var updateDefaults = Object{"autoCheck": true, "intervalMinutes": 360.0, "autoDownload": false, "channel": "stable", "skipVersion": ""}
 
 var updateAssetPattern = regexp.MustCompile(`(?i)^JiaojianBox-Setup-\d[\w.-]*-x64\.exe$`)
 
@@ -126,6 +130,9 @@ func (d *Desktop) UpdateSet(patch Object) Object {
 	if value, ok := patch["channel"].(string); ok && (value == "stable" || value == "all") {
 		prefs["channel"] = value
 	}
+	if value, ok := patch["skipVersion"].(string); ok {
+		prefs["skipVersion"] = value
+	}
 	if err := d.vault.set("update-preferences", prefs); err != nil {
 		fmt.Fprintln(os.Stderr, "update prefs:", err)
 	}
@@ -154,6 +161,7 @@ func (d *Desktop) fetchLatestRelease() (Object, error) {
 	var release struct {
 		TagName string `json:"tag_name"`
 		HTMLURL string `json:"html_url"`
+		Body    string `json:"body"`
 		Assets  []struct {
 			Name               string `json:"name"`
 			BrowserDownloadURL string `json:"browser_download_url"`
@@ -163,7 +171,7 @@ func (d *Desktop) fetchLatestRelease() (Object, error) {
 		return nil, err
 	}
 	latest := strings.TrimPrefix(release.TagName, "v")
-	out := Object{"latest": latest, "url": release.HTMLURL}
+	out := Object{"latest": latest, "url": release.HTMLURL, "notes": release.Body}
 	for _, asset := range release.Assets {
 		if updateAssetPattern.MatchString(asset.Name) {
 			out["asset"] = asset.Name
@@ -185,12 +193,14 @@ func (d *Desktop) UpdateCheck() (Object, error) {
 		"status":   map[bool]string{true: "available", false: "current"}[updatable],
 		"latest":   latest,
 		"url":      release["url"],
+		"notes":    release["notes"],
 		"asset":    release["asset"],
 		"assetUrl": release["assetUrl"],
 		"progress": 0, "received": 0, "total": 0, "bytesPerSecond": 0, "etaSeconds": 0,
 	})
 	state["updatable"] = updatable
 	state["current"] = d.version
+	state["skipped"] = updatable && latest == getString(d.updatePrefs(), "skipVersion")
 	return state, nil
 }
 
@@ -506,10 +516,7 @@ func (d *Desktop) UpdateInstall() (Object, error) {
 	if _, err := os.Stat(path); err != nil {
 		return nil, errors.New("安装包已被移动或删除，请重新下载")
 	}
-	cmd := exec.Command(path)
-	cmd.Dir = filepath.Dir(path)
-	hideProcess(cmd)
-	if err := cmd.Start(); err != nil {
+	if err := launchInstaller(path); err != nil {
 		return nil, err
 	}
 	return Object{"ok": true}, nil
@@ -526,7 +533,7 @@ func (d *Desktop) updateLoop() {
 		}
 		prefs := d.updatePrefs()
 		if store.Bool(prefs, "autoCheck") {
-			if state, err := d.UpdateCheck(); err == nil && store.Bool(state, "updatable") && store.Bool(prefs, "autoDownload") {
+			if state, err := d.UpdateCheck(); err == nil && store.Bool(state, "updatable") && !store.Bool(state, "skipped") && store.Bool(prefs, "autoDownload") {
 				d.UpdateDownload()
 			}
 		}

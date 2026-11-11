@@ -44,8 +44,8 @@ android {
         applicationId = "com.jiaojianbox.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 18
-        versionName = "0.6.12"
+        versionCode = 19
+        versionName = "0.6.13"
     }
     signingConfigs {
         create("stable") {

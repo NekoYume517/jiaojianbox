@@ -8,6 +8,8 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"errors"
+	"net/http"
+	"net/url"
 	"os/exec"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
@@ -61,4 +63,9 @@ func unprotect(raw []byte) ([]byte, error) {
 }
 func unprotectLegacy(raw []byte, root string) ([]byte, error) { return unprotect(raw) }
 func hideProcess(cmd *exec.Cmd)                               {}
+func launchInstaller(path string) error                       { return exec.Command(path).Start() }
 func cursorWithin(window *application.WebviewWindow) bool     { return window != nil && window.IsFocused() }
+
+func systemProxyFor(request *http.Request) (*url.URL, error) {
+	return http.ProxyFromEnvironment(request)
+}

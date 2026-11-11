@@ -158,6 +158,11 @@
     renderDownloadProgress(launcher,current);
     const checkButton=launcher.querySelector('[data-action-check-update]');if(checkButton)checkButton.disabled=current.status==='downloading';
     window.formControls?.schedule();
+    if (updateDialogBox) syncUpdateDialog();
+    if (!keepStatus && current.status === 'available' && !current.skipped) {
+      const checkedAt = Date.parse(current.at);
+      if (Number.isFinite(checkedAt) && Date.now() - checkedAt < 90000 && lastUpdatePrompt !== current.at) { lastUpdatePrompt = current.at; openUpdateDialog(); }
+    }
     if (keepStatus) return;
     if (actions) {
       actions.replaceChildren();
@@ -210,6 +215,134 @@
     box.querySelector('[data-update-speed]').textContent=done?'确认后开始安装':speed>0?size(speed)+'/s'+(eta>0?' · 约剩 '+(eta>=60?Math.ceil(eta/60)+' 分钟':Math.ceil(eta)+' 秒'):''):'正在连接下载服务器…';
   }
 
+  function renderMarkdown(text) {
+    if (!text) return '';
+    const escape = value => String(value).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    const inline = value => escape(value)
+      .replace(/`([^`]+)`/g, '<code>$1</code>')
+      .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+      .replace(/(^|[^*])\*([^*\s][^*]*)\*/g, '$1<em>$2</em>')
+      .replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, '<a href="$2">$1</a>');
+    let html = '', list = null, inFence = false;
+    const buffer = [];
+    const flush = () => {
+      if (list) html += `<${list}>` + buffer.map(item => `<li>${item}</li>`).join('') + `</${list}>`;
+      else if (buffer.length) html += `<p>${buffer.join('<br>')}</p>`;
+      list = null; buffer.length = 0;
+    };
+    for (const raw of String(text).replace(/\r\n?/g, '\n').split('\n')) {
+      if (/^```/.test(raw)) { flush(); inFence = !inFence; continue; }
+      if (inFence) { buffer.push(escape(raw)); continue; }
+      const heading = raw.match(/^(#{1,4})\s+(.*)/);
+      if (heading) { flush(); const level = heading[1].length + 2; html += `<h${level}>${inline(heading[2])}</h${level}>`; continue; }
+      const bullet = raw.match(/^\s*[-*]\s+(.*)/);
+      if (bullet) { if (list && list !== 'ul') flush(); if (!list) list = 'ul'; buffer.push(inline(bullet[1])); continue; }
+      const ordered = raw.match(/^\s*\d+\.\s+(.*)/);
+      if (ordered) { if (list && list !== 'ol') flush(); if (!list) list = 'ol'; buffer.push(inline(ordered[1])); continue; }
+      if (!raw.trim()) { flush(); continue; }
+      buffer.push(inline(raw));
+    }
+    flush();
+    return html;
+  }
+
+  let updateZoneMode = '';
+  function swapUpdateZone(zone, mode) {
+    if (updateZoneMode === mode) return;
+    const actions = zone.querySelector('[data-update-dialog-actions]');
+    const progress = zone.querySelector('[data-update-dialog-progress]');
+    if (!actions || !progress) return;
+    const apply = () => {
+      actions.hidden = mode !== 'actions';
+      progress.hidden = mode !== 'progress';
+    };
+    const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches || document.documentElement.dataset.inputMethod === 'keyboard' || document.hidden;
+    if (updateZoneMode === '' || reduced) { apply(); updateZoneMode = mode; return; }
+    const leaving = mode === 'progress' ? actions : progress;
+    const entering = mode === 'progress' ? progress : actions;
+    const before = zone.offsetHeight;
+    const exit = leaving.animate([{ opacity: 1, transform: 'none' }, { opacity: 0, transform: 'translateY(4px)' }], { duration: 150, easing: 'cubic-bezier(.2,.8,.2,1)', fill: 'forwards' });
+    exit.finished.catch(() => {}).then(() => {
+      leaving.getAnimations().forEach(item => item.cancel());
+      const after = mode === 'progress' ? progress.offsetHeight : actions.offsetHeight;
+      apply();
+      const grown = zone.offsetHeight;
+      if (grown !== before) {
+        zone.style.height = before + 'px'; zone.style.overflow = 'hidden';
+        zone.animate([{ height: before + 'px' }, { height: grown + 'px' }], { duration: 220, easing: 'cubic-bezier(.2,.8,.2,1)' }).finished.catch(() => {}).then(() => { zone.style.height = ''; zone.style.overflow = ''; });
+      }
+      entering.animate([{ opacity: 0, transform: 'translateY(2px)' }, { opacity: 1, transform: 'none' }], { duration: 220, easing: 'cubic-bezier(.2,.8,.2,1)' });
+    });
+    updateZoneMode = mode;
+  }
+
+  let updateDialogBox = null, lastUpdatePrompt = '';
+  function buildUpdateDialog() {
+    const dialog = document.createElement('dialog');
+    dialog.id = 'update-dialog';
+    dialog.innerHTML = `<div class="dialog-heading"><div><div class="eyebrow">启动与更新</div><h2>发现新版本 <span data-update-dialog-latest></span></h2></div><button type="button" class="icon-button" data-update-dialog-close aria-label="关闭">×</button></div>`
+      + `<div class="dialog-body"><div class="update-notes" data-update-dialog-notes></div><p class="helper" data-update-dialog-status role="status"></p>`
+      + `<div class="update-dialog-zone" data-update-dialog-zone>`
+      + `<div class="detail-actions" data-update-dialog-actions><button type="button" class="secondary" data-update-dialog-cancel>取消</button><button type="button" class="plain-button" data-update-dialog-skip>忽略此版本</button><button type="button" class="primary" data-update-dialog-download>立刻下载</button></div>`
+      + `<div data-update-dialog-progress hidden><div class="update-progress" data-update-progress><div class="update-progress-heading"><strong data-update-progress-title>准备下载</strong><span data-update-percent></span></div><div class="update-progress-track" role="progressbar" aria-label="更新下载进度" aria-valuemin="0" aria-valuemax="100"><i data-update-fill></i></div><div class="update-progress-detail"><span data-update-bytes></span><span data-update-speed></span></div><div class="detail-actions"><button type="button" class="plain-button" data-update-dialog-cancel-download hidden>取消下载</button><button type="button" class="primary" data-update-dialog-install hidden>运行安装程序</button></div></div></div>`
+      + `</div></div>`;
+    document.body.append(dialog);
+    dialog.querySelector('[data-update-dialog-close]').onclick = () => uiMotion.closeDialog(dialog);
+    dialog.querySelector('[data-update-dialog-cancel]').onclick = () => uiMotion.closeDialog(dialog);
+    dialog.addEventListener('cancel', () => {});
+    dialog.querySelector('[data-update-dialog-download]').onclick = async event => {
+      const button = event.target; button.disabled = true;
+      try { renderUpdate(await desktop.updateDownload()); }
+      catch (error) { dialog.querySelector('[data-update-dialog-status]').textContent = error.message; button.disabled = false; }
+    };
+    dialog.querySelector('[data-update-dialog-cancel-download]').onclick = async () => { try { await desktop.updateCancel(); } catch (error) { toast(error.message); } };
+    dialog.querySelector('[data-update-dialog-install]').onclick = async () => { try { await desktop.updateInstall(); } catch (error) { dialog.querySelector('[data-update-dialog-status]').textContent = error.message; } };
+    dialog.querySelector('[data-update-dialog-skip]').onclick = async event => {
+      const button = event.target; button.disabled = true;
+      try {
+        const latest = (updateValue || {}).latest;
+        updateValue = await desktop.updateSet({ skipVersion: latest });
+        renderUpdate(updateValue, true);
+        const launcher = document.querySelector('#settings-launcher');
+        const status = launcher?.querySelector('[data-launch-status]');
+        if (status) status.textContent = `已忽略 v${latest}，之后不会再自动提醒`;
+        await uiMotion.closeDialog(dialog);
+      } catch (error) { dialog.querySelector('[data-update-dialog-status]').textContent = error.message; }
+      finally { button.disabled = false; }
+    };
+    updateDialogBox = dialog;
+    return dialog;
+  }
+  function openUpdateDialog() {
+    if (!window.desktop?.updateCheck) return;
+    if (!updateDialogBox) buildUpdateDialog();
+    updateZoneMode = '';
+    syncUpdateDialog();
+    if (updateDialogBox.open) return;
+    uiMotion.openDialog(updateDialogBox);
+  }
+  function syncUpdateDialog() {
+    const dialog = updateDialogBox;
+    if (!dialog) return;
+    const current = updateValue || {};
+    dialog.querySelector('[data-update-dialog-latest]').textContent = 'v' + (current.latest || '?');
+    const notes = dialog.querySelector('[data-update-dialog-notes]');
+    notes.innerHTML = renderMarkdown(current.notes) || '<p class="helper">发布者没有填写更新说明，可直接下载安装包。</p>';
+    notes.querySelectorAll('a').forEach(link => { link.addEventListener('click', event => { event.preventDefault(); desktop.external(link.href).catch(() => {}); }); });
+    const state = current.status || 'idle';
+    const downloading = state === 'downloading', downloaded = state === 'downloaded';
+    dialog.querySelector('[data-update-dialog-status]').textContent = current.skipped && state === 'available' ? '此版本已被忽略，之后不会再自动提醒，仍可手动下载。' : updateText(current);
+    swapUpdateZone(dialog.querySelector('[data-update-dialog-zone]'), downloading || downloaded ? 'progress' : 'actions');
+    renderDownloadProgress(dialog, current);
+    dialog.querySelector('[data-update-dialog-download]').disabled = downloading;
+    dialog.querySelector('[data-update-dialog-download]').textContent = state === 'cancelled' || state === 'error' ? '重新下载' : '立刻下载';
+    dialog.querySelector('[data-update-dialog-skip]').disabled = downloading;
+    dialog.querySelector('[data-update-dialog-cancel-download]').hidden = !downloading;
+    const install = dialog.querySelector('[data-update-dialog-install]');
+    install.hidden = !downloaded;
+    if (downloaded) install.animate([{ opacity: 0, transform: 'translateY(2px)' }, { opacity: 1, transform: 'none' }], { duration: 200, easing: 'cubic-bezier(.2,.8,.2,1)' });
+  }
+
   function buildLauncher() {
     const launcher=document.createElement('section');launcher.id='settings-launcher';launcher.className='panel appearance-panel';
     launcher.innerHTML='<h3>启动与更新</h3>'
@@ -221,7 +354,8 @@
       +'<div class="detail-actions" data-update-actions></div>'
       +'<div class="update-progress" data-update-progress hidden><div class="update-progress-heading"><strong data-update-progress-title>准备下载</strong><span data-update-percent></span></div><div class="update-progress-track" role="progressbar" aria-label="更新下载进度" aria-valuemin="0" aria-valuemax="100"><i data-update-fill></i></div><div class="update-progress-detail"><span data-update-bytes></span><span data-update-speed></span></div></div>'
       +'<p class="helper" data-launch-status role="status"></p>';
-    launcher.querySelector('[data-launch-option]').addEventListener('change',async e=>{const input=e.target;input.disabled=true;try{const value=await desktop.launcherSet({openAtLogin:input.checked});launcher.querySelector('[data-launch-status]').textContent=value.openAtLogin?'已开启开机自启，下次登录 Windows 自动运行':'已关闭开机自启';}catch(error){launcher.querySelector('[data-launch-status]').textContent=error.message;input.checked=!input.checked;}finally{input.disabled=false;}});
+    launcher.querySelector('[data-launch-option]').addEventListener('change',async e=>{const input=e.target;input.disabled=true;try{const value=await desktop.launcherSet({openAtLogin:input.checked});launcher.querySelector('[data-launch-status]').textContent=value.openAtLogin?'已开启开机自启，下次登录 Windows 自动运行':'已关闭开机自启';input.checked=!!value.openAtLogin;}catch(error){launcher.querySelector('[data-launch-status]').textContent=error.message;input.checked=!input.checked;}finally{input.disabled=false;}});
+    if (window.desktop?.launcherGet) desktop.launcherGet().then(value => { const box = launcher.querySelector('[data-launch-option]'); if (box) box.checked = !!value.openAtLogin; }).catch(() => {});
     const persistUpdate = async patch => {
       try { updateValue = await desktop.updateSet(patch); renderUpdate(updateValue); launcher.querySelector('[data-launch-status]').textContent = '已保存，仅作用于本机'; }
       catch (error) { launcher.querySelector('[data-launch-status]').textContent = error.message; }
@@ -232,7 +366,7 @@
       const button=e.target;const status=launcher.querySelector('[data-launch-status]');
       button.disabled=true;status.textContent='正在检查更新…';
       try {
-        if (window.desktop?.updateCheck) { renderUpdate(await desktop.updateCheck()); }
+        if (window.desktop?.updateCheck) { const result = await desktop.updateCheck(); renderUpdate(result); if (result.status === 'available') openUpdateDialog(); }
         else {
           const platform=await desktop.platform();
           const result=await window.updater.check(platform.version);

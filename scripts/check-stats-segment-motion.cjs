@@ -1,0 +1,32 @@
+const {chromium}=require('playwright');
+const assert=require('node:assert/strict');
+(async()=>{
+  const browser=await chromium.connectOverCDP('http://127.0.0.1:9333');
+  let page=null;
+  for(const context of browser.contexts()) for(const item of context.pages()) if(!page&&!item.url().startsWith('devtools')) page=item;
+  assert(page,'no page');
+  await page.waitForTimeout(1500);
+  const onStats=await page.evaluate(()=>{document.querySelector('[data-nav="stats"]')?.click();return true;});
+  assert.ok(onStats);
+  await page.waitForTimeout(1200);
+  const boxes=await page.evaluate(()=>[...document.querySelectorAll('.statistics-controls .segment-choice')].map(b=>({id:b.dataset.selectFor,buttons:[...b.querySelectorAll('button')].map(btn=>{const r=btn.getBoundingClientRect();return {label:btn.textContent,x:r.x+r.width/2,y:r.y+r.height/2};})})));
+  assert.ok(boxes.length,'no segment box found in statistics controls');
+  const box=boxes[0];
+  assert.ok(box.buttons.length>=3,'range pills missing');
+  const track=async()=>{
+    await page.evaluate(()=>{window.__track=[];let on=true;(function tick(){if(!on)return;const t=document.querySelector('.statistics-controls .segment-highlight');if(t){const r=t.getBoundingClientRect();window.__track.push({x:Math.round(r.x),w:Math.round(r.width)});}requestAnimationFrame(tick);})();});
+  };
+  const stop=async()=>await page.evaluate(()=>{window.__trackStop=true;const s=window.__track;const distinct=[...new Set(s.map(p=>p.x+':'+p.w))];return {frames:s.length,distinct:distinct.length,path:s.filter((p,i,a)=>i===0||p.x!==a[i-1].x).slice(0,12)};});
+  const from=box.buttons[2];
+  await track();
+  await page.mouse.move(from.x,from.y);await page.mouse.down();await page.mouse.up();
+  await page.waitForTimeout(450);
+  const move1=await stop();
+  const to=box.buttons[0];
+  await track();
+  await page.mouse.move(to.x,to.y);await page.mouse.down();await page.mouse.up();
+  await page.waitForTimeout(450);
+  const move2=await stop();
+  console.log(JSON.stringify({move2To90:move1,move90To7:move2},null,2));
+  await browser.close();
+})().catch(e=>{console.error('FAIL',e.message);process.exit(1);});

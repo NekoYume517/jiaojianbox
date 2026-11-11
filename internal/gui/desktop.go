@@ -441,6 +441,16 @@ func (d *Desktop) Invoke(method string, args []any) (any, error) {
 		} else {
 			err = d.app.Autostart.Disable()
 		}
+		if err == nil {
+			actual, stateErr := d.app.Autostart.IsEnabled()
+			if stateErr != nil {
+				err = stateErr
+			} else if actual != enabled {
+				err = errors.New("系统自启状态未生效，请重试或检查系统权限")
+			} else {
+				enabled = actual
+			}
+		}
 		return Object{"openAtLogin": enabled}, err
 	case "quickGet":
 		d.mu.Lock()
