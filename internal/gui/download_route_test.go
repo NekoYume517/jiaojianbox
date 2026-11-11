@@ -34,9 +34,9 @@ func TestDownloadPatternAllowsExports(t *testing.T) {
 
 func TestDropContentType(t *testing.T) {
 	cases := map[string]string{
-		"名单.CSV":    "text/csv",
-		"截图.PNG":    "image/png",
-		"任务.xlsx":   "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+		"名单.CSV":      "text/csv",
+		"截图.PNG":      "image/png",
+		"任务.xlsx":     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
 		"unknown.bin": "application/octet-stream",
 		"noext":       "application/octet-stream",
 	}

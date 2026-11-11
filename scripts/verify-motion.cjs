@@ -52,7 +52,27 @@ module.exports = async function verifyMotion(page, scratch) {
   await page.keyboard.press('Escape'); await page.emulateMedia({reducedMotion:'no-preference'});
   await page.setViewportSize({width:390,height:844});
   await trigger.click(); const bounds=await menu.boundingBox(); assert(bounds.x>=0&&bounds.x+bounds.width<=390);
-  await page.keyboard.press('Escape'); await page.setViewportSize({width:1280,height:860});
+  await page.keyboard.press('Escape');
+  // Mobile command palette stays between the app bar and bottom navigation, with only the list scrolling.
+  for(const width of [320,360,390,412]){
+    await page.setViewportSize({width,height:480});
+    await page.evaluate(()=>cmdkShow());
+    await page.locator('#cmdk-input').waitFor({state:'visible'});
+    const geometry=await page.evaluate(()=>{
+      const box=el=>{const r=el.getBoundingClientRect();return {x:r.x,y:r.y,width:r.width,height:r.height,bottom:r.bottom};};
+      const backdrop=document.querySelector('#cmdk-backdrop'),palette=document.querySelector('.cmdk'),input=document.querySelector('#cmdk-input'),list=document.querySelector('#cmdk-list'),topbar=document.querySelector('.topbar'),nav=document.querySelector('.sidebar');
+      return {viewport:{width:innerWidth,height:innerHeight,visualHeight:visualViewport?.height||innerHeight},backdrop:box(backdrop),palette:box(palette),input:box(input),list:{...box(list),scrollHeight:list.scrollHeight,clientHeight:list.clientHeight},topbar:box(topbar),nav:box(nav),scrollWidth:document.documentElement.scrollWidth};
+    });
+    assert(geometry.scrollWidth<=geometry.viewport.width,`command palette overflows horizontally at ${width}px`);
+    assert(geometry.backdrop.x>=0&&geometry.backdrop.x+geometry.backdrop.width<=geometry.viewport.width,`command palette backdrop exceeds ${width}px viewport`);
+    assert(geometry.palette.y>=geometry.topbar.bottom+4,`command palette overlaps the top bar at ${width}px`);
+    assert(geometry.palette.bottom<=geometry.nav.y-4,`command palette overlaps bottom navigation at ${width}px`);
+    assert(geometry.input.height>0&&geometry.input.y>=geometry.palette.y,`command search is not visible at ${width}px`);
+    assert(geometry.list.clientHeight>0&&geometry.list.scrollHeight>geometry.list.clientHeight,`command result list does not scroll internally at ${width}px`);
+    assert(Math.abs(geometry.list.y-(geometry.input.y+geometry.input.height))<1,`command search must remain fixed above the result list at ${width}px`);
+    await page.evaluate(()=>cmdkHide());
+  }
+  await page.setViewportSize({width:1280,height:860});
   // The command input stays above its scrolling results without a clipped focus ring.
   await page.keyboard.press('Control+k'); await page.locator('#cmdk-input').waitFor({state:'visible'});
   assert.equal(await page.locator('#cmdk-input').evaluate(el=>getComputedStyle(el).outlineStyle),'none');

@@ -165,7 +165,7 @@
   window.addEventListener('appearance-changed',sync);
   window.addEventListener('resize',sync);
   matchMedia('(prefers-reduced-motion:reduce)').addEventListener('change',()=>{selectionAnimation?.cancel();sync();});
-  window.pageNavigation={sync};
+  window.pageNavigation={sync,select};
   applySidebarMode(readSidebarMode(),false);
   sync();
 })();

@@ -97,7 +97,7 @@ class JjbApi(private val session: Session) {
         val payload = JSONObject().put("username", username).put("password", password).toString().toRequestBody("application/json".toMediaType())
         http.newCall(Request.Builder().url(server.trimEnd('/') + "/api/auth/login").post(payload).build()).await().use { response ->
             val obj = response.jsonOrThrow()
-            Session(server = server.trimEnd('/'), token = obj.getString("token"), username = obj.getString("username"))
+            Session(server = server.trimEnd('/'), token = obj.getString("token"), username = obj.getString("username"), userId = obj.optString("user_id"))
         }
     }
 

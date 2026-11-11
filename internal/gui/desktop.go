@@ -43,6 +43,9 @@ type Desktop struct {
 	quickMu                            sync.Mutex
 	positionMu                         sync.Mutex
 	positionTimer                      *time.Timer
+	windowMu                           sync.Mutex
+	windowReady                        bool
+	activationPending                  bool
 	ctx                                context.Context
 	cancel                             context.CancelFunc
 	appearance, prefs, state           Object
@@ -54,6 +57,15 @@ type Desktop struct {
 	offline                            Object
 	collector, drag                    *exec.Cmd
 	qq                                 *snowManager
+	notifier                           *desktopNotifier
+	reminderMu                         sync.Mutex
+	reminderEnabled                    bool
+	reminderFired                      map[string]string
+	reminderNext, reminderNextTitle    string
+	reminderChecked                    string
+	reminderOnce                       sync.Once
+	reminderOpenMu                     sync.Mutex
+	reminderOpenTask                   string
 	pinned                             bool
 	closed                             bool
 }
@@ -110,19 +122,25 @@ func Run(version string) error {
 	if root == "" {
 		root = defaultDataRoot(config)
 	}
+	logf := func(format string, args ...any) { appendStartupLog(root, format, args...) }
+	logf("launch version=%s args=%q", version, os.Args[1:])
 	if err = os.MkdirAll(root, 0700); err != nil {
+		logf("data root failed: %v", err)
 		return err
 	}
 	activate := make(chan struct{}, 1)
 	release, primary, err := claimInstance(root, activate)
 	if err != nil {
+		logf("single instance failed: %v", err)
 		return err
 	}
 	if !primary {
+		logf("second instance handed off to the running app")
 		return nil
 	}
 	defer release()
 	if err = guardChildren(); err != nil {
+		logf("job object failed: %v", err)
 		return fmt.Errorf("无法建立采集进程生命周期保护: %w", err)
 	}
 	d := &Desktop{root: root, resources: resourceRoot(), version: version, vault: &vault{root: filepath.Join(root, "vault-go")}, appearance: Object{"theme": "system", "density": "compact", "textSize": "normal", "palette": "magpie"}, prefs: Object{"enabled": true, "drop": true, "note": true, "files": true}, state: Object{"state": "stopped", "message": "采集未启动"}}
@@ -139,19 +157,23 @@ func Run(version string) error {
 			d.prefs[k] = v
 		}
 	}
+	d.setupReminders()
 	d.db, err = store.Open(filepath.Join(root, "offline-workspace"))
 	if err != nil {
+		logf("workspace open failed: %v", err)
 		return err
 	}
 	d.core, err = api.New(d.db, assets.FS(), version)
 	if err != nil {
 		d.db.Close()
+		logf("core init failed: %v", err)
 		return err
 	}
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		d.core.Close()
 		d.db.Close()
+		logf("local listener failed: %v", err)
 		return err
 	}
 	d.localURL = "http://" + listener.Addr().String()
@@ -160,6 +182,7 @@ func Run(version string) error {
 		listener.Close()
 		d.core.Close()
 		d.db.Close()
+		logf("local session failed: %v", err)
 		return err
 	}
 	d.offline["server"] = d.localURL
@@ -169,12 +192,9 @@ func Run(version string) error {
 	if port, e := strconv.Atoi(os.Getenv("JJB_DEBUG_PORT")); e == nil && port > 0 && port <= 65535 {
 		debugArgs = append(debugArgs, "--remote-debugging-port="+strconv.Itoa(port))
 	}
-	d.app = application.New(application.Options{Name: "交件箱", Description: "通知、待办与文件", Icon: icon, Windows: application.WindowsOptions{WebviewUserDataPath: filepath.Join(root, "webview"), DisableQuitOnLastWindowClosed: true, AdditionalBrowserArgs: debugArgs}, Assets: application.AssetOptions{Handler: application.BundledAssetFileServer(assets.FS())}, Services: []application.Service{application.NewService(d)}, SingleInstance: &application.SingleInstanceOptions{UniqueID: "com.jiaojianbox.go." + store.Hash(root)[:12], OnSecondInstanceLaunch: func(application.SecondInstanceData) {
-		if d.main != nil {
-			d.main.Show()
-			d.main.UnMinimise()
-			d.main.Focus()
-		}
+	d.app = application.New(application.Options{Name: "交件箱", Description: "通知、待办与文件", Icon: icon, Windows: application.WindowsOptions{WebviewUserDataPath: filepath.Join(root, "webview"), DisableQuitOnLastWindowClosed: true, AdditionalBrowserArgs: debugArgs}, Assets: application.AssetOptions{Handler: application.BundledAssetFileServer(assets.FS())}, Services: []application.Service{application.NewService(d), application.NewService(d.notifier)}, SingleInstance: &application.SingleInstanceOptions{UniqueID: "com.jiaojianbox.go." + store.Hash(root)[:12], OnSecondInstanceLaunch: func(application.SecondInstanceData) {
+		d.requestActivation("wails")
+		appendStartupLog(root, "wails second-instance notification")
 	}}, OnShutdown: d.shutdown})
 	silent := false
 	for _, a := range os.Args[1:] {
@@ -188,9 +208,14 @@ func Run(version string) error {
 	}
 	chrome, background := desktopWindowChrome(getString(d.appearance, "theme"))
 	d.main = d.app.Window.NewWithOptions(application.WebviewWindowOptions{Name: "main", Title: windowTitle, Width: 1280, Height: 860, MinWidth: 360, MinHeight: 520, URL: "/?desktop=1", Frameless: false, EnableFileDrop: true, Hidden: silent, Windows: chrome, BackgroundColour: background})
-	if runtime.GOOS == "windows" {
-		d.main.OnWindowEvent(events.Common.WindowRuntimeReady, func(*application.WindowEvent) { d.main.ExecJS(frameOnlyResizeJS) })
-	}
+	d.notifier.onResponse(d.handleNotificationResponse)
+	d.app.Event.OnApplicationEvent(events.Common.ApplicationStarted, func(*application.ApplicationEvent) { d.startReminders() })
+	d.main.OnWindowEvent(events.Common.WindowRuntimeReady, func(*application.WindowEvent) {
+		if runtime.GOOS == "windows" {
+			d.main.ExecJS(frameOnlyResizeJS)
+		}
+		d.mainWindowReady()
+	})
 	d.main.OnWindowEvent(events.Common.WindowClosing, func(e *application.WindowEvent) { e.Cancel(); d.main.Hide() })
 	d.main.OnWindowEvent(events.Common.WindowFilesDropped, func(e *application.WindowEvent) {
 		details := e.Context().DropTargetDetails()
@@ -215,9 +240,7 @@ func Run(version string) error {
 			case <-d.ctx.Done():
 				return
 			case <-activate:
-				d.main.Show()
-				d.main.UnMinimise()
-				d.main.Focus()
+				d.requestActivation("instance")
 			}
 		}
 	}()
@@ -227,26 +250,21 @@ func Run(version string) error {
 	tray.SetTooltip("交件箱")
 	menu := application.NewMenu()
 	menu.Add("打开交件箱").OnClick(func(*application.Context) {
-		if d.main != nil {
-			d.main.Show()
-			d.main.UnMinimise()
-			d.main.Focus()
-		}
+		d.requestActivation("tray-menu")
 	})
 	menu.Add("快捷收集").OnClick(func(*application.Context) { d.showQuick() })
 	menu.AddSeparator()
 	menu.Add("退出").OnClick(func(*application.Context) { d.app.Quit() })
 	tray.SetMenu(menu)
 	tray.OnClick(func() {
-		if d.main != nil {
-			d.main.Show()
-			d.main.UnMinimise()
-			d.main.Focus()
-		}
+		d.requestActivation("tray-click")
 	})
 	d.app.GlobalShortcut.Register("Ctrl+Shift+Space", d.showQuick)
 	d.startDragWatch()
-	return d.app.Run()
+	appendStartupLog(root, "application run beginning")
+	runErr := d.app.Run()
+	appendStartupLog(root, "application exited: %v", runErr)
+	return runErr
 }
 func (d *Desktop) shutdown() {
 	d.mu.Lock()
@@ -283,6 +301,50 @@ func (d *Desktop) emit(name string, value any) {
 	if d.app != nil {
 		d.app.Event.Emit(name, value)
 	}
+}
+func (d *Desktop) showMain() {
+	d.requestActivation("show")
+}
+
+func (d *Desktop) requestActivation(reason string) {
+	d.windowMu.Lock()
+	d.activationPending = true
+	ready := d.windowReady
+	window := d.main
+	d.windowMu.Unlock()
+	appendStartupLog(d.root, "activation requested reason=%s window=%t ready=%t", reason, window != nil, ready)
+	if window == nil {
+		return
+	}
+	if !ready {
+		appendStartupLog(d.root, "activation deferred until WindowRuntimeReady")
+		return
+	}
+	d.activateMainWindow(window)
+}
+
+func (d *Desktop) mainWindowReady() {
+	d.windowMu.Lock()
+	d.windowReady = true
+	pending := d.activationPending
+	d.activationPending = false
+	window := d.main
+	d.windowMu.Unlock()
+	appendStartupLog(d.root, "WindowRuntimeReady pending_activation=%t", pending)
+	if pending && window != nil {
+		d.activateMainWindow(window)
+	}
+	d.flushReminderTask()
+}
+
+func (d *Desktop) activateMainWindow(window *application.WebviewWindow) {
+	if window == nil {
+		return
+	}
+	window.Show()
+	window.UnMinimise()
+	window.Focus()
+	appendStartupLog(d.root, "main window activated visible=%t", window.IsVisible())
 }
 func (d *Desktop) offlineStart() (any, error) {
 	d.mu.Lock()
@@ -515,6 +577,12 @@ func (d *Desktop) Invoke(method string, args []any) (any, error) {
 		out := getObjectCopy(d.state)
 		d.mu.Unlock()
 		return out, nil
+	case "reminderGet":
+		return d.reminderStatus(), nil
+	case "reminderSet":
+		return d.setReminderEnabled(store.Bool(getObject(arg(args, 0)), "enabled"))
+	case "reminderTest":
+		return d.sendTestReminder()
 	case "download":
 		return d.download(stringArg(args, 0), stringArg(args, 1))
 	case "window":

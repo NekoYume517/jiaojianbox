@@ -8,8 +8,10 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/url"
+	"os"
 	"os/exec"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
@@ -68,4 +70,8 @@ func cursorWithin(window *application.WebviewWindow) bool     { return window !=
 
 func systemProxyFor(request *http.Request) (*url.URL, error) {
 	return http.ProxyFromEnvironment(request)
+}
+
+func showFatalDialog(message string) {
+	fmt.Fprintln(os.Stderr, message)
 }

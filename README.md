@@ -2,9 +2,9 @@
 
 通知、待办与文件，一处整理。
 
-桌面端和服务端共用 Go 核心；Windows 桌面使用 Wails v3 与系统 WebView2，界面采用原生 JavaScript/CSS。Android 保持原生 Material 3。技术结构参考 [Magpie](https://github.com/yetone/magpie)，视觉采用扁平、直角和细边框，支持浅色、深色、跟随系统，以及 Tokyo Night、Nord、Graphite 配色。
+桌面端和服务端共用 Go 核心；Windows 桌面使用 Wails v3 与系统 WebView2，界面采用原生 JavaScript/CSS。Android 在线模式采用 M3 登录门、共享网页工作区和文件/日历连接器，见 [Android 套壳预览说明](docs/android-web-shell.md)。技术结构参考 [Magpie](https://github.com/yetone/magpie)，视觉采用中性表面、克制圆角和细边框，支持浅色、深色、跟随系统，以及 Tokyo Night、Nord、Graphite 配色。
 
-前端动效以 [docs/ui-motion-standard.md](docs/ui-motion-standard.md) 为准；主工作区和服务端页面复用同一运行时与验收脚本，快捷收集保持轻量例外。
+所有界面开发以 [UI、控件与动效规范](docs/ui-design-standard.md) 为统一基线，涵盖配色、字号、间距、布局、tab、表单、文件拖放、进度反馈、动效与验收矩阵。主工作区和服务端页面复用同一运行时与验收脚本，快捷收集保持轻量例外。
 
 ## 安装使用
 

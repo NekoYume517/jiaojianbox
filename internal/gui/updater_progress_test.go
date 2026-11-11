@@ -1,8 +1,8 @@
 package gui
 
 import (
-	"fmt"
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"

@@ -44,8 +44,8 @@ android {
         applicationId = "com.jiaojianbox.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 19
-        versionName = "0.6.13"
+        versionCode = 22
+        versionName = "0.6.15-preview.2"
     }
     signingConfigs {
         create("stable") {
@@ -75,7 +75,15 @@ android {
     }
     kotlinOptions { jvmTarget = "17" }
     buildFeatures { compose = true }
+    sourceSets.getByName("main").assets.srcDir(layout.buildDirectory.dir("generated/workspaceAssets"))
 }
+
+val syncWorkspaceAssets by tasks.registering(Sync::class) {
+    from(rootProject.file("../web"))
+    into(layout.buildDirectory.dir("generated/workspaceAssets/web"))
+    exclude("**/*.map")
+}
+tasks.named("preBuild") { dependsOn(syncWorkspaceAssets) }
 
 dependencies {
     val composeBom = platform("androidx.compose:compose-bom:2024.12.01")

@@ -18,8 +18,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"sync"
+	"syscall"
 	"time"
 	"unsafe"
 )
@@ -292,4 +292,17 @@ func cursorWithin(window *application.WebviewWindow) bool {
 	}
 	root, _, _ := user32.NewProc("GetAncestor").Call(hit, 2) // GA_ROOT
 	return root == uintptr(handle)
+}
+
+func showFatalDialog(message string) {
+	title, err := syscall.UTF16PtrFromString("交件箱")
+	if err != nil {
+		return
+	}
+	text, err := syscall.UTF16PtrFromString(message)
+	if err != nil {
+		return
+	}
+	const mbIconError, mbTopmost = 0x00000010, 0x00040000
+	_, _, _ = user32.NewProc("MessageBoxW").Call(0, uintptr(unsafe.Pointer(text)), uintptr(unsafe.Pointer(title)), mbIconError|mbTopmost)
 }

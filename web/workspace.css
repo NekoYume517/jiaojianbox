@@ -54,7 +54,7 @@ dialog{padding:0;border:1px solid var(--line);border-radius:14px;background:var(
 .files-table td,.files-table th,.statistics-table td,.statistics-table th{padding-block:var(--list-space)}
 input:not([type=checkbox]):not([type=hidden]):not([type=file]),select{min-height:max(var(--field-height),2.5em)}
 .toolbar input,.toolbar select,.search,.search input{height:auto;min-height:var(--field-height)}
-.cmdk{display:flex;flex-direction:column;max-height:calc(89dvh - var(--titlebar) - 20px)}
+.cmdk{display:grid;grid-template-rows:auto minmax(0,1fr);min-height:0;max-height:min(640px,100%)}
 .cmdk #cmdk-input{flex-shrink:0}
 .cmdk-list{min-height:0;overscroll-behavior:contain}
 @media(min-width:621px){
@@ -443,3 +443,23 @@ select.segment-source{position:absolute!important;width:1px!important;height:1px
 
 /* Sidebar hover is text-only, Magpie style; the selected row keeps the single moving surface. */
 .sidebar nav button:hover:not(.active),.sidebar-bottom [data-nav]:hover:not(.active){background:transparent;color:var(--ink)}
+
+/* Android top-layer dialogs: no source clipping; header/footer remain visible. */
+:root[data-platform=android] dialog.motion-dialog[open]{display:flex;flex-direction:column;max-height:calc(var(--jjb-viewport-height,800px) - 24px)!important;overflow:hidden;clip-path:none!important}
+:root[data-platform=android] dialog.motion-dialog>form{display:flex;flex-direction:column;min-height:0;max-height:inherit;margin:0}
+:root[data-platform=android] dialog.motion-dialog .dialog-body{flex:1 1 auto;min-height:0;max-height:none!important;overflow:auto;overscroll-behavior:contain}
+:root[data-platform=android] dialog.motion-dialog>:is(.dialog-heading,.dialog-footer,.studio-tabs),:root[data-platform=android] dialog.motion-dialog>form>:is(.dialog-heading,.dialog-footer){flex:none}
+
+/* Windows native reminder status stays factual and uses the same quiet surface language. */
+.reminder-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:18px;margin-bottom:12px}
+.reminder-heading h3{margin:0 0 4px}
+.reminder-heading .helper{max-width:650px;margin:0}
+.reminder-native-badge{display:inline-flex;align-items:center;gap:7px;flex:none;min-height:28px;padding:5px 9px;border:1px solid var(--line);border-radius:999px;color:var(--muted);background:var(--surface);font-size:.785714rem;white-space:nowrap}
+.reminder-native-badge:before{content:"";width:7px;height:7px;border-radius:50%;background:var(--muted);transition:background-color 160ms var(--motion-ease)}
+.reminder-native-badge[data-state="ready"]{color:var(--text);border-color:color-mix(in srgb,var(--green) 42%,var(--line))}
+.reminder-native-badge[data-state="ready"]:before{background:var(--green)}
+.reminder-native-badge[data-state="waiting"]:before{background:var(--orange)}
+.reminder-native-badge[data-state="unsupported"]{color:var(--muted);border-style:dashed}
+.reminder-status{min-height:1.7em;margin:0}
+.reminder-panel [data-reminder-test]:disabled{opacity:.5}
+@media(max-width:620px){.reminder-heading{display:grid;gap:10px}.reminder-native-badge{justify-self:start;white-space:normal}}

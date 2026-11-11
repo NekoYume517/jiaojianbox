@@ -2,13 +2,14 @@ package main
 
 import (
 	"github.com/NekoYume517/jiaojianbox/internal/gui"
-	"log"
+	"os"
 )
 
-var version = "0.6.13"
+var version = "0.6.14"
 
 func main() {
 	if err := gui.Run(version); err != nil {
-		log.Fatal(err)
+		gui.ReportFatal(err)
+		os.Exit(1)
 	}
 }

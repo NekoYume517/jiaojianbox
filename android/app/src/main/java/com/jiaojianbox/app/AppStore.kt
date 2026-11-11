@@ -15,10 +15,11 @@ class AppStore(private val context: Context) {
     private val serverKey = stringPreferencesKey("server")
     private val tokenKey = stringPreferencesKey("token")
     private val usernameKey = stringPreferencesKey("username")
+    private val userIdKey = stringPreferencesKey("user_id")
 
     val session: Flow<Session?> = context.dataStore.data.map { prefs ->
         val token = prefs[tokenKey] ?: return@map null
-        Session(server = prefs[serverKey] ?: "", token = token, username = prefs[usernameKey] ?: "")
+        Session(server = prefs[serverKey] ?: "", token = token, username = prefs[usernameKey] ?: "", userId = prefs[userIdKey] ?: "")
     }
 
     suspend fun saveSession(session: Session) {
@@ -26,6 +27,7 @@ class AppStore(private val context: Context) {
             prefs[serverKey] = session.server
             prefs[tokenKey] = session.token
             prefs[usernameKey] = session.username
+            prefs[userIdKey] = session.userId
         }
     }
 
@@ -35,6 +37,6 @@ class AppStore(private val context: Context) {
 }
 
 const val DEFAULT_SERVER = "https://jiaojianbox.bansonic.top"
-data class Session(val server: String, val token: String, val username: String) {
+data class Session(val server: String, val token: String, val username: String, val userId: String = "") {
     val offline: Boolean get() = server == "offline://local"
 }

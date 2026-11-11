@@ -1,0 +1,19 @@
+{
+  "reference_version": "1.2",
+  "sha256": "71b7616a2287d15c194c31927cd520faf52e7d0972b6821ec3a89607fc0e4509",
+  "sources": {
+    "web/app.css": "8f0fbb8c15262d399e06bbf96de58b61597fdcd702e50b4ac5c4471e8ac586c7",
+    "web/select-arrow.css": "e6557934d800e12abdadc0649f95888872a40bfbfde09ec5c6ef4a80d2285c9c",
+    "web/palettes.css": "d478ca1adba3dbba54df1d9d88eb9616352a9594a8d352dcdb4e0345c2533a9c",
+    "web/workspace.css": "09f9873b63d039da0147d3c707a86ccdda2f8ce1730128836f07eb31c85af5b1",
+    "web/motion.css": "17b60d3ba65f9e784b72961c6b022e76da5ead960671052e417690d7e5fd506d",
+    "web/theme.js": "aa1c92870ca666eb56ff9a45e8bf2c567dd3c4394c5b42c4e7e69c9f0483c469",
+    "web/motion.js": "5083985fead6f9f58d12a1b6c061e5b8d265dd611321b65d57369c98e8345e42",
+    "web/controls.js": "92c6ddf22d4c32435bfa556a2ce05b1e344cc5b15d7292bbbf9cf3766d3d4b95",
+    "web/file-picker.js": "befbbbe234a15136e2806ad140d68072c12effa0bfb2d7e53244b6e6c43de628",
+    "web/icon.svg": "7c1d245b7697d96e5f58d4fcc17d9244b8a3e10e9fe722cbbf315db8fbf8d4e4",
+    "web/navigation.js": "15d99c4f4ee635d4cee34a8ecf0a3d46fc44593ba19bf6ff3ce5c4905323180b"
+  },
+  "external_dependencies": false,
+  "scope": "visual and interaction reference; fixture data only"
+}

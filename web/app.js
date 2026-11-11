@@ -10,6 +10,7 @@ const paths = {
   connect: '<rect x="3" y="3" width="7" height="7" rx="2"/><rect x="14" y="14" width="7" height="7" rx="2"/><path d="M17 3v6h4M3 17h6v4M9 17l8-8"/>',
   chart: '<path d="M4 3v17h17M8 16v-5M13 16V6M18 16V9"/>',
   settings: '<path d="M9 3h6l1 3 3 1 2 5-2 5-3 1-1 3H9l-1-3-3-1-2-5 2-5 3-1Z"/><circle cx="12" cy="12" r="3"/>',
+  user: '<circle cx="12" cy="8" r="4"/><path d="M4.5 21c.7-4.1 3.2-6.2 7.5-6.2s6.8 2.1 7.5 6.2"/>',
   refresh: '<path d="M20 10a8 8 0 1 0-2 8M20 4v6h-6"/>',
   sidebar: '<rect x="3" y="4" width="18" height="16" rx="3"/><path d="M9 4v16"/>',
   logout: '<path d="M10 4H4v16h6M12 12h9m-4-4 4 4-4 4"/>',
@@ -650,6 +651,7 @@ async function uploadFiles(input, kind, taskId = state.taskId) {
   cacheSoon(); render(); toast('文件已添加');
 }
 async function saveDownload(route, name) {
+  if (window.mobile) { const saved=await mobile.download(route,name); if(saved)toast('文件已保存'); return; }
   if (window.desktop) { const saved=await desktop.download(route,name); if(saved)toast('文件已保存'); return; }
   const response = await fetch(apiUrl(route), { headers: { Authorization: 'Bearer ' + state.session.token } });
   if (!response.ok) throw new Error('下载失败，请刷新后重试');
@@ -983,6 +985,17 @@ function applyHashRoute() {
   if(hash==='stats'){state.page='stats';render();return true;}
   return false;
 }
+window.jjbOpenTask = async id => {
+  if (!id) return;
+  location.hash = '#/task/' + id;
+  if (!state.session) return;
+  if (!state.snapshot.tasks.some(t => t.id === id)) {
+    try { await refresh(); } catch {}
+  }
+  if (state.snapshot.tasks.some(t => t.id === id)) {
+    state.page = 'tasks'; state.taskId = id; render();
+  }
+};
 window.addEventListener('hashchange', () => applyHashRoute());
 document.addEventListener('input', event => {
   if (['inbox-search', 'task-search'].includes(event.target.id)) { state.search = event.target.value; render(); }
@@ -1060,6 +1073,7 @@ $('#logout').addEventListener('click', async () => {
   if (window.desktop) { await desktop.stopCollector(); await desktop.remove('session'); } else localStorage.removeItem('jjb-session');
   window.pluginUI?.stop();state.session = null; state.selected = null; state.contexts.clear(); state.pending = []; state.snapshot = { tasks: [], messages: [], cursor: 0 };
   $('#workspace').hidden = true; $('#auth').hidden = false;
+  if (window.mobile) await mobile.logout();
 });
 $('#refresh').addEventListener('click', () => { refresh(); flushOutbox(); });
 window.addEventListener('online', () => { refresh(); flushOutbox(); if (!state.socket || state.socket.readyState > 1) syncSocket(); });

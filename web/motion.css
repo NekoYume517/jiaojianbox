@@ -1,4 +1,4 @@
-/* Canonical contract: docs/ui-motion-standard.md. Never imported by quick.html. */
+/* Canonical contract: docs/ui-design-standard.md, section 8. Never imported by quick.html. */
 :root{--motion-ease:cubic-bezier(.2,.8,.2,1);--motion-out:cubic-bezier(.23,1,.32,1)}
 .stagger>.stagger-item{opacity:1;transform:none;animation:none!important}
 button{transition:background-color 160ms var(--motion-ease),color 160ms var(--motion-ease),border-color 160ms var(--motion-ease),transform 160ms var(--motion-ease)}

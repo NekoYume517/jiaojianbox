@@ -2,11 +2,67 @@
 (() => {
   let instances=[],detecting=null,resumeTimer,authorizationGeneration=0,authorizeUrl='',lastSessionGeneration=-1;
   const appearancePanel=()=>`<section id="settings-appearance" class="panel appearance-panel"><div class="appearance-heading"><div><h3>外观</h3><p class="helper">选择适合当前设备的颜色、文字和信息密度。</p></div><div data-theme-picker></div></div><div class="theme-options">${[['light','浅色'],['dark','深色'],['system','跟随系统']].map(([mode,label])=>`<button type="button" class="theme-option" data-theme-mode="${mode}"><div class="theme-preview ${mode}"></div><span>${appearance.icon(mode)}${label}</span></button>`).join('')}</div><div class="appearance-fields"><label>配色主题<select id="appearance-palette"><option value="magpie">默认</option><option value="tokyo-night">Tokyo Night</option><option value="nord">Nord</option><option value="graphite">Graphite</option></select></label><label>信息密度<select id="appearance-density"><option value="comfortable">舒适</option><option value="compact">紧凑</option></select></label><label>文字大小<select id="appearance-text-size"><option value="normal">标准</option><option value="large">较大</option></select></label></div></section>`;
+  function reminderPanel(){
+    const section=document.createElement('section');
+    section.id='settings-reminders';
+    section.className='panel appearance-panel reminder-panel';
+    section.innerHTML=`<div class="reminder-heading"><div><h3>桌面提醒</h3><p class="helper">待办到达提醒时间后，通过 Windows 10/11 原生通知显示，点击通知会打开对应待办。</p></div><span class="reminder-native-badge" data-reminder-native>正在检查系统通知</span></div><label class="switch-line"><input type="checkbox" data-reminder-option="enabled"><span><strong>启用待办提醒</strong><small data-reminder-copy>提交或归档的待办会自动停止提醒。</small></span></label><div class="detail-actions"><button type="button" class="secondary" data-reminder-test>发送测试通知</button></div><p class="helper reminder-status" data-reminder-status role="status" aria-live="polite">正在读取提醒状态…</p>`;
+    const toggle=section.querySelector('[data-reminder-option="enabled"]');
+    const test=section.querySelector('[data-reminder-test]');
+    const badge=section.querySelector('[data-reminder-native]');
+    const copy=section.querySelector('[data-reminder-copy]');
+    const status=section.querySelector('[data-reminder-status]');
+    const render=(value={})=>{
+      const supported=value.native_supported!==false;
+      const available=value.native_available===true;
+      toggle.checked=!!value.enabled;
+      toggle.disabled=!supported||!available;
+      test.disabled=!supported||!available;
+      badge.dataset.state=!supported?'unsupported':available?'ready':'waiting';
+      badge.textContent=!supported?'当前系统不支持':available?'Windows 10/11 原生通知':'原生通知正在初始化';
+      copy.textContent=!supported?'此功能仅支持 Windows 10 及以上版本。':available?'提醒会进入 Windows 通知中心；提交或归档的待办会自动停止提醒。':value.native_error||'系统通知服务尚未就绪，暂时不能启用。';
+      if(!supported||!available){status.textContent=value.native_error||'原生通知暂不可用';return;}
+      status.textContent=value.enabled?'已启用'+(value.next_at?' · 下次提醒 '+formatDate(value.next_at):' · 暂无待发送提醒'):'提醒已关闭';
+    };
+    let refreshAttempt=0;
+    const refresh=async()=>{
+      try{
+        const value=await desktop.reminderGet();
+        render(value);
+        if(value.native_supported&&!value.native_available&&!value.native_error&&refreshAttempt++<6)setTimeout(refresh,500);
+      }catch(error){
+        if(refreshAttempt++<2)setTimeout(refresh,500);
+        else render({native_supported:false,native_error:error.message});
+      }
+    };
+    refresh();
+    section.addEventListener('change',async event=>{
+      if(!event.target.matches('[data-reminder-option="enabled"]'))return;
+      const input=event.target;
+      input.disabled=true;
+      try{render(await desktop.reminderSet({enabled:input.checked}));}
+      catch(error){status.textContent=error.message;input.checked=!input.checked;input.disabled=false;}
+    });
+    section.addEventListener('click',async event=>{
+      const button=event.target.closest('[data-reminder-test]');
+      if(!button)return;
+      button.disabled=true;
+      status.textContent='正在发送测试通知…';
+      try{
+        const value=await desktop.reminderTest();
+        status.textContent=value.ok?'已发送测试通知。若没有看见，请检查 Windows 通知设置与“请勿打扰”。':value.message;
+      }catch(error){status.textContent=error.message;}
+      finally{button.disabled=false;}
+    });
+    return section;
+  }
   function decorate(page){
     if(page==='settings'&&!$('#appearance-panel-marker')){
       const marker=document.createElement('div');marker.id='appearance-panel-marker';marker.innerHTML=appearancePanel();$('#view .page-heading').after(marker);appearance.refresh();
       if(window.desktop){
         const panel=document.createElement('section');panel.id='settings-quick';panel.className='panel appearance-panel';panel.innerHTML='<h3>桌面快捷收集</h3><p class="helper">拖动标题栏调整位置，下次打开会记住。文件拖入后保持打开，可按 Esc 或 × 关闭。</p>'+[['enabled','启用快捷收集（拖拽、快捷键和托盘）'],['drop','显示文件拖拽框'],['note','显示随手记'],['files','显示文件列表']].map(([key,label])=>`<label class="switch-line"><input type="checkbox" data-quick-option="${key}"><span>${label}</span></label>`).join('')+'<p class="helper" data-quick-status role="status"></p>';marker.append(panel);let prefs;desktop.quickGet().then(value=>{prefs=value;panel.querySelectorAll('[data-quick-option]').forEach(input=>input.checked=prefs[input.dataset.quickOption]!==false);}).catch(e=>panel.querySelector('[data-quick-status]').textContent=e.message);panel.addEventListener('change',async e=>{if(!e.target.matches('[data-quick-option]'))return;const inputs=[...panel.querySelectorAll('[data-quick-option]')];inputs.forEach(i=>i.disabled=true);try{prefs=await desktop.quickSet(Object.fromEntries(inputs.map(i=>[i.dataset.quickOption,i.checked])));panel.querySelector('[data-quick-status]').textContent='已保存，仅作用于本机';}catch(error){panel.querySelector('[data-quick-status]').textContent=error.message;inputs.forEach(i=>i.checked=prefs?.[i.dataset.quickOption]!==false);}finally{inputs.forEach(i=>i.disabled=false);}});
+        const reminders=reminderPanel();
+        marker.append(reminders);
         const launcher=buildLauncher();marker.append(launcher);
       }
     }

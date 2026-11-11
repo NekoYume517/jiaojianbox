@@ -7,6 +7,8 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -25,8 +27,8 @@ import kotlinx.coroutines.withContext
 fun LoginScreen(onLogin: (Session) -> Unit, onCancel: (() -> Unit)? = null, externalError: String = "") {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    var server by remember { mutableStateOf(DEFAULT_SERVER) }
-    var customServer by remember { mutableStateOf(false) }
+    var server by rememberSaveable { mutableStateOf(DEFAULT_SERVER) }
+    var customServer by rememberSaveable { mutableStateOf(false) }
     var browserBusy by remember { mutableStateOf(false) }
     var browserError by remember { mutableStateOf("") }
     var showPassword by remember { mutableStateOf(false) }
@@ -34,6 +36,9 @@ fun LoginScreen(onLogin: (Session) -> Unit, onCancel: (() -> Unit)? = null, exte
     var password by remember { mutableStateOf("") }
     var pwBusy by remember { mutableStateOf(false) }
     var pwError by remember { mutableStateOf("") }
+    var userCode by remember { mutableStateOf("") }
+    var authorization by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
+    DisposableEffect(Unit) { onDispose { authorization?.cancel() } }
 
     fun openBrowser(url: String) {
         runCatching {
@@ -46,8 +51,13 @@ fun LoginScreen(onLogin: (Session) -> Unit, onCancel: (() -> Unit)? = null, exte
         verticalArrangement = Arrangement.Center,
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        Text("交件箱", style = MaterialTheme.typography.headlineLarge, color = MaterialTheme.colorScheme.primary)
-        Text("消息很多，要交的事一件不漏。", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Icon(painterResource(R.drawable.ic_jiaojianbox), contentDescription = null, tint = androidx.compose.ui.graphics.Color.Unspecified, modifier = Modifier.size(64.dp))
+        Spacer(Modifier.height(20.dp))
+        Text("登录交件箱", style = MaterialTheme.typography.headlineLarge)
+        Spacer(Modifier.height(10.dp))
+        Text("同一个工作区，随身带走。", style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Spacer(Modifier.height(8.dp))
+        Text("通知、待办与文件，在手机上继续。", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Spacer(Modifier.height(28.dp))
         if(customServer) OutlinedTextField(server, { server = it }, label = { Text("自建服务器地址") }, singleLine = true, enabled = !browserBusy, modifier = Modifier.fillMaxWidth())
         TextButton(enabled = !browserBusy, onClick = { customServer = !customServer; if(!customServer)server=DEFAULT_SERVER }) { Text(if(customServer) "使用默认服务器" else "连接其他自建服务器") }
@@ -56,18 +66,19 @@ fun LoginScreen(onLogin: (Session) -> Unit, onCancel: (() -> Unit)? = null, exte
         Button(
             onClick = {
                 browserBusy = true; browserError = ""
-                scope.launch {
+                authorization = scope.launch {
                     var resultSession: Session? = null
                     runCatching {
                         val base = server.trim().trimEnd('/')
                         val start = withContext(Dispatchers.IO) { DeviceFlow.start(base) }
+                        userCode = start.userCode
                         withContext(Dispatchers.Main) { openBrowser(start.verificationUrl) }
                         val deadline = System.currentTimeMillis() + start.expiresIn * 1000L
                         while (System.currentTimeMillis() < deadline) {
                             delay(2000)
                             when (val status = withContext(Dispatchers.IO) { DeviceFlow.poll(base, start.deviceCode) }) {
                                 is DeviceFlow.PollResult.Approved -> {
-                                    resultSession = Session(base.trimEnd('/'), status.token, status.username)
+                                    resultSession = Session(base.trimEnd('/'), status.token, status.username, status.userId)
                                     return@runCatching
                                 }
                                 is DeviceFlow.PollResult.Denied -> throw IllegalStateException("授权已取消")
@@ -84,6 +95,16 @@ fun LoginScreen(onLogin: (Session) -> Unit, onCancel: (() -> Unit)? = null, exte
             enabled = !browserBusy && server.startsWith("http"),
             modifier = Modifier.fillMaxWidth(),
         ) { Text(if (browserBusy) "等待浏览器确认…" else "在浏览器中登录") }
+        if (browserBusy) {
+            Spacer(Modifier.height(12.dp))
+            Card(Modifier.fillMaxWidth()) { Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                LinearProgressIndicator(Modifier.fillMaxWidth())
+                Text("请在浏览器中确认授权", style = MaterialTheme.typography.titleMedium)
+                if (userCode.isNotBlank()) Text(userCode, style = MaterialTheme.typography.headlineSmall)
+                Text("确认后返回这里，将自动进入你的工作区。", style = MaterialTheme.typography.bodySmall)
+                TextButton(onClick = { authorization?.cancel(); browserBusy = false; userCode = "" }) { Text("取消本次登录") }
+            } }
+        }
         if (browserError.isNotBlank()) {
             Spacer(Modifier.height(6.dp))
             Text(browserError, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)

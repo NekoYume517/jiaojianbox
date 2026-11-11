@@ -168,6 +168,14 @@
     // Show immediately: browser top-layer focus and inertness remain native.
     if (!dialog.open) dialog.showModal();
     if (keyboard || reduced.matches) { entry.phase = 'open'; return; }
+    // Some Android WebViews leave top-layer dialogs clipped to the trigger.
+    // Keep native dialog semantics, but only animate opacity/translation there.
+    if(window.mobile){
+      dialog.style.clipPath='none';
+      entry.animations=[play(dialog,[{opacity:0,transform:'translateY(8px)'},{opacity:1,transform:'none'}],{duration:240,easing:ease})];
+      Promise.all(entry.animations.map(a=>a?.finished.catch(()=>{}))).then(()=>{if(dialogs.get(dialog)===entry){entry.phase='open';dialog.style.removeProperty('clip-path');}});
+      return;
+    }
     const to = dialog.getBoundingClientRect(), from = sourceRect(entry);
     entry.animations = [
       play(dialog, [current || { ...(from ? folded(from, to) : { transform: 'translateY(16px) scale(.95)' }), opacity: 0 }, rest], { duration: 440, easing: spring }),
@@ -190,6 +198,12 @@
       stop(entry); dialogs.delete(dialog); dialog.close(value);
     };
     if (keyboard || reduced.matches) { finish(); return Promise.resolve(); }
+    if(window.mobile){
+      entry.animations=[play(dialog,[{opacity:current.opacity,transform:'none'},{opacity:0,transform:'translateY(6px)'}],{duration:180,easing:ease})];
+      let timer;
+      entry.done=Promise.race([Promise.all(entry.animations.map(a=>a?.finished.catch(()=>{}))),new Promise(resolve=>{timer=setTimeout(resolve,450);})]).then(()=>{clearTimeout(timer);finish();});
+      return entry.done;
+    }
     const to = dialog.getBoundingClientRect(), from = sourceRect(entry);
     entry.animations = [
       play(dialog, [current, { ...(from ? folded(from, to) : { transform: 'translateY(10px) scale(.97)' }), opacity: 0 }], { duration: 220, easing: ease, fill: 'forwards' }),
