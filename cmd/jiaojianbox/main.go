@@ -5,7 +5,7 @@ import (
 	"os"
 )
 
-var version = "0.6.15"
+var version = "0.6.16"
 
 func main() {
 	if err := gui.Run(version); err != nil {

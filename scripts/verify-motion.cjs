@@ -41,6 +41,9 @@ module.exports = async function verifyMotion(page, scratch) {
 
   await trigger.click(); await menu.getByRole('menuitem',{name:'新建待办',exact:true}).click();
   await page.locator('#task-dialog').waitFor({state:'visible'}); assert(await menu.isHidden());
+  const readMotion=locator=>locator.evaluate(el=>el.getAnimations().filter(a=>a.playState==='running').map(a=>({duration:a.effect.getTiming().duration,easing:a.effect.getTiming().easing})).sort((a,b)=>a.duration-b.duration));
+  const dialogOpenMotion=await readMotion(page.locator('#task-dialog'));
+  const dialogOpenSurfaceMotion=dialogOpenMotion.filter(x=>x.duration===440);
   await page.screenshot({path:path.join(scratch,'motion-dialog.png')});
   await page.keyboard.press('Escape');
   await page.emulateMedia({reducedMotion:'reduce'});
@@ -53,6 +56,61 @@ module.exports = async function verifyMotion(page, scratch) {
   await page.setViewportSize({width:390,height:844});
   await trigger.click(); const bounds=await menu.boundingBox(); assert(bounds.x>=0&&bounds.x+bounds.width<=390);
   await page.keyboard.press('Escape');
+  // The command palette follows the same modal entry and exit choreography.
+  await page.keyboard.press('Control+k');
+  await page.locator('#cmdk-backdrop').waitFor({state:'visible'});
+  assert(await page.locator('#cmdk-backdrop').evaluate(el=>el.classList.contains('show')));
+  assert(await page.locator('#cmdk-backdrop .cmdk').evaluate(el=>el.getAnimations().some(a=>a.playState==='running')));
+  assert.deepEqual(await readMotion(page.locator('#cmdk-backdrop .cmdk')),dialogOpenSurfaceMotion,'command palette must use the dialog surface opening motion');
+  const commandOpenBackdropMotion=await readMotion(page.locator('#cmdk-backdrop'));
+  assert.deepEqual(commandOpenBackdropMotion.map(x=>x.duration),[220],'command palette must use the dialog backdrop opening duration');
+  assert.deepEqual(commandOpenBackdropMotion.map(x=>x.easing),['ease-out'],'command palette must use the dialog backdrop opening easing');
+  await page.waitForTimeout(500);
+  assert.equal(await page.locator('#cmdk-backdrop .cmdk').evaluate(el=>getComputedStyle(el).transform),'none');
+  await page.keyboard.press('Escape');
+  assert(await page.locator('#cmdk-backdrop').isVisible());
+  assert(await page.locator('#cmdk-backdrop').evaluate(el=>!el.classList.contains('show')));
+  assert(await page.locator('#cmdk-backdrop .cmdk').evaluate(el=>el.getAnimations().some(a=>a.playState==='running')));
+  const commandCloseMotion=await readMotion(page.locator('#cmdk-backdrop .cmdk'));
+  const commandCloseBackdropMotion=await readMotion(page.locator('#cmdk-backdrop'));
+  assert.deepEqual(commandCloseMotion.map(x=>x.duration),[220],'command palette must use the dialog surface closing duration');
+  assert.deepEqual(commandCloseMotion.map(x=>x.easing),['cubic-bezier(0.23, 1, 0.32, 1)'],'command palette must use the dialog surface closing easing');
+  assert.deepEqual(commandCloseBackdropMotion.map(x=>x.duration),[180],'command palette must use the dialog backdrop closing duration');
+  assert.deepEqual(commandCloseBackdropMotion.map(x=>x.easing),['ease-out'],'command palette must use the dialog backdrop closing easing');
+  await page.locator('#cmdk-backdrop').waitFor({state:'hidden'});
+  await page.keyboard.press('Control+k');
+  await page.locator('#cmdk-backdrop').waitFor({state:'visible'});
+  await page.evaluate(()=>{cmdkHide();cmdkShow();});
+  await page.waitForTimeout(500);
+  assert(await page.locator('#cmdk-backdrop').isVisible());
+  assert(await page.locator('#cmdk-backdrop').evaluate(el=>el.classList.contains('show')));
+  await page.keyboard.press('Escape');
+  await page.locator('#cmdk-backdrop').waitFor({state:'hidden'});
+  await page.evaluate(()=>toast('右下角提示'));
+  await page.locator('#toast').waitFor({state:'visible'});
+  await page.waitForTimeout(200);
+  assert(await page.locator('#toast').evaluate(el=>{
+    const rect=el.getBoundingClientRect();
+    return el.classList.contains('corner')&&rect.right<=innerWidth-20&&rect.bottom<=innerHeight-20;
+  }),'corner toast must stay inset from the lower-right edges');
+  await page.evaluate(()=>{
+    onboardActive=false;
+    suggestStatus({id:'verify-auto-stack',title:'验证任务',status:'ready'},{ready:false,results:[{ok:false}]});
+  });
+  await page.waitForTimeout(320);
+  const toastStack=await page.evaluate(()=>{
+    const toastRect=document.querySelector('#toast').getBoundingClientRect();
+    const cardRect=document.querySelector('#status-suggest').getBoundingClientRect();
+    return {toast:{top:toastRect.top,bottom:toastRect.bottom,height:toastRect.height},card:{top:cardRect.top,bottom:cardRect.bottom,height:cardRect.height},lift:getComputedStyle(document.querySelector('#toast')).getPropertyValue('--toast-lift-y')};
+  });
+  assert(toastStack.toast.bottom<=toastStack.card.top-11.5,`corner toast must stack above a visible status suggestion: ${JSON.stringify(toastStack)}`);
+  await page.evaluate(()=>{
+    document.querySelector('#status-suggest').remove();
+    statusSuggestion.suppressed.add('verify-suppressed-task');
+    suggestStatus({id:'verify-suppressed-task',title:'验证任务',status:'ready'},{ready:false,results:[{ok:false}]});
+  });
+  assert.equal(await page.locator('#status-suggest').count(),0,'manual status suppression must block contradictory suggestions');
+  await page.evaluate(()=>hideToast());
   // Mobile command palette stays between the app bar and bottom navigation, with only the list scrolling.
   for(const width of [320,360,390,412]){
     await page.setViewportSize({width,height:480});
@@ -74,7 +132,7 @@ module.exports = async function verifyMotion(page, scratch) {
   }
   await page.setViewportSize({width:1280,height:860});
   // The command input stays above its scrolling results without a clipped focus ring.
-  await page.keyboard.press('Control+k'); await page.locator('#cmdk-input').waitFor({state:'visible'});
+  await page.keyboard.press('Control+k'); await page.locator('#cmdk-input').waitFor({state:'visible'}); await page.waitForTimeout(470);
   assert.equal(await page.locator('#cmdk-input').evaluate(el=>getComputedStyle(el).outlineStyle),'none');
   assert.equal(await page.locator('#cmdk-input').evaluate(el=>getComputedStyle(el).boxShadow),'none');
   await page.locator('#cmdk-list').evaluate(el=>el.scrollTop=el.scrollHeight);

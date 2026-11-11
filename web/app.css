@@ -201,8 +201,8 @@ input::placeholder,textarea::placeholder{color:var(--muted);font-size:0.857rem}
 input:focus,textarea:focus,select:focus{border-color:var(--focus);outline:none;box-shadow:0 0 0 3px var(--focus-soft)}
 textarea{resize:vertical;line-height:1.7}
 .toolbar input,.toolbar select{margin-top:0}
-.switch-line{display:flex;align-items:flex-start;gap:10px;padding:16px 0;border-top:1px solid var(--soft-line);margin-bottom:12px}
-.switch-line input{accent-color:var(--green);margin-top:4px}
+.switch-line{display:flex;align-items:center;gap:10px;padding:16px 0;border-top:1px solid var(--soft-line);margin-bottom:12px}
+.switch-line input{accent-color:var(--green);align-self:center;flex:none;margin:0}
 .switch-line strong{font-size:0.857rem;font-weight:500}
 .switch-line small{display:block;font-size:0.82rem;color:var(--muted);margin-top:6px;line-height:1.6}
 .settings-side{font-size:0.857rem;color:var(--muted);line-height:1.9;padding:13px 0}
@@ -337,8 +337,10 @@ body.dragging-files .drop-overlay{opacity:1}
 body.dragging-files .file-shelf{border-left:2px solid var(--green);box-shadow:0 0 0 5px var(--focus-soft),var(--shadow)}
 
 /* 命令面板 */
-.cmdk-backdrop{position:fixed;inset:var(--titlebar);z-index:900;background:var(--backdrop);display:flex;justify-content:center;align-items:flex-start;padding:clamp(68px,11vh,120px) 20px 20px}
-.cmdk{width:min(560px,100%);min-height:0;max-height:100%;background:var(--panel);border:1px solid var(--line);border-radius:13px;box-shadow:var(--shadow);overflow:hidden;animation:dialog-in 150ms var(--ease-out)}
+.cmdk-backdrop{position:fixed;inset:var(--titlebar);z-index:900;background:var(--backdrop);display:flex;justify-content:center;align-items:flex-start;padding:clamp(68px,11vh,120px) 20px 20px;opacity:0;pointer-events:none}
+.cmdk-backdrop.show{opacity:1;pointer-events:auto}
+.cmdk{width:min(560px,100%);min-height:0;max-height:100%;background:var(--panel);border:1px solid var(--line);border-radius:13px;box-shadow:var(--shadow);overflow:hidden;opacity:0;transform:translateY(16px) scale(.95)}
+.cmdk-backdrop.show .cmdk{opacity:1;transform:none}
 .cmdk:focus-within{border-color:color-mix(in srgb,var(--line) 78%,var(--focus) 22%);box-shadow:var(--shadow),0 0 0 1px var(--focus-soft)}
 .cmdk #cmdk-input{margin:0;border:0;border-bottom:1px solid var(--soft-line);border-radius:0;min-height:50px;font-size:1.05rem;padding:14px 18px;background:transparent}
 .cmdk input:focus,.cmdk input:focus-visible{outline:none!important;box-shadow:none!important;border-color:var(--soft-line)}
@@ -511,7 +513,7 @@ dialog{max-height:calc(100dvh - var(--titlebar) - 30px);background:var(--panel)}
  .requirement-row{grid-template-columns:minmax(0,1fr) minmax(0,1fr) 47px 26px}.toast{bottom:calc(85px + env(safe-area-inset-bottom));width:max-content}
   .cmdk-backdrop{
     inset:calc(var(--jjb-viewport-offset-top,0px) + var(--jjb-mobile-topbar-bottom,60px) + 8px) 12px auto;
-    height:max(0px,calc(var(--jjb-viewport-height,100dvh) - var(--jjb-viewport-offset-top,0px) - var(--jjb-mobile-topbar-bottom,60px) - var(--jjb-mobile-nav-offset,80px) - 20px));
+    height:max(0px,calc(var(--jjb-viewport-height,100dvh) - var(--jjb-viewport-offset-top,0px) - var(--jjb-mobile-topbar-bottom,60px) - var(--jjb-mobile-nav-offset,80px) - 32px));
     padding:0;
     display:grid;
     justify-content:stretch;

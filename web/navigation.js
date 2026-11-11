@@ -5,6 +5,7 @@
     settings: [
       ['general','常规','#settings-appearance'],
       ['quick','快捷收集','#settings-quick'],
+      ['reminders','桌面提醒','#settings-reminders'],
       ['startup','启动与更新','#settings-launcher'],
       ['model','模型连接','#model-settings'],
       ['account','我的','#account-panel'],
@@ -20,7 +21,7 @@
     ],
   };
   const chosen = new Map();
-  const descriptions={general:'选择适合当前设备的颜色、文字和信息密度。',quick:'设置快捷收集的启用方式和窗口内容。',startup:'管理开机启动与客户端更新。',model:'选择服务器提供的 AI，或连接自己的模型接口。',account:'管理个人资料与工作区数据。',admin:'管理站点注册、邀请码、邮件与账号。'};
+  const descriptions={general:'选择适合当前设备的颜色、文字和信息密度。',quick:'设置快捷收集的启用方式和窗口内容。',reminders:'设置本机 Windows 通知与测试提醒。',startup:'管理开机启动与客户端更新。',model:'选择服务器提供的 AI，或连接自己的模型接口。',account:'管理个人资料与工作区数据。',admin:'管理站点注册、邀请码、邮件与账号。'};
   let signature='', currentBox, queued=false, selectionAnimation;
   const sidebarQuery=matchMedia('(max-width:820px)');
   const sidebarKey='jjb-sidebar-mode';
@@ -72,7 +73,7 @@
     if(page.startsWith('plugin:'))window.pluginUI?.showChild(page,key,node('#plugin-page'));
     if(page==='settings'){
       for(const [id,,selector] of definitions.settings)show(node(selector),id===key);
-      show(node('#appearance-panel-marker'),['general','quick','startup'].includes(key));
+      show(node('#appearance-panel-marker'),['general','quick','reminders','startup'].includes(key));
     }
     if(page==='sources'){
       show(node('.auto-source-panel'),key==='overview');

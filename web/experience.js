@@ -6,12 +6,11 @@
     const section=document.createElement('section');
     section.id='settings-reminders';
     section.className='panel appearance-panel reminder-panel';
-    section.innerHTML=`<div class="reminder-heading"><div><h3>桌面提醒</h3><p class="helper">待办到达提醒时间后，通过 Windows 10/11 原生通知显示，点击通知会打开对应待办。</p></div><span class="reminder-native-badge" data-reminder-native>正在检查系统通知</span></div><label class="switch-line"><input type="checkbox" data-reminder-option="enabled"><span><strong>启用待办提醒</strong><small data-reminder-copy>提交或归档的待办会自动停止提醒。</small></span></label><div class="detail-actions"><button type="button" class="secondary" data-reminder-test>发送测试通知</button></div><p class="helper reminder-status" data-reminder-status role="status" aria-live="polite">正在读取提醒状态…</p>`;
+    section.innerHTML=`<div class="reminder-heading"><div><h3>桌面提醒</h3><p class="helper">待办到达提醒时间后，通过 Windows 10/11 本机通知中心显示，点击通知会打开对应待办。</p></div><span class="reminder-native-badge" data-reminder-native>正在检查系统通知</span></div><label class="switch-line"><input type="checkbox" data-reminder-option="enabled"><span><strong>启用待办提醒</strong><small data-reminder-copy>提交或归档的待办会自动停止提醒。</small></span></label><div class="detail-actions reminder-test-actions"><button type="button" class="secondary" data-reminder-test>发送测试通知</button></div>`;
     const toggle=section.querySelector('[data-reminder-option="enabled"]');
     const test=section.querySelector('[data-reminder-test]');
     const badge=section.querySelector('[data-reminder-native]');
     const copy=section.querySelector('[data-reminder-copy]');
-    const status=section.querySelector('[data-reminder-status]');
     const render=(value={})=>{
       const supported=value.native_supported!==false;
       const available=value.native_available===true;
@@ -20,9 +19,9 @@
       test.disabled=!supported||!available;
       badge.dataset.state=!supported?'unsupported':available?'ready':'waiting';
       badge.textContent=!supported?'当前系统不支持':available?'Windows 10/11 原生通知':'原生通知正在初始化';
-      copy.textContent=!supported?'此功能仅支持 Windows 10 及以上版本。':available?'提醒会进入 Windows 通知中心；提交或归档的待办会自动停止提醒。':value.native_error||'系统通知服务尚未就绪，暂时不能启用。';
-      if(!supported||!available){status.textContent=value.native_error||'原生通知暂不可用';return;}
-      status.textContent=value.enabled?'已启用'+(value.next_at?' · 下次提醒 '+formatDate(value.next_at):' · 暂无待发送提醒'):'提醒已关闭';
+      copy.textContent=!supported?'此功能仅支持 Windows 10 及以上版本。':available?'提交或归档的待办会自动停止提醒。':value.native_error||'系统通知服务尚未就绪，暂时不能启用。';
+      if(!supported||!available)return;
+      copy.textContent=value.enabled?'提交或归档的待办会自动停止提醒'+(value.next_at?' · 下次提醒 '+formatDate(value.next_at):' · 暂无待发送提醒')+'。':'提醒已关闭；提交或归档的待办不会发送通知。';
     };
     let refreshAttempt=0;
     const refresh=async()=>{
@@ -41,17 +40,16 @@
       const input=event.target;
       input.disabled=true;
       try{render(await desktop.reminderSet({enabled:input.checked}));}
-      catch(error){status.textContent=error.message;input.checked=!input.checked;input.disabled=false;}
+      catch(error){toast(error.message,undefined,true);input.checked=!input.checked;input.disabled=false;}
     });
     section.addEventListener('click',async event=>{
       const button=event.target.closest('[data-reminder-test]');
       if(!button)return;
       button.disabled=true;
-      status.textContent='正在发送测试通知…';
       try{
         const value=await desktop.reminderTest();
-        status.textContent=value.ok?'已发送测试通知。若没有看见，请检查 Windows 通知设置与“请勿打扰”。':value.message;
-      }catch(error){status.textContent=error.message;}
+        toast(value.ok?'测试通知已发送到本机通知中心':value.message,undefined,true);
+      }catch(error){toast(error.message,undefined,true);}
       finally{button.disabled=false;}
     });
     return section;

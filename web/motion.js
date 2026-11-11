@@ -7,8 +7,13 @@
   const spring = CSS.supports('animation-timing-function', 'linear(0,1)')
     ? 'linear(0,.0203,.0723,.1448,.2292,.3188,.4086,.4951,.576,.6498,.7157,.7735,.8232,.8654,.9005,.9293,.9525,.9708,.9849,.9956,1.0033,1.0087,1.0122,1.0142,1.015,1.0151,1.0146,1.0136,1.0124,1.0111,1.0097,1.0084,1.0071,1.0059,1.0049,1.0039,1.0031,1.0024,1.0018,1.0013,1)'
     : 'cubic-bezier(.2,.9,.25,1.02)';
+  const modalMotion = {
+    open: { from: { opacity: 0, transform: 'translateY(16px) scale(.95)' }, duration: 440, easing: spring },
+    close: { to: { opacity: 0, transform: 'translateY(10px) scale(.97)' }, duration: 220, easing: ease },
+    backdrop: { openDuration: 220, closeDuration: 180 },
+  };
   let keyboard = true, pressed = null;
-  const dialogs = new WeakMap(), segments = new WeakMap();
+  const dialogs = new WeakMap(), surfaces = new WeakMap(), segments = new WeakMap();
   const play = (el, frames, options) => {
     try { return el.animate(frames, options); } catch { return null; }
   };
@@ -178,8 +183,8 @@
     }
     const to = dialog.getBoundingClientRect(), from = sourceRect(entry);
     entry.animations = [
-      play(dialog, [current || { ...(from ? folded(from, to) : { transform: 'translateY(16px) scale(.95)' }), opacity: 0 }, rest], { duration: 440, easing: spring }),
-      play(dialog, [{ opacity: 0 }, { opacity: 1 }], { duration: 220, easing: 'ease-out', pseudoElement: '::backdrop' }),
+      play(dialog, [current || (from ? { ...folded(from, to), opacity: 0 } : modalMotion.open.from), rest], { duration: modalMotion.open.duration, easing: modalMotion.open.easing }),
+      play(dialog, [{ opacity: 0 }, { opacity: 1 }], { duration: modalMotion.backdrop.openDuration, easing: 'ease-out', pseudoElement: '::backdrop' }),
     ];
     Promise.all(entry.animations.map(a => a?.finished.catch(() => {}))).then(() => {
       if (dialogs.get(dialog) === entry) entry.phase = 'open';
@@ -206,8 +211,8 @@
     }
     const to = dialog.getBoundingClientRect(), from = sourceRect(entry);
     entry.animations = [
-      play(dialog, [current, { ...(from ? folded(from, to) : { transform: 'translateY(10px) scale(.97)' }), opacity: 0 }], { duration: 220, easing: ease, fill: 'forwards' }),
-      play(dialog, [{ opacity: 1 }, { opacity: 0 }], { duration: 180, easing: 'ease-out', fill: 'forwards', pseudoElement: '::backdrop' }),
+      play(dialog, [current, from ? { ...folded(from, to), opacity: 0 } : modalMotion.close.to], { duration: modalMotion.close.duration, easing: modalMotion.close.easing, fill: 'forwards' }),
+      play(dialog, [{ opacity: 1 }, { opacity: 0 }], { duration: modalMotion.backdrop.closeDuration, easing: 'ease-out', fill: 'forwards', pseudoElement: '::backdrop' }),
     ];
     // Animation completion, cancellation and a safety deadline all converge here.
     let timer;
@@ -223,6 +228,68 @@
   document.addEventListener('close', event => {
     if (event.target.matches('dialog') && !event.target.open) { stop(dialogs.get(event.target)); dialogs.delete(event.target); }
   }, true);
+
+  // Non-native modal surfaces use the same entry/exit choreography as dialogs.
+  // The caller owns `hidden`; this only animates and resolves after cleanup.
+  function openSurface(surface, backdrop) {
+    const previous = surfaces.get(surface);
+    stop(previous);
+    const entry = { phase: 'opening', animations: [] };
+    surfaces.set(surface, entry);
+    backdrop.hidden = false;
+    backdrop.classList.add('show');
+    if (reduced.matches) {
+      entry.phase = 'open';
+      return Promise.resolve();
+    }
+    entry.animations = [
+      play(surface, [modalMotion.open.from, { opacity: 1, transform: 'none' }], { duration: modalMotion.open.duration, easing: modalMotion.open.easing }),
+      play(backdrop, [{ opacity: 0 }, { opacity: 1 }], { duration: modalMotion.backdrop.openDuration, easing: 'ease-out' }),
+    ];
+    entry.done = Promise.all(entry.animations.map(animation => animation?.finished.catch(() => {}))).then(() => {
+      if (surfaces.get(surface) === entry) entry.phase = 'open';
+    });
+    return entry.done;
+  }
+
+  function closeSurface(surface, backdrop) {
+    if (backdrop.hidden) return Promise.resolve();
+    const previous = surfaces.get(surface);
+    if (previous?.phase === 'closing') return previous.done;
+    stop(previous);
+    const current = getComputedStyle(surface);
+    const currentBackdrop = getComputedStyle(backdrop);
+    const entry = { phase: 'closing', animations: [] };
+    surfaces.set(surface, entry);
+    backdrop.classList.remove('show');
+    if (reduced.matches) {
+      surfaces.delete(surface);
+      backdrop.hidden = true;
+      return Promise.resolve();
+    }
+    entry.animations = [
+      play(surface, [
+        { opacity: current.opacity, transform: current.transform === 'none' ? 'none' : current.transform },
+        modalMotion.close.to,
+      ], { duration: modalMotion.close.duration, easing: modalMotion.close.easing, fill: 'forwards' }),
+      play(backdrop, [
+        { opacity: currentBackdrop.opacity },
+        { opacity: 0 },
+      ], { duration: modalMotion.backdrop.closeDuration, easing: 'ease-out', fill: 'forwards' }),
+    ];
+    let timer;
+    entry.done = Promise.race([
+      Promise.all(entry.animations.map(animation => animation?.finished.catch(() => {}))),
+      new Promise(resolve => { timer = setTimeout(resolve, 450); }),
+    ]).then(() => {
+      clearTimeout(timer);
+      if (surfaces.get(surface) !== entry) return;
+      stop(entry);
+      surfaces.delete(surface);
+      backdrop.hidden = true;
+    });
+    return entry.done;
+  }
 
   // Small anchored menu. The exit copy never receives focus or file drops.
   let menu, trigger, menuAnimation, menuReturnFocus;
@@ -364,6 +431,6 @@
     const deadline=setTimeout(()=>element.remove(),320);
     animation.finished.catch(()=>{}).finally(()=>{clearTimeout(deadline);element.remove();});
   }
-  window.uiMotion = { adoptSegment, relayout, openDialog, closeDialog, syncNavigation, syncSegments, hideMenu, transitionPage, swapPage, revealSubnavigation, hideSubnavigation };
+  window.uiMotion = { adoptSegment, relayout, openDialog, closeDialog, openSurface, closeSurface, syncNavigation, syncSegments, hideMenu, transitionPage, swapPage, revealSubnavigation, hideSubnavigation };
   syncSegments();
 })();

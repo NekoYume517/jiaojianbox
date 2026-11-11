@@ -42,21 +42,38 @@ async function storeSet(key, value) {
   localStorage.setItem('jjb-' + key, JSON.stringify(value));
 }
 function toastTimerHolder(){}
-let toastHideTimer, toastAutoTimer;
-function toast(message, action, corner = false) {
+let toastHideTimer, toastAutoTimer, toastPositionFrame;
+function syncToastPosition() {
+  cancelAnimationFrame(toastPositionFrame);
+  toastPositionFrame = requestAnimationFrame(() => {
+    const el = $('#toast');
+    const card = $('#status-suggest');
+    if (!el || el.hidden || !el.classList.contains('corner') || !card) {
+      el?.style.removeProperty('--toast-lift-y');
+      return;
+    }
+    const baseBottom = Number.parseFloat(getComputedStyle(el).bottom) || 0;
+    const targetBottom = innerHeight - card.getBoundingClientRect().top + 16;
+    el.style.setProperty('--toast-lift-y', Math.min(0, baseBottom - targetBottom) + 'px');
+  });
+}
+function toast(message, action, corner = true) {
   const el = $('#toast'); $('#toast-text').textContent = message;
   el.classList.toggle('corner', !!corner);
+  el.style.removeProperty('--toast-lift-y');
   const button = $('#toast-action');
   clearTimeout(toastHideTimer); clearTimeout(toastAutoTimer);
   if (action?.label) {
     button.textContent = action.label; button.hidden = false;
     button.onclick = () => { hideToast(); action.run(); };
   } else { button.hidden = true; button.onclick = null; }
-  el.hidden = false; requestAnimationFrame(() => {if(!el.hidden)el.classList.add('show');});
+  el.hidden = false; syncToastPosition(); requestAnimationFrame(() => {if(!el.hidden)el.classList.add('show');});
   toastAutoTimer=setTimeout(hideToast,action?.label?8000:3500);
 }
 $('#toast-close').addEventListener('click',hideToast);
-function hideToast(){ clearTimeout(toastAutoTimer); const el = $('#toast'); el.classList.remove('show'); toastHideTimer = setTimeout(() => { el.hidden = true; }, 200); }
+function hideToast(){ clearTimeout(toastAutoTimer); const el = $('#toast'); el.classList.remove('show'); toastHideTimer = setTimeout(() => { el.hidden = true; el.style.removeProperty('--toast-lift-y'); }, 220); }
+window.addEventListener('resize', syncToastPosition);
+window.visualViewport?.addEventListener('resize', syncToastPosition);
 function hydrateIcons() { $$('[data-icon]').forEach(el => { el.innerHTML = icon(el.dataset.icon); }); }
 function apiUrl(route) { return state.session.server.replace(/\/$/, '') + route; }
 async function api(route, method = 'GET', body) {
@@ -607,10 +624,25 @@ async function checkTask() {
   const task = state.snapshot.tasks.find(t => t.id === taskId);
   if (task) suggestStatus(task, result);
 }
-const statusSuggestion = { id: null };
-function suggestStatus(task, check) {
-  $('#status-suggest')?.remove();
+const statusSuggestion = { id: null, suppressed: new Set(), timer: null };
+function clearStatusSuggestion(taskId) {
+  if (!taskId || statusSuggestion.id === taskId) $('#status-suggest')?.remove();
+  clearTimeout(statusSuggestion.timer);
+  statusSuggestion.timer = null;
+  statusSuggestion.id = null;
+  syncToastPosition();
+}
+function suppressStatusSuggestion(taskId) {
+  if (taskId) statusSuggestion.suppressed.add(taskId);
+  clearStatusSuggestion(taskId);
+}
+function allowStatusSuggestion(taskId) {
+  if (taskId) statusSuggestion.suppressed.delete(taskId);
+}
+function suggestStatus(task, check, { force = false } = {}) {
+  clearStatusSuggestion(task.id);
   if (onboardActive) return;
+  if (!force && statusSuggestion.suppressed.has(task.id)) return;
   let target = null, text = '';
   if (check.ready && task.status === 'collecting') { target = 'ready'; text = '材料已齐，把「' + task.title.slice(0, 18) + '」更新为待提交？'; }
   else if (task.status === 'ready' && check.results.some(r => r.ok === false)) { target = 'collecting'; text = '「' + task.title.slice(0, 18) + '」有材料缺失，改回准备材料？'; }
@@ -620,16 +652,21 @@ function suggestStatus(task, check) {
   card.innerHTML = `<div class="eyebrow">更新待办状态</div><p class="suggest-text">${esc(text)}</p><div class="detail-actions"><button class="plain-button" data-status-suggest="dismiss">暂不</button><span class="flex-spacer"></span><button class="primary" data-status-suggest="apply">更新为${states[target][0]}</button></div>`;
   card.querySelector('[data-status-suggest="apply"]').dataset.target = target;
   document.body.append(card);
-  setTimeout(() => { if (card.isConnected && statusSuggestion.id === task.id) { card.remove(); statusSuggestion.id = null; } }, 12000);
+  syncToastPosition();
+  card.addEventListener('animationend', () => requestAnimationFrame(() => requestAnimationFrame(syncToastPosition)), { once: true });
+  statusSuggestion.timer = setTimeout(() => {
+    if (card.isConnected && statusSuggestion.id === task.id) clearStatusSuggestion(task.id);
+  }, 12000);
 }
 document.addEventListener('click', async event => {
   const button = event.target.closest('[data-status-suggest]'); if (!button) return;
-  const card = $('#status-suggest'); card?.remove();
-  if (button.dataset.statusSuggest === 'dismiss') { statusSuggestion.id = null; return; }
-  const task = state.snapshot.tasks.find(t => t.id === statusSuggestion.id); statusSuggestion.id = null;
+  if (button.dataset.statusSuggest === 'dismiss') { suppressStatusSuggestion(statusSuggestion.id); return; }
+  const task = state.snapshot.tasks.find(t => t.id === statusSuggestion.id);
+  clearStatusSuggestion(task?.id);
   if (!task || task.pending) return;
   try {
     const updated = await api('/api/tasks/' + task.id, 'PUT', { ...task, status: button.dataset.target });
+    suppressStatusSuggestion(task.id);
     await refresh();
     toast('已更新为' + states[button.dataset.target][0], { label: '撤销', run: async () => { try { await api('/api/tasks/' + task.id, 'PUT', { ...task, status: task.status }); await refresh(); } catch (error) { toast(error.message); } } });
   } catch (error) { toast(error.message); }
@@ -645,6 +682,7 @@ async function uploadFiles(input, kind, taskId = state.taskId) {
     const form = new FormData(); form.append('file', file);
     task = await apiUpload(`/api/tasks/${taskId}/files?version=${task.version}&kind=${kind}`, form, uploadTracker(file.name));
     const index = state.snapshot.tasks.findIndex(t => t.id === taskId); if (index >= 0) state.snapshot.tasks[index] = task;
+    allowStatusSuggestion(taskId);
     await refresh({ renderPage: false });
   } } finally { uploading = false; }
   hideUploadProgress();
@@ -756,6 +794,7 @@ async function runAction(action, button) {
       if (!['collecting', 'ready', 'submitted'].includes(target)) return;
       const previousStatus = task.status;
       await api('/api/tasks/' + task.id, 'PUT', { ...task, status: target });
+      suppressStatusSuggestion(task.id);
       if (target === 'submitted') showDoneBurst();
       await refresh();
       toast(target === 'submitted' ? '已标记提交' : '已更新为' + states[target][0], { label: '撤销', run: async () => { try { await api('/api/tasks/' + task.id, 'PUT', { ...task, status: previousStatus }); await refresh(); } catch (error) { toast(error.message); } } });
@@ -774,7 +813,7 @@ async function runAction(action, button) {
       await api('/api/tasks/' + task.id, 'PUT', { ...task, reminders: remaining });
       await refresh(); toast('提醒已移除'); return;
     }
-    case 'check-task': return checkTask();
+    case 'check-task': allowStatusSuggestion(task?.id); return checkTask();
     case 'package': return saveDownload('/api/tasks/' + task.id + '/package', task.title.replace(/[<>:"/\\|?*]/g, '_') + '.zip');
     case 'delete-task': {
       if(!task||task.pending)return;
@@ -787,7 +826,8 @@ async function runAction(action, button) {
     case 'show-archived': state.taskId=null;state.taskFilter='archived';render();return;
     case 'mark-submitted': case 'archive-task': case 'restore-task': {
       const previousStatus = task.status;
-      const updated=await api('/api/tasks/' + task.id, 'PUT', { ...task, status: action === 'mark-submitted' ? 'submitted' : action==='restore-task'?'collecting':'archived' }); await refresh();
+      const updated=await api('/api/tasks/' + task.id, 'PUT', { ...task, status: action === 'mark-submitted' ? 'submitted' : action==='restore-task'?'collecting':'archived' });
+      suppressStatusSuggestion(task.id); await refresh();
       if (action === 'mark-submitted') showDoneBurst();
       toast(action === 'mark-submitted' ? '已标记提交' : action==='restore-task'?'已恢复为准备材料':'待办已归档', { label: '撤销', run: async () => { try { await api('/api/tasks/' + task.id, 'PUT', { ...updated, status: previousStatus }); await refresh(); } catch (error) { toast(error.message); } } });
       return;
@@ -861,7 +901,7 @@ document.addEventListener('click', async event => {
     if (statusStep) { runAction.sourceId = statusStep.dataset.setStatus; return await runAction('set-status'); }
     const remove = event.target.closest('.remove-requirement'); if (remove) return remove.parentElement.remove();
     const file = event.target.closest('[data-download]'); if (file) return await saveDownload('/api/files/' + file.dataset.download, file.dataset.name);
-    const changeKind=event.target.closest('[data-change-kind]');if(changeKind){await api(`/api/tasks/${state.taskId}/files/${changeKind.dataset.changeKind}/kind`,'PUT',{kind:changeKind.dataset.nextKind,version:Number(changeKind.dataset.version)});await refresh();toast(changeKind.dataset.nextKind==='material'?'已转为待办材料，并重新核对清单':'已转为提交回执');return;}
+    const changeKind=event.target.closest('[data-change-kind]');if(changeKind){allowStatusSuggestion(state.taskId);await api(`/api/tasks/${state.taskId}/files/${changeKind.dataset.changeKind}/kind`,'PUT',{kind:changeKind.dataset.nextKind,version:Number(changeKind.dataset.version)});await refresh();toast(changeKind.dataset.nextKind==='material'?'已转为待办材料，并重新核对清单':'已转为提交回执');return;}
     const renamed = event.target.closest('[data-rename-file]'); if (renamed) {
       $('#rename-form').dataset.fileId = renamed.dataset.renameFile; $('#rename-form').dataset.version = renamed.dataset.version;
       $('#rename-form').dataset.taskId = state.taskId; $('#rename-name').value = renamed.dataset.name; $('#rename-error').textContent = ''; uiMotion.openDialog($('#rename-dialog')); $('#rename-name').focus();
@@ -871,6 +911,7 @@ document.addEventListener('click', async event => {
     if (deleted) {
       const version=deleted.dataset.version,fileId=deleted.dataset.deleteFile;
       if(!confirm('移除并删除这份云端文件？电脑中的原文件会保留，删除后需重新上传。'))return;
+      allowStatusSuggestion(state.taskId);
       await api(`/api/tasks/${state.taskId}/files/${fileId}?version=${version}`,'DELETE');await refresh();toast('云端文件已移除，本机原文件保留');
       return;
     }
@@ -895,7 +936,7 @@ const CMDK_COMMANDS = [
   { icon: 'refresh', label: '立即同步', kbd: 'R', run: () => { refresh(); flushOutbox(); } },
   { icon: 'connect', label: '打开文件收纳框', kbd: 'F', run: () => window.shelf?.show() },
 ];
-let cmdkOpen = false, cmdkItems = [], cmdkReturnFocus = null;
+let cmdkOpen = false, cmdkItems = [], cmdkReturnFocus = null, cmdkCloseGeneration = 0;
 function cmdkFilter(query) {
   const q = query.trim().toLowerCase();
   const all = [...CMDK_COMMANDS, ...window.pluginUI?.commands() || []];
@@ -913,14 +954,45 @@ function cmdkRender() {
     else if(item.bottom>bounds.bottom)list.scrollTop+=item.bottom-bounds.bottom;
   }else $('#cmdk-input').removeAttribute('aria-activedescendant');
 }
+function syncCommandPaletteBounds() {
+  if (innerWidth > 620) return;
+  const topbar = $('.main .topbar'), nav = $('.workspace > .sidebar');
+  const viewport = window.visualViewport;
+  const height = Math.round(viewport?.height || innerHeight || 0);
+  const offsetTop = Math.round(viewport?.offsetTop || 0);
+  const root = document.documentElement.style;
+  if (height > 0) root.setProperty('--jjb-viewport-height', height + 'px');
+  root.setProperty('--jjb-viewport-offset-top', offsetTop + 'px');
+  if (topbar) root.setProperty('--jjb-mobile-topbar-bottom', Math.ceil(topbar.getBoundingClientRect().bottom) + 'px');
+  if (nav) root.setProperty('--jjb-mobile-nav-offset', Math.ceil(innerHeight - nav.getBoundingClientRect().top) + 'px');
+}
 function cmdkShow() {
   if (!state.session || cmdkOpen || document.querySelector('dialog[open]')) return;
+  ++cmdkCloseGeneration;
   cmdkReturnFocus=document.activeElement;
   $('#workspace').inert=true;document.body.classList.add('cmdk-open');
   cmdkOpen = true; state.cmdkIndex = 0; cmdkItems = cmdkFilter('');
-  $('#cmdk-input').value = ''; $('#cmdk-backdrop').hidden = false; cmdkRender(); $('#cmdk-input').focus();
+  syncCommandPaletteBounds();
+  const backdrop = $('#cmdk-backdrop');
+  const panel = backdrop.querySelector('.cmdk');
+  backdrop.hidden = false;
+  $('#cmdk-input').value = ''; cmdkRender(); $('#cmdk-input').focus();
+  if (window.uiMotion) return uiMotion.openSurface(panel, backdrop);
+  backdrop.classList.add('show');
+  return Promise.resolve();
 }
-function cmdkHide() { cmdkOpen = false; $('#cmdk-backdrop').hidden = true; $('#workspace').inert=false;document.body.classList.remove('cmdk-open');if(cmdkReturnFocus?.isConnected)cmdkReturnFocus.focus({preventScroll:true}); }
+function cmdkHide() {
+  if (!cmdkOpen && $('#cmdk-backdrop').hidden) return Promise.resolve();
+  cmdkOpen = false;
+  const backdrop = $('#cmdk-backdrop');
+  $('#workspace').inert=false;document.body.classList.remove('cmdk-open');
+  if(cmdkReturnFocus?.isConnected)cmdkReturnFocus.focus({preventScroll:true});
+  const generation = ++cmdkCloseGeneration;
+  const finish = () => { if (!cmdkOpen && generation === cmdkCloseGeneration) backdrop.hidden = true; };
+  if (window.uiMotion) return uiMotion.closeSurface(backdrop.querySelector('.cmdk'), backdrop).then(finish, finish);
+  backdrop.classList.remove('show'); finish();
+  return Promise.resolve();
+}
 function cmdkExecute(index) { const item = cmdkItems[index]; if (!item) return; cmdkHide(); item.run(); }
 document.addEventListener('keydown', event => {
   if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') {
@@ -1031,7 +1103,7 @@ document.addEventListener('change', async event => {
 $('#task-form').addEventListener('submit', saveTask);
 $('#rename-form').addEventListener('submit', async event => {
   event.preventDefault(); const form = event.target; const button = form.querySelector('[type=submit]'); button.disabled = true;
-  try { await api(`/api/tasks/${form.dataset.taskId}/files/${form.dataset.fileId}`, 'PUT', {name:$('#rename-name').value.trim(),version:Number(form.dataset.version)}); closableDialog($('#rename-dialog')); await refresh(); toast('文件名已保存'); }
+  try { allowStatusSuggestion(form.dataset.taskId); await api(`/api/tasks/${form.dataset.taskId}/files/${form.dataset.fileId}`, 'PUT', {name:$('#rename-name').value.trim(),version:Number(form.dataset.version)}); closableDialog($('#rename-dialog')); await refresh(); toast('文件名已保存'); }
   catch(error){ $('#rename-error').textContent=error.message; }
   finally{button.disabled=false;}
 });
