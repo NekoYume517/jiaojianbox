@@ -148,6 +148,12 @@ jobs:
           name: jiaojianbox-android
           path: dist
 
+      - name: Write combined release checksums
+        shell: bash
+        run: |
+          cd dist
+          sha256sum JiaojianBox-Setup-*-x64.exe JiaojianBox-*-android-debug.apk > SHA256SUMS.txt
+
       - name: Create release
         uses: softprops/action-gh-release@v2
         with:
