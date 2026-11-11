@@ -166,18 +166,23 @@ func processImageName(handle windows.Handle) (string, bool) {
 	return windows.UTF16ToString(buffer[:size]), true
 }
 
-func terminateProcessHandle(handle windows.Handle) bool {
-	if err := windows.TerminateProcess(handle, 1); err != nil {
+func installedMainProcess(processPath, target, self string) bool {
+	processPath = filepath.Clean(processPath)
+	if self != "" && strings.EqualFold(processPath, filepath.Clean(self)) {
 		return false
 	}
-	code, err := windows.WaitForSingleObject(handle, 3000)
-	return err == nil && code == uint32(windows.WAIT_OBJECT_0)
+	if !underDirectory(processPath, target) {
+		return false
+	}
+	switch strings.ToLower(filepath.Base(processPath)) {
+	case "交件箱.exe", "jiaojianbox.exe", "com.electron.jiaojianbox.exe":
+		return true
+	default:
+		return false
+	}
 }
 
-// stopInstalledProcesses closes only old processes whose executable lives in
-// the selected installation. Other installations and unrelated same-name
-// processes are left alone.
-func stopInstalledProcesses(target string) {
+func installedMainProcessIDs(target string) ([]uint32, error) {
 	target = filepath.Clean(target)
 	self, err := os.Executable()
 	if err == nil {
@@ -185,36 +190,90 @@ func stopInstalledProcesses(target string) {
 	} else {
 		self = ""
 	}
-	for round := 0; round < 2; round++ {
-		found := false
-		snapshot, err := windows.CreateToolhelp32Snapshot(windows.TH32CS_SNAPPROCESS, 0)
-		if err != nil {
-			return
-		}
-		entrySize := uint32(unsafe.Sizeof(windows.ProcessEntry32{}))
-		entry := windows.ProcessEntry32{Size: entrySize}
-		if err := windows.Process32First(snapshot, &entry); err == nil {
-			for {
-				processPath := ""
-				if entry.ProcessID != uint32(os.Getpid()) {
-					if handle, e := windows.OpenProcess(windows.PROCESS_QUERY_LIMITED_INFORMATION|windows.PROCESS_TERMINATE|windows.SYNCHRONIZE, false, entry.ProcessID); e == nil {
-						if name, ok := processImageName(handle); ok {
-							processPath = filepath.Clean(name)
-							if underDirectory(processPath, target) && !strings.EqualFold(processPath, self) {
-								found = terminateProcessHandle(handle) || found
-							}
-						}
-						windows.CloseHandle(handle)
-					}
+	seen := map[uint32]bool{}
+	snapshot, err := windows.CreateToolhelp32Snapshot(windows.TH32CS_SNAPPROCESS, 0)
+	if err != nil {
+		return nil, err
+	}
+	defer windows.CloseHandle(snapshot)
+	entrySize := uint32(unsafe.Sizeof(windows.ProcessEntry32{}))
+	entry := windows.ProcessEntry32{Size: entrySize}
+	if err := windows.Process32First(snapshot, &entry); err != nil {
+		return nil, err
+	}
+	for {
+		pid := entry.ProcessID
+		if pid != uint32(os.Getpid()) && !seen[pid] {
+			if handle, e := windows.OpenProcess(windows.PROCESS_QUERY_LIMITED_INFORMATION, false, pid); e == nil {
+				if name, ok := processImageName(handle); ok && installedMainProcess(name, target, self) {
+					seen[pid] = true
 				}
-				if err := windows.Process32Next(snapshot, &entry); err != nil {
-					break
-				}
+				windows.CloseHandle(handle)
 			}
 		}
-		windows.CloseHandle(snapshot)
-		if !found {
-			return
+		if err := windows.Process32Next(snapshot, &entry); err != nil {
+			break
+		}
+	}
+	pids := make([]uint32, 0, len(seen))
+	for pid := range seen {
+		pids = append(pids, pid)
+	}
+	return pids, nil
+}
+
+type closeWindowRequest struct {
+	pids   map[uint32]bool
+	posted int
+}
+
+func requestGracefulClose(pids []uint32) int {
+	if len(pids) == 0 {
+		return 0
+	}
+	request := closeWindowRequest{pids: make(map[uint32]bool, len(pids))}
+	for _, pid := range pids {
+		request.pids[pid] = true
+	}
+	postMessage := windows.NewLazySystemDLL("user32.dll").NewProc("PostMessageW")
+	callback := syscall.NewCallback(func(hwnd uintptr, param uintptr) uintptr {
+		req := (*closeWindowRequest)(unsafe.Pointer(param))
+		var pid uint32
+		if _, err := windows.GetWindowThreadProcessId(windows.HWND(hwnd), &pid); err != nil || !req.pids[pid] {
+			return 1
+		}
+		posted, _, _ := postMessage.Call(hwnd, 0x0010, 0, 0) // WM_CLOSE
+		if posted != 0 {
+			req.posted++
+		}
+		return 1
+	})
+	windows.EnumWindows(callback, unsafe.Pointer(&request))
+	return request.posted
+}
+
+// stopInstalledProcesses asks the installed application to shut down through
+// its windows so the app can flush data, stop collectors and release locks.
+// It never terminates the process or the running installer by force.
+func stopInstalledProcesses(target string) error {
+	target = filepath.Clean(target)
+	deadline := time.Now().Add(12 * time.Second)
+	nextRequest := time.Now()
+	for {
+		pids, err := installedMainProcessIDs(target)
+		if err != nil {
+			return err
+		}
+		if len(pids) == 0 {
+			time.Sleep(250 * time.Millisecond)
+			return nil
+		}
+		if !time.Now().Before(nextRequest) {
+			requestGracefulClose(pids)
+			nextRequest = time.Now().Add(2 * time.Second)
+		}
+		if time.Now().After(deadline) {
+			return errors.New("旧版本仍在后台运行，请从托盘退出交件箱后重试安装")
 		}
 		time.Sleep(200 * time.Millisecond)
 	}

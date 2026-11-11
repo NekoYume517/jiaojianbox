@@ -12,4 +12,4 @@ func DefaultDirectory() string {
 	return filepath.Join(root, "jiaojianbox")
 }
 
-func stopInstalledProcesses(string) {}
+func stopInstalledProcesses(string) error { return nil }

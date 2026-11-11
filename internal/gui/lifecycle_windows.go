@@ -54,6 +54,7 @@ func claimInstance(root string, activate chan<- struct{}) (func(), bool, error) 
 		return nil, false, e
 	}
 	if errors.Is(err, windows.ERROR_ALREADY_EXISTS) {
+		allowForegroundWindow()
 		windows.SetEvent(event)
 		windows.CloseHandle(event)
 		windows.CloseHandle(mutex)

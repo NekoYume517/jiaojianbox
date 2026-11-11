@@ -265,6 +265,20 @@ func launchInstaller(path string) error {
 	return nil
 }
 
+func allowForegroundWindow() {
+	user32.NewProc("AllowSetForegroundWindow").Call(0xffffffff) // ASFW_ANY
+}
+
+func activateNativeWindow(window *application.WebviewWindow) {
+	if window == nil || window.NativeWindow() == nil {
+		return
+	}
+	hwnd := uintptr(window.NativeWindow())
+	user32.NewProc("ShowWindow").Call(hwnd, 9) // SW_RESTORE
+	user32.NewProc("BringWindowToTop").Call(hwnd)
+	user32.NewProc("SetForegroundWindow").Call(hwnd)
+}
+
 func cursorWithin(window *application.WebviewWindow) bool {
 	if window == nil || !window.IsVisible() {
 		return false

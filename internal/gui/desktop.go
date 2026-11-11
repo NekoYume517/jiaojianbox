@@ -344,6 +344,7 @@ func (d *Desktop) activateMainWindow(window *application.WebviewWindow) {
 	window.Show()
 	window.UnMinimise()
 	window.Focus()
+	activateNativeWindow(window)
 	appendStartupLog(d.root, "main window activated visible=%t", window.IsVisible())
 }
 func (d *Desktop) offlineStart() (any, error) {

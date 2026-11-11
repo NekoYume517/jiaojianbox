@@ -67,6 +67,7 @@ func unprotectLegacy(raw []byte, root string) ([]byte, error) { return unprotect
 func hideProcess(cmd *exec.Cmd)                               {}
 func launchInstaller(path string) error                       { return exec.Command(path).Start() }
 func cursorWithin(window *application.WebviewWindow) bool     { return window != nil && window.IsFocused() }
+func activateNativeWindow(*application.WebviewWindow)         {}
 
 func systemProxyFor(request *http.Request) (*url.URL, error) {
 	return http.ProxyFromEnvironment(request)

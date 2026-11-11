@@ -519,6 +519,13 @@ func (d *Desktop) UpdateInstall() (Object, error) {
 	if err := launchInstaller(path); err != nil {
 		return nil, err
 	}
+	// The installer can replace the current executable only after this process
+	// has released its database, vault and collector locks. Let OnShutdown run
+	// after ShellExecute has handed the installer to Windows.
+	go func() {
+		time.Sleep(500 * time.Millisecond)
+		d.app.Quit()
+	}()
 	return Object{"ok": true}, nil
 }
 

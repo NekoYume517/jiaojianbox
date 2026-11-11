@@ -3,16 +3,17 @@
 package setup
 
 import (
-	"errors"
 	"golang.org/x/sys/windows"
 	"golang.org/x/sys/windows/registry"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"syscall"
 	"testing"
 	"time"
+	"unsafe"
 )
 
 func TestUpgradeKeepsAutostartOptInAndUninstallLeavesOtherApps(t *testing.T) {
@@ -53,12 +54,52 @@ func TestHelperProcess(t *testing.T) {
 	if os.Getenv("JJB_SETUP_TEST_HELPER") != "1" {
 		return
 	}
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+	user32 := windows.NewLazySystemDLL("user32.dll")
+	className, _ := windows.UTF16PtrFromString("STATIC")
+	windowName, _ := windows.UTF16PtrFromString("JiaojianBox setup test")
+	hwnd, _, err := user32.NewProc("CreateWindowExW").Call(
+		0, uintptr(unsafe.Pointer(className)), uintptr(unsafe.Pointer(windowName)), 0,
+		0, 0, 0, 0, 0, 0, 0, 0,
+	)
+	if hwnd == 0 {
+		t.Fatalf("create test window: %v", err)
+	}
+	defer user32.NewProc("DestroyWindow").Call(hwnd)
+	var message struct {
+		HWND    uintptr
+		Message uint32
+		WParam  uintptr
+		LParam  uintptr
+		Time    uint32
+		PointX  int32
+		PointY  int32
+		Private uint32
+	}
 	for {
-		time.Sleep(time.Second)
+		result, _, _ := user32.NewProc("GetMessageW").Call(uintptr(unsafe.Pointer(&message)), 0, 0, 0)
+		if int32(result) <= 0 || message.Message == 0x0010 { // WM_CLOSE
+			return
+		}
 	}
 }
 
-func TestStopInstalledProcessesOnlyClosesTarget(t *testing.T) {
+func TestInstalledMainProcessExcludesInstallerItself(t *testing.T) {
+	target := filepath.Join(t.TempDir(), "app")
+	app := filepath.Join(target, "交件箱.exe")
+	if installedMainProcess(app, target, app) {
+		t.Fatal("installer would close its own executable")
+	}
+	if !installedMainProcess(app, target, filepath.Join(t.TempDir(), "setup.exe")) {
+		t.Fatal("installed app was not recognized")
+	}
+	if installedMainProcess(filepath.Join(target, "runtime", "collector-agent.exe"), target, "") {
+		t.Fatal("collector helper was treated as the app process")
+	}
+}
+
+func TestStopInstalledProcessesGracefullyClosesOnlyTarget(t *testing.T) {
 	root := t.TempDir()
 	target := filepath.Join(root, "app")
 	other := filepath.Join(root, "other")
@@ -85,14 +126,13 @@ func TestStopInstalledProcessesOnlyClosesTarget(t *testing.T) {
 		}
 		return cmd
 	}
-	owned := start("helper.exe", target)
+	owned := start("交件箱.exe", target)
 	otherProcess := start("other.exe", other)
-	stopInstalledProcesses(target)
+	if err = stopInstalledProcesses(target); err != nil {
+		t.Fatal(err)
+	}
 	if err = owned.Wait(); err != nil {
-		var exit *exec.ExitError
-		if !errors.As(err, &exit) || exit.ExitCode() != 1 {
-			t.Fatal("target helper did not terminate cleanly", err)
-		}
+		t.Fatal("target helper did not close cleanly", err)
 	}
 	time.Sleep(200 * time.Millisecond)
 	if handle, err := windows.OpenProcess(windows.PROCESS_QUERY_LIMITED_INFORMATION|windows.SYNCHRONIZE, false, uint32(otherProcess.Process.Pid)); err == nil {
