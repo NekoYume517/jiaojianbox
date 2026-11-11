@@ -176,7 +176,7 @@ func event(ctx context.Context, db store.SQL, user, kind, id string) {
 
 func New(database *store.Store, assets fs.FS, version string) (*Server, error) {
 	if err := database.BackupVersion(context.Background(), version); err != nil {
-		return nil, fmt.Errorf("升级备份失败，服务未启动: %w", err)
+		log.Printf("升级备份失败，继续使用已通过完整性检查的工作区: %v", err)
 	}
 	s := &Server{Store: database, Assets: assets, Version: version, Mux: http.NewServeMux(), MaxUpload: 50 << 20}
 	if n, e := strconv.Atoi(os.Getenv("JJB_MAX_UPLOAD_MB")); e == nil && n > 0 {

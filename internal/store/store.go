@@ -16,7 +16,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -45,11 +45,14 @@ func Open(root string) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	previousInfo, previousErr := os.Stat(filepath.Join(root, "jiaojianbox.sqlite3"))
-	existingDatabase := previousErr == nil && previousInfo.Size() > 0
 	if err = os.MkdirAll(filepath.Join(root, "files"), 0700); err != nil {
 		return nil, err
 	}
+	if _, err = prepareDatabase(root); err != nil {
+		return nil, fmt.Errorf("数据库自动修复失败: %w", err)
+	}
+	previousInfo, previousErr := os.Stat(filepath.Join(root, "jiaojianbox.sqlite3"))
+	existingDatabase := previousErr == nil && previousInfo.Size() > 0
 	encoded := strings.TrimSpace(os.Getenv("JJB_MASTER_KEY"))
 	if encoded == "" {
 		file := filepath.Join(root, "master.key")
@@ -94,8 +97,7 @@ func Open(root string) (*Store, error) {
 	s := &Store{DB: db, Root: root, key: key}
 	if existingDatabase {
 		if err = s.BackupVersion(context.Background(), "before-go"); err != nil {
-			db.Close()
-			return nil, fmt.Errorf("升级前备份失败，数据库未迁移: %w", err)
+			log.Printf("迁移前备份失败，继续使用已通过完整性检查的工作区: %v", err)
 		}
 	}
 	if _, err = db.Exec(schema); err != nil {
@@ -320,8 +322,21 @@ func (s *Store) Backup(ctx context.Context, destination string) error {
 	if _, err := os.Stat(destination); err == nil {
 		return fmt.Errorf("备份已存在")
 	}
+	if _, err := s.DB.ExecContext(ctx, "PRAGMA wal_checkpoint(TRUNCATE)"); err != nil {
+		return fmt.Errorf("SQLite WAL 检查点失败: %w", err)
+	}
 	_, err := s.DB.ExecContext(ctx, "VACUUM INTO ?", destination)
-	return err
+	if err != nil {
+		return err
+	}
+	info, err := os.Stat(destination)
+	if err != nil {
+		return err
+	}
+	if info.Size() == 0 {
+		return errors.New("SQLite 备份文件为空")
+	}
+	return prepareSQLite(destination)
 }
 
 // BackupVersion keeps a consistent SQLite snapshot, its encryption key and the
@@ -339,18 +354,25 @@ func (s *Store) BackupVersion(ctx context.Context, version string) error {
 	directory := filepath.Join(s.Root, "backups", version)
 	marker := filepath.Join(directory, "complete.json")
 	if _, err := os.Stat(marker); err == nil {
-		return nil
+		if validationErr := validateBackup(directory); validationErr == nil {
+			return nil
+		} else {
+			preserved := filepath.Join(s.Root, "backups", ".invalid-"+version+"-"+time.Now().Format("20060102-150405.000000000"))
+			if err = os.Rename(directory, preserved); err != nil {
+				return fmt.Errorf("保留损坏的旧升级备份失败: %w", err)
+			}
+			log.Printf("已有升级备份 %s 校验未通过，已保留到 %s: %v", version, preserved, validationErr)
+		}
+	}
+	// A directory without complete.json is an interrupted backup. It must never
+	// be treated as a valid snapshot or block a later retry.
+	if err := os.RemoveAll(directory); err != nil {
+		return err
 	}
 	if err := os.MkdirAll(directory, 0700); err != nil {
 		return err
 	}
 	file := filepath.Join(directory, "jiaojianbox.sqlite3")
-	// A previous interrupted backup is discarded, never the live database.
-	if _, err := os.Stat(file); err == nil {
-		if err = os.Remove(file); err != nil {
-			return err
-		}
-	}
 	if err := s.Backup(ctx, file); err != nil {
 		return err
 	}
@@ -384,27 +406,11 @@ func (s *Store) BackupVersion(ctx context.Context, version string) error {
 		if id == "" || id != filepath.Base(id) || strings.ContainsAny(id, "/\\") {
 			return errors.New("附件标识无效，已停止备份")
 		}
-		source, err := os.Open(filepath.Join(s.Root, "files", id))
-		if err != nil {
+		if err = verifyFile(filepath.Join(s.Root, "files", id), int64(Number(item, "size")), Str(item, "sha256")); err != nil {
 			return fmt.Errorf("附件备份未完成: %w", err)
 		}
-		out, err := os.OpenFile(filepath.Join(directory, "files", id), os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0600)
-		if err != nil {
-			source.Close()
+		if err = copyFile(filepath.Join(s.Root, "files", id), filepath.Join(directory, "files", id)); err != nil {
 			return err
-		}
-		hash := sha256.New()
-		size, copyErr := io.Copy(io.MultiWriter(out, hash), source)
-		source.Close()
-		closeErr := out.Close()
-		if copyErr != nil {
-			return copyErr
-		}
-		if closeErr != nil {
-			return closeErr
-		}
-		if size != int64(Number(item, "size")) || hex.EncodeToString(hash.Sum(nil)) != Str(item, "sha256") {
-			return errors.New("附件备份校验失败，已停止升级")
 		}
 	}
 	if err := os.WriteFile(filepath.Join(directory, "master.key"), []byte(base64.URLEncoding.EncodeToString(s.key)), 0600); err != nil {

@@ -43,7 +43,7 @@ python -X utf8 scripts/verify-installer.py
 
 ## 数据与升级
 
-延续原数据库文件名、SQLite 表结构、文件 ID、密码哈希与 Fernet 加密格式。Go 接管既有数据前，在同一持久卷生成不可覆盖的数据库、密钥及附件校验备份；缺少原加密密钥时停止启动。旧 Electron 的 Windows 登录凭证可从原 `Local State` 与 DPAPI 安全迁移。安装/卸载不会删除本机工作空间。
+延续原数据库文件名、SQLite 表结构、文件 ID、密码哈希与 Fernet 加密格式。每次升级前会先合并 SQLite WAL、检查完整性，再在同一持久卷生成不可覆盖的数据库、密钥及附件校验备份；0 字节或中断备份会自动重建。主库损坏或缺失时会优先原位修复，再回退到最新完整备份并恢复附件与密钥；无法恢复时只隔离坏文件，不删除原内容。缺少原加密密钥时停止启动。旧 Electron 的 Windows 登录凭证可从原 `Local State` 与 DPAPI 安全迁移。安装/卸载不会删除本机工作空间。
 
 云端始终挂载原 `/data` 数据卷。不要在升级时删除或替换卷，也不要更换 `master.key`/`JJB_MASTER_KEY`。云端与本机迁移为复制式，不删除来源，不迁移账号凭证和模型密钥。部署步骤见 [Coolify 指南](docs/deploy-coolify.md)。
 
