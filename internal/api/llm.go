@@ -302,16 +302,34 @@ type chatCall struct {
 	Metrics Object
 }
 
-func (s *Server) chat(ctx context.Context, config Object, key string, messages []Object, tools []Object, p progress, observe ...func(Object)) chatCall {
+func (s *Server) chat(ctx context.Context, config Object, key string, messages []Object, tools []Object, p progress, observe func(Object), options ...Object) chatCall {
 	started := time.Now()
 	out := chatCall{Metrics: Object{"streamed": false, "usage_reported": false, "http_status": 200, "first_token_ms": nil, "prompt_tokens": nil, "completion_tokens": nil, "total_tokens": nil}}
 	defer func() {
 		out.Metrics["elapsed_ms"] = time.Since(started).Milliseconds()
-		for _, observer := range observe {
-			observer(out.Metrics)
+		if observe != nil {
+			observe(out.Metrics)
 		}
 	}()
-	body := Object{"model": config["model"], "messages": messages, "stream": true, "temperature": .1, "max_tokens": 6000, "response_format": Object{"type": "json_object"}, "stream_options": Object{"include_usage": true}}
+	option := Object{}
+	if len(options) > 0 {
+		option = options[0]
+	}
+	jsonMode := true
+	if value, ok := option["json_mode"].(bool); ok {
+		jsonMode = value
+	}
+	maxTokens := int(num(option, "max_tokens"))
+	if maxTokens < 256 {
+		maxTokens = 6000
+	}
+	if maxTokens > 32000 {
+		maxTokens = 32000
+	}
+	body := Object{"model": config["model"], "messages": messages, "stream": true, "temperature": .1, "max_tokens": maxTokens, "stream_options": Object{"include_usage": true}}
+	if jsonMode {
+		body["response_format"] = Object{"type": "json_object"}
+	}
 	if len(tools) > 0 {
 		body["tools"] = tools
 	}

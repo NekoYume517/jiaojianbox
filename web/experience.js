@@ -70,11 +70,25 @@
     const list=(state.sources.conversations||[]).filter(c=>c.source===type);
     return `<div class="chat-toolbar"><input data-chat-search="${type}" placeholder="搜索联系人或群聊" aria-label="搜索${type==='qq'?'QQ':'微信'}会话"><span class="helper" data-chat-count="${type}" aria-live="polite">已选 ${(state.sources[type+'_chats']||[]).length} 个</span></div><div class="conversation-list">${list.length?list.map(c=>`<label class="conversation-row" data-chat-label="${type}" data-search="${esc(c.name+' '+c.id)}"><input type="checkbox" data-subscribe="${type}" value="${esc(c.id)}" ${(state.sources[type+'_chats']||[]).includes(c.id)?'checked':''}><span><strong>${esc(c.name)}</strong><small>${c.id.startsWith('group:')||c.id.endsWith('@chatroom')?'群聊':'联系人'}</small></span></label>`).join(''):`<div class="empty"><strong>${type==='qq'?'选择一个 QQ 实例':'正在等待微信登录'}</strong><div>连接后，在这里勾选需要关注的聊天。</div></div>`}</div>`;
   }
+  function triggerAdaptersContent(){
+    const adapters=window.pluginUI?.triggerAdapters?.()||[];
+    return `<div class="panel-head"><h3>触发器适配器</h3><small>${adapters.length?`${adapters.length} 个插件触发器正在运行`:'QQ、微信与通知事件已内置'}</small></div>
+      <div class="trigger-adapter-list">
+        <div class="trigger-adapter-row"><span class="trigger-adapter-mark">Q</span><div><strong>QQ 消息</strong><small>SnowLuma · 收到新消息时触发</small></div><span class="tag green">内置</span></div>
+        <div class="trigger-adapter-row"><span class="trigger-adapter-mark">微</span><div><strong>微信消息</strong><small>本地数据库 · 收到新消息时触发</small></div><span class="tag green">内置</span></div>
+        <div class="trigger-adapter-row"><span class="trigger-adapter-mark">+</span><div><strong>项目事件</strong><small>待办创建、修改、删除和 AI 操作完成</small></div><span class="tag green">内置</span></div>
+        ${adapters.map(adapter=>`<div class="trigger-adapter-row" data-trigger-adapter="${esc(adapter.id)}"><span class="trigger-adapter-mark">${esc((adapter.title||'触').slice(0,1))}</span><div><strong>${esc(adapter.title)}</strong><small>${esc(adapter.pluginName)} · ${esc(adapter.description||adapter.event)}</small>${adapter.lastError?`<small class="error">${esc(adapter.lastError)}</small>`:''}</div><span class="tag ${adapter.state==='error'?'red':'blue'}">${adapter.state==='error'?'异常':adapter.state==='starting'?'启动中':'插件'}</span><button type="button" class="plain-button" data-test-plugin-trigger="${esc(adapter.id)}">测试</button></div>`).join('')}
+      </div>`;
+  }
+  function triggerAdaptersPanel(){
+    return `<section class="panel trigger-adapters">${triggerAdaptersContent()}</section>`;
+  }
   function sourcesView(){
-    if(!window.desktop)return heading('消息来源','电脑自动读取，网页管理自己的内容。')+`<section class="panel">${empty('在桌面客户端选择聊天','连接后，通知、待办和材料会同步到这里。')}</section>`;
+    if(!window.desktop)return heading('触发器','电脑运行触发器，网页管理自己的内容。')+`<section class="panel">${empty('在桌面客户端选择触发器','连接后，通知、待办和材料会同步到这里。')}</section>`;
     const c=state.sources;
-    return heading('消息来源','第一次选好聊天，以后打开就会自动读取。',`<button class="secondary" data-experience="detect">重新检测</button>`)+
+    return heading('触发器','QQ、微信和插件事件统一进入同一套触发器。第一次选好聊天，以后打开就会自动读取。',`<button class="secondary" data-experience="detect">重新检测</button>`)+
     `<section class="panel auto-source-panel"><label class="switch-line"><input id="sources-auto" type="checkbox" ${c.auto_start!==false?'checked':''}><span><strong>打开应用后自动读取</strong><small>自动恢复上次选择的 QQ／微信和聊天，不需要再次启动。</small></span></label><span id="collector-status" class="collector-status" role="status">正在准备连接</span></section>`+
+    triggerAdaptersPanel()+
     `<div class="source-grid"><section class="panel source-card"><div class="source-title"><span class="source-mark qq">QQ</span><div><h3>QQ 消息</h3><small>选择已登录实例，再勾选聊天。</small></div><input id="qq-enabled" aria-label="启用 QQ 读取" type="checkbox" ${c.qq_enabled!==false?'checked':''}></div><div id="qq-instances" class="instance-list">${instances.length?instances.map(p=>`<div class="instance-row"><span class="instance-avatar">Q</span><div><strong>${esc(p.nickname||p.uin||(p.accounts?.[0]?.nickname)||'QQ 客户端')}</strong><small>${esc(p.uin||'实例 '+p.pid)} · ${c.qq_pid===p.pid?'已选择':'已检测'}</small></div><button class="${c.qq_pid===p.pid?'plain-button':'secondary'}" data-connect-qq="${p.pid}">${c.qq_pid===p.pid?'刷新聊天':'连接'}</button></div>`).join(''):'<p class="helper">正在检测本机 QQ，保持 QQ 登录即可。</p>'}</div>${chatList('qq')}</section><section class="panel source-card"><div class="source-title"><span class="source-mark">微</span><div><h3>微信消息</h3><small>自动识别已登录微信，勾选后即可读取。</small></div><input id="wechat-enabled" aria-label="启用微信读取" type="checkbox" ${c.wechat_enabled!==false?'checked':''}></div><button class="plain-button" data-experience="refresh-wechat">刷新微信聊天</button>${chatList('wechat')}</section></div>`+
     `<details class="panel advanced-source"><summary>高级与调试 <span class="helper">连接详情、读取检查、运行记录</span></summary><div class="advanced-body"><div class="form-grid"><label>SnowLuma 安装目录<input id="snowluma-home" value="${esc(c.snowluma_home||'')}" placeholder="自动检测"><button type="button" class="link" data-experience="select-runtime">选择目录</button></label><label>Python 解释器<input id="python-path" value="${esc(c.python_path||'')}" placeholder="留空使用内置采集程序"></label></div><div class="form-grid"><label>仅采集含关键词的消息<input id="capture-keywords" value="${esc(c.capture_keywords||'')}" placeholder="留空处理勾选聊天的全部消息"></label><label>QQ 连接方式<select id="qq-transport"><option value="managed">应用内免配置接入</option><option value="external">外部 OneBot（兼容调试）</option></select></label></div><details><summary class="helper">兼容连接参数</summary><div class="form-grid"><label>HTTP 地址<input id="qq-http" value="${esc(c.qq_http_url||'http://127.0.0.1:3000')}"></label><label>WebSocket 地址<input id="qq-ws" value="${esc(c.qq_ws_url||'ws://127.0.0.1:3001')}"></label></div><label>Access Token<input id="qq-token" type="password" value="${esc(c.qq_token||'')}" autocomplete="new-password"></label><div class="form-grid"><label>微信账号目录<input id="wechat-account" value="${esc(c.wechat_account||'')}" placeholder="自动检测"></label><label>微信数据库目录<input id="wechat-db-dir" value="${esc(c.wechat_db_dir||'')}" placeholder="自动检测"></label></div></details><div class="source-actions"><button class="secondary" data-experience="save">保存并恢复连接</button><button class="secondary" data-experience="diagnostics">检查读取状态</button><button class="plain-button" data-experience="stop">暂停本次读取</button></div><div class="form-grid debug-controls"><label>读取动作<select id="debug-action"><option value="get_login_info">账号状态</option><option value="get_group_list">群聊列表</option><option value="get_friend_list">联系人列表</option><option value="get_status">运行状态</option><option value="get_group_msg_history">群消息历史</option></select></label><label>参数<textarea id="debug-params" rows="2" placeholder='例如：{"group_id":123}'>{}</textarea></label></div><button class="secondary" data-experience="debug">执行读取检查</button><pre id="source-debug" class="debug-output" hidden></pre></div></details>`;
   }
@@ -152,6 +166,16 @@
     if(window.desktop)detect(true);
   }
   document.addEventListener('click',async event=>{
+    const triggerTest=event.target.closest('[data-test-plugin-trigger]');
+    if(triggerTest){
+      const adapter=window.pluginUI?.triggerAdapters?.().find(item=>item.id===triggerTest.dataset.testPluginTrigger);
+      if(!adapter)return toast('触发器已停止');
+      triggerTest.disabled=true;
+      try{await window.pluginUI.invokeTrigger(adapter.event,{test:true,at:new Date().toISOString()});toast(`已触发「${adapter.title}」`);}
+      catch(error){toast(error.message||'触发器运行失败');}
+      finally{triggerTest.disabled=false;}
+      return;
+    }
     const connect=event.target.closest('[data-connect-qq]');const action=event.target.closest('[data-experience]');
     if(!connect&&!action)return;
     try{
@@ -440,6 +464,10 @@
 
   window.addEventListener('appearance-error',()=>toast('外观已应用，但本机偏好未能保存'));
   window.experience={sourcesView,decorate,detect,onSession,prepareLogin,browserLogin};
+  window.addEventListener('plugin-triggers-changed',()=>{
+    const panel=document.querySelector('.trigger-adapters');
+    if(panel&&state.page==='sources')panel.innerHTML=triggerAdaptersContent();
+  });
   if(window.desktop){prepareLogin();desktop.onAppearance(value=>appearance.restore(value));}
   if(state.session)onSession();
 })();

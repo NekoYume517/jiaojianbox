@@ -76,3 +76,21 @@ CREATE TABLE IF NOT EXISTS task_templates(
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS ix_task_templates_owner ON task_templates(user_id,updated_at);
+
+CREATE TABLE IF NOT EXISTS agent_messages(
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    payload TEXT NOT NULL,
+    summarized INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS ix_agent_messages_owner ON agent_messages(user_id,created_at);
+CREATE INDEX IF NOT EXISTS ix_agent_messages_context ON agent_messages(user_id,summarized);
+
+CREATE TABLE IF NOT EXISTS agent_state(
+    user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+    summary TEXT NOT NULL DEFAULT '',
+    permission TEXT NOT NULL DEFAULT 'restricted',
+    context_limit INTEGER NOT NULL DEFAULT 1000000,
+    last_prompt_tokens INTEGER NOT NULL DEFAULT 0,
+    last_total_tokens INTEGER NOT NULL DEFAULT 0,
+    updated_at TEXT NOT NULL);

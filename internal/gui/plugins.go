@@ -20,7 +20,7 @@ import (
 
 const (
 	pluginContract     = "jjb-plugin-1"
-	pluginAPIHost      = "1.0"
+	pluginAPIHost      = "1.2"
 	pluginFileLimit    = 4 << 20
 	pluginPackageLimit = 16 << 20
 	pluginHistoryLimit = 200

@@ -200,6 +200,7 @@ func New(database *store.Store, assets fs.FS, version string) (*Server, error) {
 		s.searchRoutes()
 		s.previewRoutes()
 		s.collectionStatusRoutes()
+		s.agentRoutes()
 		s.route("GET /health", "", func(r request) any { return Object{"status": "ok", "version": s.Version, "runtime": "go"} })
 		s.Mux.HandleFunc("GET /authorize", func(w http.ResponseWriter, r *http.Request) {
 			asset, err := s.Assets.Open("authorize.html")

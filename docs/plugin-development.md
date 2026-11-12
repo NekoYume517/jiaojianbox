@@ -2,7 +2,7 @@
 
 插件页面和自定义组件必须遵循 [UI、控件与动效规范](ui-design-standard.md)，复用宿主主题、密度、共享 tab 高亮与动效运行时，不另建一套视觉体系。
 
-契约版本：`jjb-plugin-1`（宿主 API `1.1`，manifest 声明 `api: "^1"`）。内核、页面 slot、声明式设置和错误边界遵循 Magpie 的设计（MIT，见 THIRD_PARTY_NOTICES）。插件只在桌面端运行；网页端不显示插件入口，也不执行或存储插件。任何登录用户都可以导入、启用、停用、升级、删除和开发插件。插件是完整信任的本机扩展，可以访问当前页面、应用 API 和本机工具，因此请只安装来自可信开发者的插件。
+契约版本：`jjb-plugin-1`（宿主 API `1.2`，manifest 声明 `api: "^1"`）。内核、页面 slot、声明式设置和错误边界遵循 Magpie 的设计（MIT，见 THIRD_PARTY_NOTICES）。插件只在桌面端运行；网页端不显示插件入口，也不执行或存储插件。任何登录用户都可以导入、启用、停用、升级、删除和开发插件。插件是完整信任的本机扩展，可以访问当前页面、应用 API 和本机工具，因此请只安装来自可信开发者的插件。
 
 ## 1. 安装包
 
@@ -30,7 +30,7 @@ my-plugin.zip
       { "key": "enabled", "type": "bool", "title": "默认启用", "default": false }
     ],
     "permissions": ["tasks:read", "tools:exec"],
-    "events": ["task.created", "*"],
+    "events": ["message.received", "message.upsert", "task.created", "task.upsert", "task.delete", "*"],
     "runtime": {
       "activationTimeoutMs": 8000,
       "mountTimeoutMs": 15000,
@@ -55,7 +55,7 @@ my-plugin.zip
 - `id` 只能使用小写字母、数字和短横线；`name`、`version`、`entry` 必填。
 - `settings` 是声明式设置 schema。`key` 使用小写字母、数字和短横线；`type` 支持 `bool`、`number`、`string`；`string` 可带 `enum`，`number` 可带 `min` / `max`。插件页会根据 schema 自动生成设置表单，配置按 schema 校验合成：默认值在前，类型或枚举不符的值被丢弃。
 - `permissions` 是声明的能力列表（如 `tasks:read`、`messages:read`、`tools:exec`），会在插件卡片上公示。契约目前是完整信任模型，权限声明用于向用户说明插件会接触的数据。
-- `events` 声明触发器：`task.created`、`task.upsert`、`task.delete`，`*` 表示全部。
+- `events` 声明插件接收的触发器：`message.received`、`message.upsert`、`task.created`、`task.upsert`、`task.delete` 以及插件自己的事件；`*` 表示全部。
 - `runtime` 可覆盖故障隔离时限，字段均可省略。首次加载快照只建立基线，不会把历史待办当成新任务逐条触发。
 - `assets` 可声明非扩展名资源类型，例如 `{ "styles.css": "css" }`；普通 `.js` / `.mjs` / `.json` 模块无需声明。
 
@@ -71,7 +71,7 @@ ZIP 必须在根目录包含 `manifest.json`。单文件最大 4 MB，解压后�
 export function activate(host) {
   host.id;              // 插件 id
   host.contract;        // 'jjb-plugin-1'
-  host.apiVersion;      // '1.1'
+  host.apiVersion;      // '1.2'
   host.manifest;        // 完整 manifest（含 settings schema）
   host.config;          // 按 schema 合成后的配置
   host.ui;              // UI 套件（见下）
@@ -144,6 +144,40 @@ host.onDispose(fn);                                                          // 
 
 `registerService` 会调用服务的 `start()`，停用、升级或删除插件时调用 `stop()`。两个生命周期都有超时，失败会进入运行时诊断，不会阻塞其他插件。
 
+### 触发器适配器
+
+插件可以把任意本机或远程事件接入宿主。注册成功后，触发器页面会自动显示适配器，开发者不需要修改应用源码或额外配置文件：
+
+```js
+const remove = host.registerTrigger({
+  id: 'calendar',
+  title: '日历事件',
+  description: '读取本机日历并转发增加、修改和删除事件',
+  event: 'trigger:calendar', // 可选，默认 trigger:<插件id>:<适配器id>
+  async start({ emit, signal, state, host }) {
+    const source = new EventSource('/local/calendar-events');
+    signal.addEventListener('abort', () => source.close(), { once: true });
+    source.onopen = () => state('ready');
+    source.onerror = () => state('error');
+    source.onmessage = message => emit({
+      type: message.type,
+      calendar: JSON.parse(message.data),
+    });
+    return () => source.close();
+  },
+  async stop() {
+    // 可选。start 返回的函数也会在停用、升级和删除时执行。
+  },
+});
+
+// 动态注销当前适配器；插件停用时宿主也会自动调用。
+// await remove();
+```
+
+`registerTriggerAdapter` 是 `registerTrigger` 的别名。`start`、`stop` 和事件转发都由 `runtime.triggerTimeoutMs` 隔离；一个适配器报错不会影响 QQ、微信、其他适配器或宿主页面。`state()` 可切换触发器的运行状态，错误会直接显示在触发器页面。
+
+适配器通过 `emit(payload)` 发出自己的 `event`。需要响应该事件的插件在 manifest `events` 中声明同一事件，或用 `host.onTrigger(event, handler)` 接收。也可直接使用 `host.dispatchTrigger(event, payload)` 测试事件链。
+
 ### 数据与配置
 
 ```js
@@ -165,6 +199,9 @@ await host.exec({
 
 ```js
 host.api('/api/tasks', 'POST', { title: '新待办' });  // 应用 API（带会话）
+host.request('/api/tasks', 'GET');                   // host.api 的同义方法
+host.invoke('/api/snapshot', 'GET');                 // host.api 的同义方法
+host.apiAll('/api/search?q=作业', 'GET');             // 可调用项目全部受保护 /api 路由
 host.navigate('tasks'); host.render(); host.refresh();
 host.toast('提示'); host.open('https://example.com');
 host.addStyle('.my-plugin { color: var(--ink) }');
@@ -173,6 +210,8 @@ host.asset('data.json'); host.assetURL('data.json', 'application/json');
 host.moduleURL('lib/tool.js');  // 可导入的包内 ES module URL
 host.patch(window, 'fetch', wrapped);  // 运行期补丁，停用时自动还原
 ```
+
+`host.api`、`host.request`、`host.invoke` 和 `host.apiAll` 使用当前登录会话，可以访问本项目全部 `/api/` 路由，不需要在 manifest 中额外配置接口白名单。请只调用用户明确需要的能力，并处理 401、403、409 和网络错误。
 
 ## 3. 示例
 

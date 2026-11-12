@@ -12,8 +12,9 @@
       ['admin','站点管理','#admin-panel'],
     ],
     sources: [
-      ['overview','概览','*'],['qq','QQ 消息','.source-card:first-child'],
-      ['wechat','微信消息','.source-card:last-child'],['advanced','高级与调试','.advanced-source'],
+      ['overview','概览','*'],['qq','QQ 触发器','.source-card:first-child'],
+      ['wechat','微信触发器','.source-card:last-child'],['adapters','插件触发器','.trigger-adapters'],
+      ['advanced','高级与调试','.advanced-source'],
     ],
     stats: [
       ['overview','概览','*'],['tokens','Token 消耗','#chart-tokens'],
@@ -77,6 +78,7 @@
     }
     if(page==='sources'){
       show(node('.auto-source-panel'),key==='overview');
+      show(node('.trigger-adapters'),['overview','adapters'].includes(key));
       show(node('.source-grid'),['overview','qq','wechat'].includes(key));
       show(node('.source-card:first-child'),['overview','qq'].includes(key));
       show(node('.source-card:last-child'),['overview','wechat'].includes(key));

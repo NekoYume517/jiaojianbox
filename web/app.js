@@ -8,6 +8,7 @@ const paths = {
   inbox: '<path d="M3 4h14l3 9v7H0v-7L3 4Z" transform="translate(2 0)"/><path d="M3 13h5l2 3h4l2-3h5"/>',
   check: '<rect x="4" y="3" width="16" height="18" rx="3"/><path d="m8 12 3 3 5-6"/>',
   connect: '<rect x="3" y="3" width="7" height="7" rx="2"/><rect x="14" y="14" width="7" height="7" rx="2"/><path d="M17 3v6h4M3 17h6v4M9 17l8-8"/>',
+  agent: '<path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M18.4 5.6l-2.1 2.1M7.7 16.3l-2.1 2.1"/><circle cx="12" cy="12" r="4.5"/><path d="m10.7 10.8 2.9 1.2-1.2 2.9-2.9-1.2 1.2-2.9Z"/>',
   chart: '<path d="M4 3v17h17M8 16v-5M13 16V6M18 16V9"/>',
   settings: '<path d="M9 3h6l1 3 3 1 2 5-2 5-3 1-1 3H9l-1-3-3-1-2-5 2-5 3-1Z"/><circle cx="12" cy="12" r="3"/>',
   user: '<circle cx="12" cy="8" r="4"/><path d="M4.5 21c.7-4.1 3.2-6.2 7.5-6.2s6.8 2.1 7.5 6.2"/>',
@@ -190,9 +191,10 @@ async function refresh({ renderPage = true } = {}) {
     state.snapshot.messages.push(...previousMessages.filter(m => !latestIds.has(m.id)));
     for (const m of state.snapshot.messages) if (!knownIds.has(m.id) && state.firstRenderDone) m.isNew = true;
     online(true); cacheSoon();
-    if (renderPage && contentChanged && !uploading && !['settings', 'sources','stats','plugins','shares'].includes(state.page) && !state.page.startsWith('plugin:')) render();
+    if (renderPage && contentChanged && !uploading && !['settings', 'sources','agent','stats','plugins','shares'].includes(state.page) && !state.page.startsWith('plugin:')) render();
     window.dispatchEvent(new CustomEvent('snapshot-updated', { detail: state.snapshot }));
- window.pluginUI?.sync();
+    window.agentUI?.synced?.();
+    window.pluginUI?.sync();
     updateCounts();
   } catch (error) {
     if (generation !== state.generation) return;
@@ -278,7 +280,7 @@ async function promptCheckin() {
 }
 const ONBOARD_STEPS = [
   { title: '欢迎来到交件箱', body: '把聊天里的通知整理成能交付的事：收通知、建待办、交材料、存回执，都在这里。', hint: '第一步 · 了解工作台' },
-  { title: '连接 QQ / 微信', body: '打开「消息来源」，保持 QQ 或微信在本机登录，勾选要关注的聊天即可自动同步，之后每次打开应用都会自动续读。', hint: '第二步 · 选择聊天', action: 'sources' },
+  { title: '连接 QQ / 微信', body: '打开「触发器」，保持 QQ 或微信在本机登录，勾选要关注的聊天即可自动同步，之后每次打开应用都会自动续读。', hint: '第二步 · 选择聊天', action: 'sources' },
   { title: '让模型替你读通知', body: '在「设置」填入你自己的模型 API，新通知会自动分类；开启「自动新建待办」后，待办通知会直接进入待办列表。', hint: '第三步 · 配置模型', action: 'settings' },
   { title: '拖入文件，AI 帮你归类', body: '把文件拖进窗口：放到待办卡片直接成为材料，放到空白处交给 AI 按内容归到合适的待办。', hint: '第四步 · 收纳文件' },
 ];
@@ -294,7 +296,7 @@ function renderOnboard() {
   if (!onboardActive) return;
   const step = ONBOARD_STEPS[onboardStep];
   const card = document.createElement('div'); card.id = 'onboard'; card.className = 'onboard-card'; card.setAttribute('role', 'dialog'); card.setAttribute('aria-label', '新手引导');
-  card.innerHTML = `<div class="eyebrow">${esc(step.hint)}</div><h3>${esc(step.title)}</h3><p>${esc(step.body)}</p><div class="onboard-dots">${ONBOARD_STEPS.map((_, i) => `<i class="${i === onboardStep ? 'on' : i < onboardStep ? 'done' : ''}"></i>`).join('')}</div><div class="detail-actions"><button class="plain-button" data-onboard="skip">跳过</button><span class="flex-spacer"></span>${onboardStep > 0 ? '<button class="secondary" data-onboard="prev">上一步</button>' : ''}<button class="primary" data-onboard="${step.action ? 'goto' : 'next'}">${step.action ? '去' + (step.action === 'sources' ? '消息来源' : '设置') : onboardStep === ONBOARD_STEPS.length - 1 ? '开始使用' : '下一步'}</button></div>`;
+  card.innerHTML = `<div class="eyebrow">${esc(step.hint)}</div><h3>${esc(step.title)}</h3><p>${esc(step.body)}</p><div class="onboard-dots">${ONBOARD_STEPS.map((_, i) => `<i class="${i === onboardStep ? 'on' : i < onboardStep ? 'done' : ''}"></i>`).join('')}</div><div class="detail-actions"><button class="plain-button" data-onboard="skip">跳过</button><span class="flex-spacer"></span>${onboardStep > 0 ? '<button class="secondary" data-onboard="prev">上一步</button>' : ''}<button class="primary" data-onboard="${step.action ? 'goto' : 'next'}">${step.action ? '去' + (step.action === 'sources' ? '触发器' : '设置') : onboardStep === ONBOARD_STEPS.length - 1 ? '开始使用' : '下一步'}</button></div>`;
   document.body.append(card);
 }
 document.addEventListener('click', async event => {
@@ -495,9 +497,9 @@ document.addEventListener('click', async event => {
   finally { if (button.isConnected) button.disabled = false; }
 });
 function sourcesView() {
-  if (!window.desktop) return heading('消息来源', '桌面负责采集，所有设备实时查看。') + `<div class="panel">${empty('在电脑上连接消息来源', '使用桌面版连接 QQ 或微信。<br>这里可以继续查看同步的通知、分析并管理待办。')}</div>`;
+  if (!window.desktop) return heading('触发器', '桌面负责运行触发器，所有设备实时查看结果。') + `<div class="panel">${empty('在电脑上连接触发器', '使用桌面版连接 QQ、微信或插件触发器。<br>这里可以继续查看同步的通知、分析并管理待办。')}</div>`;
   const c = state.sources;
-  return heading('消息来源', '选择需要关注的会话，把通知带进工作台。') + `<div class="source-grid"><section class="panel source-card"><div class="source-title"><span class="source-mark qq">QQ</span><div><h3>QQ · SnowLuma</h3><small>OneBot v11 · Windows / macOS / Linux</small></div></div><label>HTTP 地址<input id="qq-http" type="url" value="${esc(c.qq_http_url)}"></label><label>WebSocket 地址<input id="qq-ws" type="url" value="${esc(c.qq_ws_url)}"></label><label>Access Token<input id="qq-token" type="password" value="${esc(c.qq_token || '')}" autocomplete="new-password"></label><button class="secondary" data-action="list-qq">读取 QQ 联系人和群</button><div id="qq-conversations">${conversations('qq')}</div></section><section class="panel source-card"><div class="source-title"><span class="source-mark">微</span><div><h3>微信 · 本地数据库</h3><small>Windows · 复用 wechatauto-replica</small></div></div><label>微信账号目录名<input id="wechat-account" value="${esc(c.wechat_account || '')}" placeholder="留空自动识别，读取后固定到该账号"></label><label>微信数据库根目录<input id="wechat-db-dir" value="${esc(c.wechat_db_dir || '')}" placeholder="留空自动检测"></label><p class="helper">微信保持登录即可。采用数据库读取，同步文字、引用和文件卡片信息。</p><button class="secondary" data-action="list-wechat">读取微信最近会话</button><div id="wechat-conversations">${conversations('wechat')}</div></section></div><section class="panel source-global"><div class="form-grid"><label>Python 解释器<input id="python-path" value="${esc(c.python_path || '')}" placeholder="python 或完整的 python.exe 路径"></label><label>仅采集含关键词的消息<input id="capture-keywords" value="${esc(c.capture_keywords || '')}" placeholder="英文逗号分隔，留空同步所选会话全部消息"></label></div><p class="helper">解释器需安装项目依赖。微信接入还需你现有的 wechatauto-replica；QQ 需先运行 SnowLuma。微信首次选择会话从当前时刻开始，后续重启会补读积压消息。</p><div class="source-actions"><button class="primary" data-action="start-collector">保存并启动采集</button><button class="secondary" data-action="stop-collector">停止采集</button><button class="plain-button" data-action="save-sources">仅保存</button></div><div id="collector-status" class="collector-status" role="status">尚未启动采集</div></section>`;
+  return heading('触发器', '选择需要关注的会话，把通知带进工作台。') + `<div class="source-grid"><section class="panel source-card"><div class="source-title"><span class="source-mark qq">QQ</span><div><h3>QQ · SnowLuma</h3><small>OneBot v11 · Windows / macOS / Linux</small></div></div><label>HTTP 地址<input id="qq-http" type="url" value="${esc(c.qq_http_url)}"></label><label>WebSocket 地址<input id="qq-ws" type="url" value="${esc(c.qq_ws_url)}"></label><label>Access Token<input id="qq-token" type="password" value="${esc(c.qq_token || '')}" autocomplete="new-password"></label><button class="secondary" data-action="list-qq">读取 QQ 联系人和群</button><div id="qq-conversations">${conversations('qq')}</div></section><section class="panel source-card"><div class="source-title"><span class="source-mark">微</span><div><h3>微信 · 本地数据库</h3><small>Windows · 复用 wechatauto-replica</small></div></div><label>微信账号目录名<input id="wechat-account" value="${esc(c.wechat_account || '')}" placeholder="留空自动识别，读取后固定到该账号"></label><label>微信数据库根目录<input id="wechat-db-dir" value="${esc(c.wechat_db_dir || '')}" placeholder="留空自动检测"></label><p class="helper">微信保持登录即可。采用数据库读取，同步文字、引用和文件卡片信息。</p><button class="secondary" data-action="list-wechat">读取微信最近会话</button><div id="wechat-conversations">${conversations('wechat')}</div></section></div><section class="panel source-global"><div class="form-grid"><label>Python 解释器<input id="python-path" value="${esc(c.python_path || '')}" placeholder="python 或完整的 python.exe 路径"></label><label>仅采集含关键词的消息<input id="capture-keywords" value="${esc(c.capture_keywords || '')}" placeholder="英文逗号分隔，留空同步所选会话全部消息"></label></div><p class="helper">解释器需安装项目依赖。微信接入还需你现有的 wechatauto-replica；QQ 需先运行 SnowLuma。微信首次选择会话从当前时刻开始，后续重启会补读积压消息。</p><div class="source-actions"><button class="primary" data-action="start-collector">保存并启动采集</button><button class="secondary" data-action="stop-collector">停止采集</button><button class="plain-button" data-action="save-sources">仅保存</button></div><div id="collector-status" class="collector-status" role="status">尚未启动采集</div></section>`;
 }
 function syncLocationHash() {
   const hash = state.page === 'tasks' && state.taskId ? '#/task/' + state.taskId : state.page === 'inbox' && state.selected ? '#/message/' + state.selected : '#/' + state.page;
@@ -511,19 +513,21 @@ function render() {
   const sameView = $('#view').dataset.viewKey === viewKey;
   const scrollTop = sameView ? $('#view').scrollTop : 0;
   const pageScroll = sameView ? document.scrollingElement.scrollTop : 0;
-  const titles = { files:'文件', inbox: '通知', tasks: '待办', shares:'分享', sources: '消息来源', settings: '设置',stats:'统计',plugins:'插件' };
+  const titles = { files:'文件', inbox: '通知', tasks: '待办', shares:'分享', sources: '触发器', agent:'AI', settings: '设置',stats:'统计',plugins:'插件' };
   $('#breadcrumb').textContent = titles[state.page]||window.pluginUI?.title(state.page)||'插件';
   $$('[data-nav]').forEach(button => button.classList.toggle('active', button.dataset.nav === state.page));
   // 分享依赖服务器，离线工作区不显示入口。
   const sharesNav = document.querySelector('[data-nav="shares"]');
   if (sharesNav) sharesNav.hidden = state.session?.mode === 'offline';
+  if (state.page !== 'agent') window.agentUI?.unmount();
   window.statistics?.unmount();
-  $('#view').innerHTML = state.page.startsWith('plugin:') ? '<div id=plugin-page></div>' : state.page === 'sources' && window.experience ? experience.sourcesView() : ({ files:()=>window.shelf?.page()||'', inbox: inboxView, tasks: tasksView, shares:()=>window.shares?.page()||'', sources: sourcesView, settings: settingsView,plugins:()=>window.pluginUI?.page()||'',stats:()=>window.statistics.page() })[state.page]();
+  $('#view').innerHTML = state.page.startsWith('plugin:') ? '<div id=plugin-page></div>' : state.page === 'sources' && window.experience ? experience.sourcesView() : ({ files:()=>window.shelf?.page()||'', inbox: inboxView, tasks: tasksView, shares:()=>window.shares?.page()||'', sources: sourcesView, agent:()=>window.agentUI?.page()||'', settings: settingsView,plugins:()=>window.pluginUI?.page()||'',stats:()=>window.statistics.page() })[state.page]();
   hydrateIcons(); updateCounts(); syncLocationHash();
   $('#view').dataset.viewKey = viewKey;
   $('#view').scrollTop = scrollTop;
   uiMotion.syncNavigation();
   if(state.page==='stats')window.statistics?.mount();
+  if(state.page==='agent')window.agentUI?.mount();
   if(state.page==='files')window.shelf?.refreshStorage?.();
   if(state.page==='shares')window.shares?.mount();
   state.firstRenderDone = true;
@@ -959,7 +963,8 @@ function showDoneBurst() {
 const CMDK_COMMANDS = [
   { icon: 'inbox', label: '前往：通知', kbd: 'G I', run: () => navigate('inbox') },
   { icon: 'check', label: '前往：待办', kbd: 'G T', run: () => navigate('tasks') },
-  { icon: 'connect', label: '前往：消息来源', kbd: 'G S', run: () => navigate('sources') },
+  { icon: 'connect', label: '前往：触发器', kbd: 'G S', run: () => navigate('sources') },
+  { icon: 'agent', label: '前往：AI 助手', kbd: 'G A', run: () => navigate('agent') },
   { icon: 'settings', label: '前往：设置', kbd: 'G C', run: () => navigate('settings') },
   { icon: 'plus', label: '新建待办', kbd: 'N', run: () => { state.page = 'inbox'; render(); openTask(); } },
   { icon: 'file', label: '粘贴一条通知', kbd: 'P', run: () => { state.page = 'inbox'; render(); $('#paste-content').value = ''; uiMotion.openDialog($('#paste-dialog')); } },
@@ -1058,7 +1063,7 @@ document.addEventListener('keydown', event => {
   if (key === 'g' && !shelfOpen) { awaitG = !awaitG; setTimeout(() => { awaitG = false; }, 1200); return; }
   if (awaitG && !shelfOpen) {
     awaitG = false;
-    const goto = { i: 'inbox', t: 'tasks', s: 'sources', c: 'settings' }[key];
+    const goto = { i: 'inbox', t: 'tasks', s: 'sources', a: 'agent', c: 'settings' }[key];
     if (goto) { event.preventDefault(); return navigate(goto); }
     return;
   }

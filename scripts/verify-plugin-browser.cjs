@@ -143,10 +143,12 @@ const assert = require('node:assert/strict');
       host.registerPage({key:'custom',title:'自定义组件',chrome:false,mount({container,host}){container.append(host.createComponent({tag:'section',className:'panel',children:[{tag:'div',className:'panel-head',children:[{tag:'h3',text:'任意组件已挂载'}]}]}))}});
       host.registerPage({key:'boom',title:'错误演示',mount(){throw Error('演示错误')}});
       host.registerCommand({id:'mark',title:'插件测试命令',run:()=>{window.__pluginCommand=true;host.toast('插件命令已执行')}});
+      host.registerTrigger({id:'calendar',title:'日历触发器',description:'验证插件触发器适配器',event:'trigger:demo:calendar'});
       host.onTrigger('task.created',context=>({summary:'处理完成：'+context.task.title}));
+      host.onTrigger('trigger:demo:calendar',context=>({summary:'触发器测试通过',payload:context.payload}));
     }`;
     const bundle = {
-      manifest: { id: 'demo', name: '测试插件', api: '^1', version: '1.0', entry: 'main.js', events: ['task.created'], description: '桌面插件验收',
+      manifest: { id: 'demo', name: '测试插件', api: '^1', version: '1.0', entry: 'main.js', events: ['task.created', 'trigger:demo:calendar'], description: '桌面插件验收',
         settings: [{ key: 'greeting', type: 'string', title: '问候语', description: '用于插件页面的问候', default: '你好' }],
         permissions: ['tasks:read'] },
       files: { 'main.js': code },
@@ -179,6 +181,14 @@ const assert = require('node:assert/strict');
       const runs = await desktop.pluginRuns('demo');
       return runs.some(run => run.event === 'task.created' && run.result?.summary === '处理完成：交给本机插件的任务');
     }, task.id);
+    await page.locator('[data-nav=sources]').click();
+    const adapter = page.locator('[data-trigger-adapter="plugin:demo:calendar"]');
+    await adapter.waitFor();
+    await adapter.getByRole('button', { name: '测试' }).click();
+    await page.waitForFunction(async () => {
+      const runs = await desktop.pluginRuns('demo');
+      return runs.some(run => run.event === 'trigger:demo:calendar' && run.result?.summary === '触发器测试通过');
+    });
     await page.locator('[data-nav=plugins]').click();
     await page.locator('.plugin-row[data-plugin-id="demo"]').waitFor();
     await page.waitForTimeout(300);
@@ -227,6 +237,7 @@ const assert = require('node:assert/strict');
     assert.deepEqual(errors, []);
     console.log(JSON.stringify({
       desktopImport: true, tabs: true, secondaryTabs: true, commandPalette: true,
+      triggerAdapter: true,
       localTrigger: true, disable: true, delete: true, webEntryHidden: true, pageErrors: 0, evidence: scratch,
     }));
   } finally {

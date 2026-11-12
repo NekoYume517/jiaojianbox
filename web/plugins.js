@@ -3,11 +3,11 @@
    (MIT; see THIRD_PARTY_NOTICES). Packages, code, config and history live on
    this computer. The browser build never executes or installs plugins. */
 (() => {
-  const HOST_API = '1.1';
-  const running = new Map(), pages = new Map(), commands = new Map(), services = new Map();
+  const HOST_API = '1.2';
+  const running = new Map(), pages = new Map(), commands = new Map(), services = new Map(), triggerAdapters = new Map();
   const pageSelection = new Map(), pluginIssues = new Map(), brokenPages = new Map();
   let entries = [], identity = '', syncing = false, lastSync = 0, pageCleanup, epoch = 0;
-  let previousTasks = new Map(), snapshotInitialized = false, renderedPage = '', renderedSelection = '', renderedTarget = null;
+  let previousTasks = new Map(), previousMessages = new Map(), snapshotInitialized = false, renderedPage = '', renderedSelection = '', renderedTarget = null;
   let issueRenderTimer = 0;
   const TRIGGER_QUEUE_LIMIT = 32;
   const RUNTIME_DEFAULTS = Object.freeze({
@@ -272,6 +272,7 @@
     for (const [id, page] of [...pages]) if (page.owner === plugin.id) removePage(id);
     for (const [id, command] of [...commands]) if (command.owner === plugin.id) commands.delete(id);
     for (const [id, service] of [...services]) if (service.owner === plugin.id) services.delete(id);
+    for (const [id, adapter] of [...triggerAdapters]) if (adapter.owner === plugin.id) triggerAdapters.delete(id);
     for (const url of plugin.urls) URL.revokeObjectURL(url);
     plugin.moduleURLs.clear();
     pluginIssues.delete(plugin.id);
@@ -286,7 +287,9 @@
     pluginIssues.clear();
     identity = '';
     previousTasks.clear();
+    previousMessages.clear();
     snapshotInitialized = false;
+    triggerAdapters.clear();
     document.querySelectorAll('[data-plugin-tab]').forEach(button => button.remove());
     pageCleanup?.();
     pageCleanup = null;
@@ -376,6 +379,69 @@
     return remove;
   }
 
+  function registerTrigger(plugin, spec) {
+    if (!spec?.id || !spec?.title) throw Error('触发器适配器需要 id 和 title');
+    const id = `plugin:${plugin.id}:${spec.id}`;
+    if (triggerAdapters.has(id)) throw Error('触发器适配器 id 重复：' + spec.id);
+    const event = String(spec.event || `trigger:${plugin.id}:${spec.id}`);
+    const adapter = {
+      ...spec,
+      id,
+      event,
+      owner: plugin.id,
+      pluginName: plugin.host?.manifest?.name || plugin.id,
+      state: 'starting',
+      lastError: '',
+    };
+    triggerAdapters.set(id, adapter);
+    const emit = payload => dispatchTrigger(event, {
+      event,
+      trigger: { id, title: spec.title, plugin: adapter.pluginName },
+      payload,
+      at: new Date().toISOString(),
+    });
+    const context = {
+      signal: plugin.controller.signal,
+      host: plugin.host,
+      emit,
+      state(value) {
+        adapter.state = String(value || 'ready');
+        window.dispatchEvent(new CustomEvent('plugin-triggers-changed', { detail: [...triggerAdapters.values()] }));
+      },
+    };
+    const boot = spec.start || spec.listen;
+    if (typeof boot === 'function') {
+      withTimeout(() => boot(context), plugin.runtime.triggerTimeoutMs, `触发器「${spec.title}」启动`)
+        .then(value => {
+          adapter.state = spec.state || 'ready';
+          if (typeof value === 'function') plugin.cleanup.push(value);
+          window.dispatchEvent(new CustomEvent('plugin-triggers-changed', { detail: [...triggerAdapters.values()] }));
+        })
+        .catch(error => {
+          adapter.state = 'error';
+          adapter.lastError = errorText(error);
+          setPluginIssue(plugin, `触发器「${spec.title}」启动`, error, false);
+          window.dispatchEvent(new CustomEvent('plugin-triggers-changed', { detail: [...triggerAdapters.values()] }));
+        });
+    } else {
+      adapter.state = 'ready';
+    }
+    const remove = async () => {
+      triggerAdapters.delete(id);
+      if (typeof spec.stop === 'function') {
+        try {
+          await withTimeout(() => spec.stop(context), plugin.runtime.triggerTimeoutMs, `触发器「${spec.title}」停止`);
+        } catch (error) {
+          console.error(`[jjb-plugin] ${plugin.id}: 触发器「${spec.title}」停止失败`, error);
+        }
+      }
+      window.dispatchEvent(new CustomEvent('plugin-triggers-changed', { detail: [...triggerAdapters.values()] }));
+    };
+    plugin.cleanup.push(remove);
+    window.dispatchEvent(new CustomEvent('plugin-triggers-changed', { detail: [...triggerAdapters.values()] }));
+    return remove;
+  }
+
   function hook(plugin, bucket, spec) {
     const item = { ...spec, owner: plugin.id };
     bucket.push(item);
@@ -420,12 +486,17 @@
         return composed;
       },
       api, navigate, render, refresh, toast,
+      request: api,
+      invoke: api,
+      apiAll(route, method = 'GET', body) { return api(route, method, body); },
       open(url) { return desktop.external(url); },
       registerPage(spec) { return registerPage(plugin, spec); },
       registerTab(spec) { return registerPage(plugin, spec); },
       registerPanel(spec) { return registerPage(plugin, spec); },
       registerCommand(spec) { return registerCommand(plugin, spec); },
       registerService(spec) { return registerService(plugin, spec); },
+      registerTrigger(spec) { return registerTrigger(plugin, spec); },
+      registerTriggerAdapter(spec) { return registerTrigger(plugin, spec); },
       service(name) {
         for (const item of services.values()) if (item.id === name || item.title === name) return item.service;
         throw Error('插件服务不存在：' + name);
@@ -547,6 +618,7 @@
         return remove;
       },
       emit(name, detail) { window.dispatchEvent(new CustomEvent(name, { detail })); },
+      dispatchTrigger(event, payload) { return dispatchTrigger(String(event), payload); },
       addStyle(css) {
         const style = document.createElement('style');
         style.textContent = css;
@@ -708,6 +780,7 @@
       }
       if (state.page.startsWith('plugin:') && !pages.has(state.page) && state.page !== 'plugins') navigate('plugins');
       uiMotion.syncNavigation(true);
+      window.dispatchEvent(new CustomEvent('plugin-triggers-changed', { detail: [...triggerAdapters.values()] }));
       if (state.page === 'plugins') render();
     } catch (error) {
       if (force) toast(errorText(error));
@@ -897,11 +970,13 @@
     // even though the event that announced it already arrived.
     const snapshot = event?.detail || state.snapshot;
     const current = new Map((snapshot.tasks || []).map(task => [task.id, task]));
+    const messages = new Map((snapshot.messages || []).map(message => [message.id, message]));
     // The first snapshot establishes the baseline. Existing tasks must not be
     // emitted as task.created, or task-agent plugins run once per historical
     // task on every login/startup.
     if (!snapshotInitialized) {
       previousTasks = current;
+      previousMessages = messages;
       snapshotInitialized = true;
       return;
     }
@@ -911,7 +986,15 @@
       else if (old.version !== task.version) dispatchTrigger('task.upsert', { event: 'task.upsert', task, previous: old });
     }
     for (const old of previousTasks.values()) if (!current.has(old.id)) dispatchTrigger('task.delete', { event: 'task.delete', task: old });
+    for (const message of messages.values()) {
+      const old = previousMessages.get(message.id);
+      if (!old) dispatchTrigger('message.received', { event: 'message.received', message });
+      else if (old.analysis_state !== message.analysis_state || old.triage !== message.triage || old.version !== message.version) {
+        dispatchTrigger('message.upsert', { event: 'message.upsert', message, previous: old });
+      }
+    }
     previousTasks = current;
+    previousMessages = messages;
   }
 
   /* ---- Manager. Schema settings draw their own form; raw JSON stays for
@@ -1100,6 +1183,8 @@
     beforeRequest, afterResponse,
     commands: () => [...commands.values()],
     services: () => [...services.values()],
+    triggerAdapters: () => [...triggerAdapters.values()],
+    invokeTrigger: (event, payload) => dispatchTrigger(String(event), payload),
     children: pageIdText => [...(pages.get(pageIdText)?.children || [])].map(child => [child.id, child.title || child.id]),
     childTitle: (pageIdText, childId) => (pages.get(pageIdText)?.children || []).find(child => child.id === childId)?.title,
     // Navigation sync runs after ordinary page mutations too. Keep it
