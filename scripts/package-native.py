@@ -57,6 +57,9 @@ finally:
  for file in resources:file.unlink(missing_ok=True)
 shutil.copytree(helper,stage/'runtime/collector-agent',dirs_exist_ok=True,ignore=shutil.ignore_patterns('__pycache__'))
 shutil.copytree(snow,stage/'runtime/snowluma',dirs_exist_ok=True,ignore=shutil.ignore_patterns('__pycache__','client'))
+wcdb=ROOT/'runtime-vendor/wcdb'
+if not (wcdb/'wcdb_api.dll').is_file():raise SystemExit('Missing runtime-vendor/wcdb/wcdb_api.dll')
+shutil.copytree(wcdb,stage/'runtime/wcdb',dirs_exist_ok=True)
 (stage/'bridge').mkdir(exist_ok=True)
 for name in ['snow-loader.mjs','snow-bridge.mjs','drag-watch.exe']:
  shutil.copy2(ROOT/'desktop'/name,stage/'bridge'/name)

@@ -6,6 +6,7 @@ import asyncio
 import contextlib
 import hashlib
 import json
+import logging
 import os
 import signal
 import sqlite3
@@ -21,9 +22,26 @@ import websockets
 
 from .normalize import qq, wechat
 
+logger = logging.getLogger(__name__)
+
 
 def emit(**value):
     print(json.dumps(value, ensure_ascii=False), flush=True)
+
+
+def _websocket_headers_kwarg():
+    """websockets 13 用 extra_headers，15+ 改名 additional_headers。"""
+    try:
+        import inspect
+        parameters = inspect.signature(websockets.connect).parameters
+        if "additional_headers" in parameters:
+            return "additional_headers"
+    except (TypeError, ValueError):
+        pass
+    return "extra_headers"
+
+
+_WS_HEADERS_KWARG = _websocket_headers_kwarg()
 
 
 class Queue:
@@ -89,17 +107,45 @@ class Queue:
 
 
 def wechat_database(config):
+    """优先 WCDB 直读，条件不满足时回退到兼容读取器。
+
+    WCDB 在加密库上原地查询，不再整库解密到私有缓存。首次运行没有
+    可用密钥时回退；兼容读取器会提取密钥并写入稳定缓存，下次启动
+    自动切回 WCDB。
+    """
+    backend = str(config.get("wechat_backend") or "wcdb").strip().lower()
+    if backend == "wcdb":
+        try:
+            from .wcdb_reader import WcdbReader
+            return WcdbReader(config)
+        except Exception as exc:
+            logger.warning("WCDB 直读不可用，回退兼容读取: %s", exc)
     # 导入 db 模块，不初始化 WeChatGUI/UIA，不改变微信窗口和登录状态。
     from .wechat_reader import open_database
     return open_database(config)
+
+
+def prefetch_names(db, ids):
+    prefetch = getattr(db, "prefetch_nicknames", None)
+    if not prefetch:
+        return
+    try:
+        prefetch([value for value in ids if value])
+    except Exception:
+        logger.debug("批量昵称预取失败", exc_info=True)
 
 
 def list_wechat(config):
     with contextlib.redirect_stdout(sys.stderr):
         db = wechat_database(config)
         sessions = db.get_sessions(limit=500)
+        prefetch_names(db, [x["username"] for x in sessions])
         result = [{"id": x["username"], "name": db.get_nickname(x["username"]) or x["username"], "source": "wechat"} for x in sessions]
-    emit(account=db.account, conversations=result)
+        backend = getattr(db, "backend", "legacy")
+        close = getattr(db, "close", None)
+        if close:
+            close()
+    emit(account=db.account, conversations=result, backend=backend)
 
 
 async def list_qq(config):
@@ -129,31 +175,41 @@ def wechat_loop(config, queue, stop):
         db=None
         stage="open-database"
         try:
-            emit(source="wechat",state="starting",message="正在打开微信数据库，初始化独立读取缓存")
+            emit(source="wechat",state="starting",message="正在打开微信数据库，初始化读取器")
             with contextlib.redirect_stdout(sys.stderr):
                 db = wechat_database(config)
+            backend = getattr(db, "backend", "legacy")
             if config.get("wechat_account") and db.account != config["wechat_account"]:
                 raise ValueError("微信登录账号发生变化")
             names = {}
             stage="initialize-conversations"
+            prefetch_names(db, list(config["wechat_chats"]))
             for chat in config["wechat_chats"]:
                 names[chat] = db.get_nickname(chat) or chat
                 key = "wechat:" + db.account + ":" + chat
                 if queue.cursor(key) is None:
                     latest = db.get_messages(chat, limit=100)
                     start = int(latest[0]["sort_seq"]) if latest else 0
+                    prefetch_names(db, [row.get("sender_username") for row in latest])
                     for row in latest:
                         if int(row["sort_seq"]) == start:
                             queue.seed(wechat(row, db.account, chat, names[chat]))
                     queue.cursor(key, start)
-            emit(source="wechat", state="connected", account=db.account,message="微信会话已连接，正在监听新消息")
+            emit(source="wechat", state="connected", account=db.account, backend=backend,
+                 message="微信会话已连接，正在监听新消息")
             stage="poll-messages"
             heartbeat=0
+            try:
+                poll_sec = float(config.get("wechat_poll_sec") or 3)
+            except (TypeError, ValueError):
+                poll_sec = 3.0
+            poll_sec = min(max(poll_sec, 1.0), 30.0)
             while not stop.is_set():
                 for chat in config["wechat_chats"]:
                     key = "wechat:" + db.account + ":" + chat
                     since = queue.cursor(key) or 0
-                    rows = db.get_new_messages(chat, since_seq=max(0, since - 1), limit=5000)
+                    rows = db.get_new_messages(chat, since_seq=max(0, since - 1), limit=500)
+                    prefetch_names(db, [row.get("sender_username") for row in rows])
                     for row in rows:
                         sender = row.get("sender_username") or ""
                         name = db.get_nickname(sender) if sender else ""
@@ -165,9 +221,11 @@ def wechat_loop(config, queue, stop):
                         else:
                             queue.add(payload, (key, int(row["sort_seq"])))
                 if time.monotonic()-heartbeat>=10:
-                    emit(source="wechat",state="connected",message="正在监听所选微信会话",chat_count=len(config["wechat_chats"]),last_scan_at=time.time())
+                    emit(source="wechat",state="connected",backend=backend,
+                         message="正在监听所选微信会话",chat_count=len(config["wechat_chats"]),
+                         poll_sec=poll_sec,last_scan_at=time.time())
                     heartbeat=time.monotonic()
-                stop.wait(1)
+                stop.wait(poll_sec)
         except Exception as exc:
             from .wechat_reader import record_error
             diagnostic=record_error(config,exc,stage)
@@ -238,7 +296,7 @@ async def qq_loop(config, queue, stopped):
 
     while not stopped.is_set():
         try:
-            async with websockets.connect(config.get("qq_ws_url", "ws://127.0.0.1:3001"), extra_headers=headers, max_size=2**20, ping_interval=20) as ws:
+            async with websockets.connect(config.get("qq_ws_url", "ws://127.0.0.1:3001"), **{_WS_HEADERS_KWARG: headers}, max_size=2**20, ping_interval=20) as ws:
                 async with httpx.AsyncClient(headers=headers, timeout=20, follow_redirects=False, trust_env=False) as client:
                     try:
                         await recover(client)

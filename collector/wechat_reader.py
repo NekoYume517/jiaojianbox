@@ -26,14 +26,38 @@ def open_database(config):
     cache_root = Path(config['_wechat_cache_root']).resolve()
     cache_root.mkdir(parents=True, exist_ok=True)
     purpose = config.get('_wechat_purpose', 'live')
+    private_name = (('live-account-'+hashlib.sha256(account.encode()).hexdigest()[:16])
+                    if purpose == 'live' else 'list-'+str(os.getpid()))
+    private = cache_root / private_name
+    # 旧实现只匹配 live-<pid>/list-<pid>，而实际目录是 live-account-<hash>，
+    # 因此账号级解密副本从未被回收。这里按前缀和最后使用时间清理。
+    now = time.time()
     for entry in cache_root.iterdir():
-        match = re.fullmatch(r'(?:live|list)-(\d+)', entry.name)
-        if match and entry.is_dir() and entry.resolve().parent == cache_root and not psutil.pid_exists(int(match[1])):
-            try:
-                shutil.rmtree(entry)
-            except OSError:
-                pass
-    private = cache_root / (('live-account-'+hashlib.sha256(account.encode()).hexdigest()[:16]) if purpose=='live' else 'list-'+str(os.getpid()))
+        try:
+            if not entry.is_dir() or entry.resolve().parent != cache_root:
+                continue
+            if entry.name == private_name:
+                continue
+            match = re.fullmatch(r'(?:live|list)-(\d+)', entry.name)
+            if match:
+                if not psutil.pid_exists(int(match[1])):
+                    shutil.rmtree(entry, ignore_errors=True)
+                continue
+            if entry.name.startswith('live-account-'):
+                if now - entry.stat().st_mtime > 7 * 86400:
+                    shutil.rmtree(entry, ignore_errors=True)
+                continue
+            if entry.name.startswith('list-'):
+                if now - entry.stat().st_mtime > 86400:
+                    shutil.rmtree(entry, ignore_errors=True)
+        except OSError:
+            continue
+    for stale in cache_root.glob('**/*.tmp*'):
+        try:
+            if now - stale.stat().st_mtime > 3600:
+                stale.unlink()
+        except OSError:
+            continue
     private.mkdir(exist_ok=True)
     lock_handle=None
     if purpose=='live':
