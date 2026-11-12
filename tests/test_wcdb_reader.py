@@ -1,4 +1,5 @@
 import json
+import threading
 from pathlib import Path
 
 import pytest
@@ -80,3 +81,32 @@ def test_row_maps_wcdb_fields():
     assert out["content"] == "hello"
     assert out["type"] == "文本"
     assert out["sort_seq"] == 1700000000 * 1_000_000 + (1200000007 % 1_000_000)
+
+
+def test_incremental_messages_paginate_past_500():
+    class Client:
+        def __init__(self):
+            self.offsets = []
+            self.rows = [
+                {
+                    "localId": local_id,
+                    "create_time": 1700000000,
+                    "message_content": str(local_id),
+                    "localType": 1,
+                }
+                for local_id in range(701, 0, -1)
+            ]
+
+        def get_messages(self, talker, limit, offset):
+            self.offsets.append(offset)
+            return self.rows[offset:offset + limit]
+
+    reader = object.__new__(wcdb_reader.WcdbReader)
+    reader.client = Client()
+    reader._lock = threading.RLock()
+    since_seq = wcdb_reader.sort_seq_for(1700000000, 100)
+
+    rows = reader.get_new_messages("chat", since_seq=since_seq)
+
+    assert [row["local_id"] for row in rows] == list(range(101, 702))
+    assert reader.client.offsets == [0, 500]

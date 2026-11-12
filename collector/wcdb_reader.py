@@ -273,17 +273,41 @@ class WcdbReader:
 
     def get_new_messages(self, chat: str, since_seq: int = 0,
                          limit: int = 500) -> list[dict]:
-        if int(since_seq or 0) <= 0:
+        since_seq = int(since_seq or 0)
+        if since_seq <= 0:
             # 首次由 wechat_loop 用 get_messages() 建立游标，这里不灌历史。
             return []
         limit = max(50, min(int(limit), 500))
-        with self._lock:
-            rows = self.client.get_messages(talker=chat, limit=limit)
+        rows = []
+        offset = 0
+        while True:
+            with self._lock:
+                page = self.client.get_messages(
+                    talker=chat, limit=limit, offset=offset,
+                )
+            if not page:
+                break
+            rows.extend(page)
+            # 原生接口按新到旧分页。翻到游标所在页即可停止，避免每次轮询
+            # 都扫描整个会话历史；持续翻页保证单次积压超过 limit 时不漏消息。
+            if any(
+                sort_seq_for(
+                    row.get("create_time") or row.get("createTime")
+                    or row.get("timestamp") or 0,
+                    row.get("localId") or row.get("local_id")
+                    or row.get("serverId") or row.get("server_id") or offset + index,
+                ) <= since_seq
+                for index, row in enumerate(page)
+            ):
+                break
+            if len(page) < limit:
+                break
+            offset += len(page)
         out = [
             self._row(row, chat, index)
             for index, row in enumerate(rows)
         ]
-        out = [item for item in out if item["sort_seq"] > int(since_seq)]
+        out = [item for item in out if item["sort_seq"] > since_seq]
         out.sort(key=lambda item: item["sort_seq"])
         return out
 
