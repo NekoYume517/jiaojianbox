@@ -136,7 +136,7 @@ const assert = require('node:assert/strict');
     await page.locator('#plugin-import').click();
     const code = `export function activate(host){
       host.registerPage({key:'page',title:'扩展入口',children:[
-        {id:'one',title:'概览',mount({container}){container.textContent='插件概览已挂载'}},
+        {id:'one',title:'概览',mount({container}){window.__pageOneMounts=(window.__pageOneMounts||0)+1;container.textContent='插件概览已挂载'}},
         {id:'two',title:'工具',mount({container}){container.textContent='插件工具已挂载'}}
       ]});
       host.registerPage({key:'direct',title:'单页入口',mount({container}){container.textContent='插件单页已挂载'}});
@@ -157,6 +157,12 @@ const assert = require('node:assert/strict');
     await row.locator('[data-plugin-enable]').check();
     await page.locator('[data-plugin-tab=demo]').first().waitFor();
     await page.locator('[data-plugin-tab=demo]').first().click();
+    await page.locator('.nav-sub').getByRole('tab', { name: '工具' }).click();
+    await page.getByText('插件工具已挂载', { exact: true }).waitFor();
+    await page.locator('.nav-sub').getByRole('tab', { name: '概览' }).click();
+    await page.getByText('插件概览已挂载', { exact: true }).waitFor();
+    await page.waitForTimeout(250);
+    assert.equal(await page.evaluate(() => window.__pageOneMounts), 2, 'navigation sync remounted a stable plugin tab');
     await page.locator('.nav-sub').getByRole('tab', { name: '工具' }).click();
     await page.getByText('插件工具已挂载', { exact: true }).waitFor();
     await page.keyboard.press('Control+K');
@@ -196,6 +202,9 @@ const assert = require('node:assert/strict');
     await page.locator('[data-nav=plugins]').click();
     await page.locator('.plugin-row[data-plugin-id="demo"]').waitFor();
     await row.locator('.plugin-debug>summary').click();
+    await page.evaluate(() => {
+      document.querySelector('.plugin-row[data-plugin-id="demo"]')?.setAttribute('data-stability-check', 'kept');
+    });
     await page.locator('[data-plugin-setting=greeting]').fill('早上好');
     await page.locator('[data-plugin-save]').click();
     await page.waitForFunction(async () => {
@@ -203,6 +212,10 @@ const assert = require('node:assert/strict');
       return record.config?.greeting === '早上好';
     });
     await page.locator('.plugin-row[data-plugin-id="demo"]').waitFor();
+    await page.waitForTimeout(200);
+    assert.equal(await page.locator('.plugin-row[data-plugin-id="demo"][data-stability-check=kept]').count(), 1, 'saving settings rebuilt the plugin manager');
+    assert.equal(await row.locator('.plugin-debug').getAttribute('open'), '');
+    assert.equal(await page.locator('[data-plugin-setting=greeting]').inputValue(), '早上好');
     await row.locator('[data-plugin-enable]').uncheck();
     await page.locator('[data-plugin-tab=demo]').first().waitFor({ state: 'detached' });
     await row.locator('[data-plugin-delete]').click();

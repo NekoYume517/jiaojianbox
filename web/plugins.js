@@ -802,9 +802,9 @@
     if (!child) return;
     pageSelection.set(currentPage, child.id);
     const selection = currentPage + ':' + child.id;
-    if (renderedPage === currentPage && renderedSelection === child.id && renderedTarget?.isConnected) return;
+    if (renderedPage === currentPage && renderedSelection === selection && renderedTarget?.isConnected) return;
     renderedPage = currentPage;
-    renderedSelection = child.id;
+    renderedSelection = selection;
     pageCleanup?.();
     pageCleanup = null;
     const target = surface(container, child.chrome === false ? child : page);
@@ -1055,8 +1055,12 @@
       if (event.target.matches('[data-plugin-save]')) {
         const values = schemaValues(entry);
         const config = values || JSON.parse(row.querySelector('[data-plugin-config]').value);
-        await desktop.pluginSet(id, { config });
-        await sync(true);
+        const saved = await desktop.pluginSet(id, { config });
+        entry.config = saved?.config && typeof saved.config === 'object'
+          ? saved.config
+          : composeConfig(entry.manifest, config);
+        const plugin = running.get(id);
+        if (plugin) applyConfig(plugin, composeConfig(entry.manifest, entry.config));
         toast('插件设置已保存');
       }
       if (event.target.matches('[data-plugin-runs]')) {
@@ -1098,7 +1102,9 @@
     services: () => [...services.values()],
     children: pageIdText => [...(pages.get(pageIdText)?.children || [])].map(child => [child.id, child.title || child.id]),
     childTitle: (pageIdText, childId) => (pages.get(pageIdText)?.children || []).find(child => child.id === childId)?.title,
-    showChild: (pageIdText, childId) => { renderedPage = ''; renderedSelection = ''; showPage(pageIdText, childId); },
+    // Navigation sync runs after ordinary page mutations too. Keep it
+    // idempotent so it never tears down and remounts the page it just drew.
+    showChild: (pageIdText, childId) => showPage(pageIdText, childId),
     title: id => pages.get(id)?.title,
   };
   window.jiaojianbox = { contract: 'jjb-plugin-1', apiVersion: HOST_API, desktopOnly: true, api, navigate, render, refresh, state, desktop: window.desktop, ui };

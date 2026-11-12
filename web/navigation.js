@@ -70,7 +70,7 @@
   }
   function visibleGroups(page,key) {
     const show=(el,yes)=>{if(el)el.hidden=!yes;};
-    if(page.startsWith('plugin:'))window.pluginUI?.showChild(page,key,node('#plugin-page'));
+    if(page.startsWith('plugin:'))window.pluginUI?.showChild(page,key);
     if(page==='settings'){
       for(const [id,,selector] of definitions.settings)show(node(selector),id===key);
       show(node('#appearance-panel-marker'),['general','quick','reminders','startup'].includes(key));
