@@ -21,6 +21,9 @@ shutil.copy2(vendor/'LICENSE',target/'LICENSE')
 snow=Path(os.environ.get('JJB_SNOWLUMA_HOME') or (root/'runtime-vendor'/'snowluma'));dest=bundle/'snowluma';dest.mkdir(exist_ok=True)
 for name in ['index.mjs','node.exe','package.json','release.json','EULA.md','PRIVACY.md'] :shutil.copy2(snow/name,dest/name)
 for name in ['native','client']:shutil.copytree(snow/name,dest/name,dirs_exist_ok=True)
+wcdb=root/'runtime-vendor'/'wcdb'
+if wcdb.is_dir():shutil.copytree(wcdb,bundle/'runtime'/'wcdb',dirs_exist_ok=True)
 files={p.relative_to(bundle).as_posix():hashlib.sha256(p.read_bytes()).hexdigest() for p in [py/'python.exe',dest/'index.mjs',dest/'node.exe',target/'db.py']}
-(bundle/'manifest.json').write_text(json.dumps({'python':'3.13-portable','snowluma':json.loads((dest/'package.json').read_text(encoding='utf-8'))['version'],'wechat_db':'1.2.9-db-only','sha256':files},indent=2),encoding='utf-8')
+if (bundle/'runtime'/'wcdb'/'wcdb_api.dll').is_file():files['runtime/wcdb/wcdb_api.dll']=hashlib.sha256((bundle/'runtime'/'wcdb'/'wcdb_api.dll').read_bytes()).hexdigest()
+(bundle/'manifest.json').write_text(json.dumps({'python':'3.13-portable','snowluma':json.loads((dest/'package.json').read_text(encoding='utf-8'))['version'],'wechat_db':'1.2.9-db-only','wcdb':'direct-read','sha256':files},indent=2),encoding='utf-8')
 print('Runtime bundle ready:',bundle)

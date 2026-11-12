@@ -270,7 +270,10 @@ def test_qq_connector_auth_filter_backfill_and_durable_queue(tmp_path,monkeypatc
     monkeypatch.setattr('collector.agent.httpx.AsyncClient',lambda **kw:original_client(transport=httpx.MockTransport(upstream),**kw))
     async def exercise():
         async def handler(ws):
-            assert ws.request_headers['Authorization']=='Bearer synthetic-token'
+            request_headers = getattr(ws, 'request_headers', None)
+            if request_headers is None:
+                request_headers = ws.request.headers
+            assert request_headers['Authorization']=='Bearer synthetic-token'
             await asyncio.sleep(.1)
             for group in (301,999):
                 await ws.send(json.dumps({'post_type':'message','self_id':101,'user_id':201,'message_type':'group','group_id':group,'message_id':501,'time':1794000001,'message':[{'type':'text','data':{'text':'提交报告'}}]}))

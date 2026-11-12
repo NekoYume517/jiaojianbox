@@ -6,6 +6,7 @@
 - [thawline/dsh-wechat-bridge](https://github.com/thawline/dsh-wechat-bridge)，源自 Yuuyuko-uu/dsh-wechat-bridge，MIT：作为微信数据库接入架构参考，没有复制 DSH 插件或发送模块。
 - 用户已有 `wxexport.py`：参考其群消息前缀、引用、卡片和分片标识处理；新采集器采用独立实现。没有打包聊天导出结果、全局媒体缓存或数据库密钥。
 - SnowLuma 是独立运行的 QQ 接入框架。本项目使用其公开 OneBot 兼容接口，不捆绑 QQ 客户端或 SnowLuma 二进制。
+- [webot](https://github.com/cancelGuMu/webot) 1.2.2（MIT）：`collector/wcdb_client.py` 与 `collector/wcdb_reader.py` 基于其 WCDB 直读实现改写；`runtime-vendor/wcdb` 下的 `WCDB.dll`、`wcdb_api.dll`、`MSVCP140.dll`、`VCRUNTIME140*.dll` 来自该项目 `native/windows`。WCDB 上游为 Tencent/WCDB（BSD-3-Clause），`wcdb_api.dll` 是配套封装；分发前按上游仓库许可与微信版本核对。
 
 
 0.2.0 私人构建包含 SnowLuma 2.1.1（原始运行时、native/client、Node；EULA.md 和 PRIVACY.md 位于 resources/runtime/snowluma）、CPython 3.13（LICENSE.txt 随包）、数据库专用 wechatauto-replica 1.2.9 衍生模块（Apache-2.0，LICENSE/NOTICE 随模块）以及 Python wheel 许可证元数据。读取模块保留原 db.py，替换包初始化和 logger，以移除 UI 自动化依赖。未包含用户配置或聊天数据。
