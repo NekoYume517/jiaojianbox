@@ -166,7 +166,7 @@ func TestOpenRestoresNewestVerifiedBackupAndAttachment(t *testing.T) {
 		t.Fatal(err)
 	}
 	sum := sha256.Sum256(attachment)
-	if _, err = s.DB.Exec("INSERT INTO attachments VALUES(?,?,?,?,?,?,?)", "recover-file", "recover-user", nil, "proof.txt", len(attachment), strings.ToLower(hexString(sum[:])), "evidence"); err != nil {
+	if _, err = s.DB.Exec("INSERT INTO attachments(id,user_id,task_id,name,size,sha256,kind) VALUES(?,?,?,?,?,?,?)", "recover-file", "recover-user", nil, "proof.txt", len(attachment), strings.ToLower(hexString(sum[:])), "evidence"); err != nil {
 		t.Fatal(err)
 	}
 	if err = s.BackupVersion(context.Background(), "v0.6.16"); err != nil {
@@ -285,7 +285,7 @@ func TestHealthyDatabaseStartsWhenUpgradeBackupCannotBeCompleted(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = s.DB.Exec("INSERT INTO attachments VALUES(?,?,?,?,?,?,?)", "missing-file", nil, nil, "missing.txt", 13, strings.Repeat("0", 64), "material"); err != nil {
+	if _, err = s.DB.Exec("INSERT INTO attachments(id,user_id,task_id,name,size,sha256,kind) VALUES(?,?,?,?,?,?,?)", "missing-file", nil, nil, "missing.txt", 13, strings.Repeat("0", 64), "material"); err != nil {
 		t.Fatal(err)
 	}
 	if err = s.Close(); err != nil {

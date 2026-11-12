@@ -37,7 +37,7 @@ func safeName(value string) string {
 }
 func (s *Server) blob(id string) string { return filepath.Join(s.Store.Root, "files", id) }
 func (s *Server) shelfItem(ctx context.Context, db store.SQL, user, id string) Object {
-	o := one(ctx, db, "SELECT a.*,s.category,s.suggestion,s.created_at,s.version FROM attachments a JOIN shelf_meta s ON s.file_id=a.id WHERE a.id=? AND a.user_id=?", id, user)
+	o := one(ctx, db, "SELECT a.*,s.category,s.suggestion,s.created_at,s.version FROM attachments a JOIN shelf_meta s ON s.file_id=a.id WHERE a.id=? AND a.user_id=? AND a.deleted_at IS NULL", id, user)
 	if text := str(o, "suggestion"); text != "" {
 		o["suggestion"] = decodeObject(text)
 	} else {
@@ -46,7 +46,7 @@ func (s *Server) shelfItem(ctx context.Context, db store.SQL, user, id string) O
 	return o
 }
 func (s *Server) shelfItems(ctx context.Context, db store.SQL, user string) []Object {
-	rows := query(ctx, db, "SELECT a.id,a.name,a.size,a.sha256,a.kind,a.task_id,s.category,s.suggestion,s.created_at,s.version FROM attachments a JOIN shelf_meta s ON s.file_id=a.id WHERE a.user_id=? ORDER BY s.created_at DESC LIMIT 200", user)
+	rows := query(ctx, db, "SELECT a.id,a.name,a.size,a.sha256,a.kind,a.task_id,s.category,s.suggestion,s.created_at,s.version FROM attachments a JOIN shelf_meta s ON s.file_id=a.id WHERE a.user_id=? AND a.deleted_at IS NULL ORDER BY s.created_at DESC LIMIT 200", user)
 	for _, r := range rows {
 		if str(r, "suggestion") != "" {
 			r["suggestion"] = decodeObject(str(r, "suggestion"))
@@ -93,7 +93,7 @@ func (s *Server) assign(ctx context.Context, db store.SQL, user, id, target, cat
 	return s.shelfItem(ctx, db, user, id)
 }
 func (s *Server) taskQuota(ctx context.Context, db store.SQL, id, excluded string, size int64) {
-	totals := one(ctx, db, "SELECT COUNT(*) AS count,COALESCE(SUM(size),0) AS size FROM attachments WHERE task_id=? AND id<>?", id, excluded)
+	totals := one(ctx, db, "SELECT COUNT(*) AS count,COALESCE(SUM(size),0) AS size FROM attachments WHERE task_id=? AND id<>? AND deleted_at IS NULL", id, excluded)
 	if num(totals, "count") >= 50 || num(totals, "size")+float64(size) > 200<<20 {
 		fail(413, "每项待办最多 50 个文件，总大小不超过 200 MB")
 	}
@@ -165,11 +165,11 @@ func (s *Server) fileRoutes() {
 	})
 	s.route("POST /api/shelf", "owner", func(r request) any {
 		return s.uploadFile(r, func(db store.SQL, f Object) any {
-			totals := one(r.Context(), db, "SELECT COUNT(*) AS count,COALESCE(SUM(size),0) AS size FROM attachments WHERE user_id=? AND task_id IS NULL", r.User)
+			totals := one(r.Context(), db, "SELECT COUNT(*) AS count,COALESCE(SUM(size),0) AS size FROM attachments WHERE user_id=? AND task_id IS NULL AND deleted_at IS NULL", r.User)
 			if num(totals, "count") >= 200 || num(totals, "size")+num(f, "size") > 1<<30 {
 				fail(413, "待整理文件空间已满，请先整理或清理")
 			}
-			exec(r.Context(), db, "INSERT INTO attachments VALUES(?,?,?,?,?,?,?)", f["id"], r.User, nil, f["name"], f["size"], f["sha256"], "material")
+			exec(r.Context(), db, "INSERT INTO attachments(id,user_id,task_id,name,size,sha256,kind) VALUES(?,?,?,?,?,?,?)", f["id"], r.User, nil, f["name"], f["size"], f["sha256"], "material")
 			exec(r.Context(), db, "INSERT INTO shelf_meta(file_id,user_id,category,suggestion,created_at) VALUES(?,?,?,?,?)", f["id"], r.User, "inbox", nil, store.Now())
 			event(r.Context(), db, r.User, "shelf.upsert", str(f, "id"))
 			return s.shelfItem(r.Context(), db, r.User, str(f, "id"))
@@ -190,7 +190,7 @@ func (s *Server) fileRoutes() {
 		s.transaction(r.Context(), func(db store.SQL) any {
 			f := s.shelfItem(r.Context(), db, r.User, id)
 			version(f, r.integer("version", 0, 1, 1e9))
-			exec(r.Context(), db, "DELETE FROM attachments WHERE id=? AND user_id=?", id, r.User)
+			exec(r.Context(), db, "UPDATE attachments SET deleted_at=? WHERE id=? AND user_id=? AND deleted_at IS NULL", store.Now(), id, r.User)
 			if target := str(f, "task_id"); target != "" {
 				t := s.task(r.Context(), db, r.User, target)
 				t["version"] = num(t, "version") + 1
@@ -200,11 +200,10 @@ func (s *Server) fileRoutes() {
 			event(r.Context(), db, r.User, "shelf.delete", id)
 			return nil
 		})
-		os.Remove(s.blob(id))
-		return Object{"ok": true}
+		return Object{"ok": true, "recoverable": true, "retention_days": 30}
 	})
 	s.route("GET /api/files/{file_id}", "owner", func(r request) any {
-		f := one(r.Context(), s.Store.DB, "SELECT * FROM attachments WHERE id=? AND user_id=?", r.PathValue("file_id"), r.User)
+		f := one(r.Context(), s.Store.DB, "SELECT * FROM attachments WHERE id=? AND user_id=? AND deleted_at IS NULL", r.PathValue("file_id"), r.User)
 		path := s.blob(str(f, "id"))
 		if _, err := os.Stat(path); err != nil {
 			fail(404, "文件不存在")
@@ -225,7 +224,7 @@ func (s *Server) fileRoutes() {
 			t := s.task(r.Context(), db, r.User, target)
 			version(t, r.integer("version", 0, 1, 1e9))
 			s.taskQuota(r.Context(), db, target, "", int64(num(f, "size")))
-			exec(r.Context(), db, "INSERT INTO attachments VALUES(?,?,?,?,?,?,?)", f["id"], r.User, target, f["name"], f["size"], f["sha256"], kind)
+			exec(r.Context(), db, "INSERT INTO attachments(id,user_id,task_id,name,size,sha256,kind) VALUES(?,?,?,?,?,?,?)", f["id"], r.User, target, f["name"], f["size"], f["sha256"], kind)
 			t["version"] = num(t, "version") + 1
 			delete(t, "attachments")
 			s.updateTask(r.Context(), db, r.User, t)
@@ -236,16 +235,15 @@ func (s *Server) fileRoutes() {
 		s.transaction(r.Context(), func(db store.SQL) any {
 			t := s.task(r.Context(), db, r.User, r.PathValue("task_id"))
 			version(t, r.integer("version", 0, 1, 1e9))
-			one(r.Context(), db, "SELECT id FROM attachments WHERE id=? AND user_id=? AND task_id=?", r.PathValue("file_id"), r.User, t["id"])
-			exec(r.Context(), db, "DELETE FROM attachments WHERE id=? AND user_id=?", r.PathValue("file_id"), r.User)
+			one(r.Context(), db, "SELECT id FROM attachments WHERE id=? AND user_id=? AND task_id=? AND deleted_at IS NULL", r.PathValue("file_id"), r.User, t["id"])
+			exec(r.Context(), db, "UPDATE attachments SET deleted_at=? WHERE id=? AND user_id=?", store.Now(), r.PathValue("file_id"), r.User)
 			t["version"] = num(t, "version") + 1
 			delete(t, "attachments")
 			s.updateTask(r.Context(), db, r.User, t)
 			event(r.Context(), db, r.User, "shelf.delete", r.PathValue("file_id"))
 			return nil
 		})
-		os.Remove(s.blob(r.PathValue("file_id")))
-		return Object{"ok": true}
+		return Object{"ok": true, "recoverable": true, "retention_days": 30}
 	})
 	for _, mode := range []string{"rename", "kind"} {
 		suffix := ""
@@ -258,7 +256,7 @@ func (s *Server) fileRoutes() {
 			return s.transaction(r.Context(), func(db store.SQL) any {
 				t := s.task(r.Context(), db, r.User, r.PathValue("task_id"))
 				version(t, int(num(b, "version")))
-				one(r.Context(), db, "SELECT id FROM attachments WHERE id=? AND user_id=? AND task_id=?", r.PathValue("file_id"), r.User, t["id"])
+				one(r.Context(), db, "SELECT id FROM attachments WHERE id=? AND user_id=? AND task_id=? AND deleted_at IS NULL", r.PathValue("file_id"), r.User, t["id"])
 				if mode == "rename" {
 					if str(b, "name") == "" {
 						fail(422, "请输入文件名")

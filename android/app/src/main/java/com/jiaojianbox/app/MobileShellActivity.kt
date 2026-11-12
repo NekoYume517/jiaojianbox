@@ -19,6 +19,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
@@ -53,6 +54,7 @@ class MobileShellActivity : ComponentActivity() {
     private var exporting: Export? = null
     private var calendarBusy = false
     private var lastCalendarSync = 0L
+    private var pendingTaskId = ""
     private val chooseFile = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         fileCallback?.onReceiveValue(WebChromeClient.FileChooserParams.parseResult(result.resultCode, result.data)); fileCallback = null
     }
@@ -72,6 +74,9 @@ class MobileShellActivity : ComponentActivity() {
     private val calendarPermission = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { result ->
         if (result.values.all { it }) loadCalendars() else message = "日历权限未开启，文件与网页功能仍可正常使用。"
     }
+    private val notificationPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (!granted) message = "通知权限未开启；仍会同步日历提醒。"
+    }
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState); AppContext.init(this); incoming(intent)
         androidx.core.view.WindowCompat.setDecorFitsSystemWindows(window, false)
@@ -79,7 +84,13 @@ class MobileShellActivity : ComponentActivity() {
         window.navigationBarColor = android.graphics.Color.TRANSPARENT
         if (android.os.Build.VERSION.SDK_INT >= 29) window.isNavigationBarContrastEnforced = false
         if (android.os.Build.VERSION.SDK_INT >= 28) window.navigationBarDividerColor = android.graphics.Color.TRANSPARENT
-        lifecycleScope.launch { session = store.session.first(); loaded = true; loadCalendars() }
+        lifecycleScope.launch {
+            session = store.session.first(); loaded = true; loadCalendars()
+            val current = session
+            if (current != null && !current.offline && android.os.Build.VERSION.SDK_INT >= 33 &&
+                ContextCompat.checkSelfPermission(this@MobileShellActivity, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+            ) notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
         setContent {
             val dark = webDark ?: androidx.compose.foundation.isSystemInDarkTheme()
             SideEffect {
@@ -196,6 +207,10 @@ class MobileShellActivity : ComponentActivity() {
                 })
                 val origin = Uri.parse(current.server).buildUpon().path("").query(null).fragment(null).build()
                 view.postWebMessage(WebMessage("jjb-bridge", arrayOf(ports[1])), origin)
+                pendingTaskId.takeIf { it.isNotBlank() }?.let { id ->
+                    pendingTaskId = ""
+                    view.evaluateJavascript("window.jjbOpenTask && window.jjbOpenTask(${JSONObject.quote(id)})", null)
+                }
             }
             override fun onReceivedError(view: WebView, request: WebResourceRequest, error: WebResourceError) { if (request.isForMainFrame) { loading = false; message = "页面加载失败：${error.description}" } }
         }
@@ -273,6 +288,11 @@ class MobileShellActivity : ComponentActivity() {
     @Suppress("DEPRECATION") private fun incoming(intent: Intent?) {
         val uris = when (intent?.action) { Intent.ACTION_SEND -> listOfNotNull(intent.getParcelableExtra<Uri>(Intent.EXTRA_STREAM)); Intent.ACTION_SEND_MULTIPLE -> intent.getParcelableArrayListExtra<Uri>(Intent.EXTRA_STREAM).orEmpty(); Intent.ACTION_VIEW -> listOfNotNull(intent.data); else -> emptyList() }
         sharedUris = (sharedUris + uris.filter { it.scheme == "content" }).distinct()
+        pendingTaskId = intent?.getStringExtra("task_id")?.takeIf { it.isNotBlank() } ?: pendingTaskId
+        if (pendingTaskId.isNotBlank() && web != null) {
+            val id = pendingTaskId; pendingTaskId = ""
+            web?.evaluateJavascript("window.jjbOpenTask && window.jjbOpenTask(${JSONObject.quote(id)})", null)
+        }
     }
     override fun onDestroy() { webDialog?.result?.cancel(); bridge?.close(); bridge = null; fileCallback?.onReceiveValue(null); fileCallback = null; web?.destroy(); web = null; super.onDestroy() }
     private fun bytes(value: Long): String = when { value >= 1024 * 1024 -> String.format(Locale.ROOT, "%.1f MB", value / 1048576.0); value >= 1024 -> String.format(Locale.ROOT, "%.1f KB", value / 1024.0); else -> "$value B" }

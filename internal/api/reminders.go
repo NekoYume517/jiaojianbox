@@ -17,13 +17,13 @@ func (s *Server) reminderRoutes() {
 }
 
 func (s *Server) reminderTasks(ctx context.Context, user string) Object {
-	rows := query(ctx, s.Store.DB, "SELECT payload FROM tasks WHERE user_id=? ORDER BY rowid DESC", user)
+	rows := query(ctx, s.Store.DB, "SELECT payload FROM tasks WHERE user_id=? AND deleted_at IS NULL ORDER BY rowid DESC", user)
 	tasks := make([]Object, 0, len(rows))
 	for _, row := range rows {
 		task := store.Payload(row)
 		id := str(task, "id")
 		materialCount := num(first(query(ctx, s.Store.DB,
-			"SELECT COUNT(*) AS count FROM attachments WHERE task_id=? AND user_id=? AND kind='material'",
+			"SELECT COUNT(*) AS count FROM attachments WHERE task_id=? AND user_id=? AND kind='material' AND deleted_at IS NULL",
 			id, user)), "count")
 		tasks = append(tasks, Object{
 			"id":                id,

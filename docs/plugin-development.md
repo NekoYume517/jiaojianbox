@@ -2,7 +2,7 @@
 
 插件页面和自定义组件必须遵循 [UI、控件与动效规范](ui-design-standard.md)，复用宿主主题、密度、共享 tab 高亮与动效运行时，不另建一套视觉体系。
 
-契约版本：`jjb-plugin-1`（宿主 API `1.0`，manifest 声明 `api: "^1"`）。内核、页面 slot、声明式设置和错误边界遵循 Magpie 的设计（MIT，见 THIRD_PARTY_NOTICES）。插件只在桌面端运行；网页端不显示插件入口，也不执行或存储插件。任何登录用户都可以导入、启用、停用、升级、删除和开发插件。插件是完整信任的本机扩展，可以访问当前页面、应用 API 和本机工具，因此请只安装来自可信开发者的插件。
+契约版本：`jjb-plugin-1`（宿主 API `1.1`，manifest 声明 `api: "^1"`）。内核、页面 slot、声明式设置和错误边界遵循 Magpie 的设计（MIT，见 THIRD_PARTY_NOTICES）。插件只在桌面端运行；网页端不显示插件入口，也不执行或存储插件。任何登录用户都可以导入、启用、停用、升级、删除和开发插件。插件是完整信任的本机扩展，可以访问当前页面、应用 API 和本机工具，因此请只安装来自可信开发者的插件。
 
 ## 1. 安装包
 
@@ -30,7 +30,18 @@ my-plugin.zip
       { "key": "enabled", "type": "bool", "title": "默认启用", "default": false }
     ],
     "permissions": ["tasks:read", "tools:exec"],
-    "events": ["task.created", "*"]
+    "events": ["task.created", "*"],
+    "runtime": {
+      "activationTimeoutMs": 8000,
+      "mountTimeoutMs": 15000,
+      "triggerTimeoutMs": 300000,
+      "hookTimeoutMs": 2500,
+      "eventTimeoutMs": 1000,
+      "commandTimeoutMs": 30000,
+      "serviceTimeoutMs": 10000,
+      "failureThreshold": 3,
+      "cooldownMs": 30000
+    }
   },
   "files": {
     "main.js": "export function activate(host) { /* ... */ }"
@@ -45,8 +56,10 @@ my-plugin.zip
 - `settings` 是声明式设置 schema。`key` 使用小写字母、数字和短横线；`type` 支持 `bool`、`number`、`string`；`string` 可带 `enum`，`number` 可带 `min` / `max`。插件页会根据 schema 自动生成设置表单，配置按 schema 校验合成：默认值在前，类型或枚举不符的值被丢弃。
 - `permissions` 是声明的能力列表（如 `tasks:read`、`messages:read`、`tools:exec`），会在插件卡片上公示。契约目前是完整信任模型，权限声明用于向用户说明插件会接触的数据。
 - `events` 声明触发器：`task.created`、`task.upsert`、`task.delete`，`*` 表示全部。
+- `runtime` 可覆盖故障隔离时限，字段均可省略。首次加载快照只建立基线，不会把历史待办当成新任务逐条触发。
+- `assets` 可声明非扩展名资源类型，例如 `{ "styles.css": "css" }`；普通 `.js` / `.mjs` / `.json` 模块无需声明。
 
-ZIP 必须在根目录包含 `manifest.json`。单文件最大 4 MB，解压后最大 16 MB；路径不能包含 `..`、绝对路径或反斜杠。入口是一个 ES module，导出 `activate(host)` 或默认函数。代码只允许 UTF-8 文本；需要二进制资产时用 base64 编码并自行解码。
+ZIP 必须在根目录包含 `manifest.json`。单文件最大 4 MB，解压后最大 16 MB；路径不能包含 `..`、绝对路径或反斜杠。入口是一个 ES module，导出 `activate(host)` 或默认函数。入口支持 `import './lib/util.js'`、`export ... from './x.js'` 和 `import('./x.js')` 一类包内相对模块；JSON 模块会转换为默认导出。CSS 请使用 `host.addStyle(host.asset('styles.css'))`，不要作为 JavaScript 模块导入。代码只允许 UTF-8 文本；需要二进制资产时用 base64 编码并自行解码。
 
 导入相同 `id` 会替换代码，`revision` 加一；本机配置、数据和历史执行记录保留，配置会按新 manifest 的 schema 重新合成。新代码默认停用，需要重新启用。删除插件会删除本机代码、配置、数据和执行记录。
 
@@ -58,7 +71,7 @@ ZIP 必须在根目录包含 `manifest.json`。单文件最大 4 MB，解压后�
 export function activate(host) {
   host.id;              // 插件 id
   host.contract;        // 'jjb-plugin-1'
-  host.apiVersion;      // '1.0'
+  host.apiVersion;      // '1.1'
   host.manifest;        // 完整 manifest（含 settings schema）
   host.config;          // 按 schema 合成后的配置
   host.ui;              // UI 套件（见下）
@@ -92,7 +105,13 @@ host.registerPage({
 
 ### 错误边界
 
-每次页面挂载都在错误边界内运行。挂载抛错或 Promise 失败时，页面替换为「此页面已停止工作」卡片，显示错误信息和重试按钮；重试之前该页面不再执行后续挂载，其他页面不受影响。`activate` 本身抛错时插件标记为运行错误，不注册任何页面。重试会重新执行 `mount`。
+每次页面挂载都在错误边界内运行。挂载抛错、超时或 Promise 失败时，页面替换为「此页面已停止工作」卡片，显示错误信息和重试按钮；重试之前该页面不再执行后续挂载，其他页面不受影响。`activate` 抛错或超时后，插件标记为运行错误，不注册任何页面。管理器显示最近一次异常，并提供「重新加载」。
+
+请求拦截、响应钩子、命令、配置监听、渲染监听和快照监听都有独立超时。一个插件失败不会阻断其他插件或宿主 API；同一插件的请求/响应钩子连续达到 `failureThreshold` 后，仅这组 API 钩子会暂停 `cooldownMs`，超时后自动恢复。所有失败写入执行记录并包含 `durationMs`。
+
+同一插件的同类触发器会按到达顺序串行执行。前一次尚未完成时，新事件进入最多 32 条的待处理队列；超过上限会丢弃最旧事件并在插件管理器显示异常。渲染和快照监听会合并高频通知，并在当前处理器结束后补跑最新状态，不会因为旧状态还没处理完而丢掉最终快照。
+
+同步无限循环仍会阻塞 WebView 主线程，运行时无法从同一个 JavaScript 线程强行打断它。不要在插件里写没有退出条件的 `while` / `for`、同步大文件解析或持续轮询 DOM；这些工作应移入 Web Worker、服务端或 `host.exec`。在事件回调里也请自行清理 `setInterval`、`requestAnimationFrame` 和全局监听器。
 
 ### UI 套件
 
@@ -123,6 +142,8 @@ host.onConfig(config => {});                                                // �
 host.onDispose(fn);                                                          // 停用/删除时执行，逆序
 ```
 
+`registerService` 会调用服务的 `start()`，停用、升级或删除插件时调用 `stop()`。两个生命周期都有超时，失败会进入运行时诊断，不会阻塞其他插件。
+
 ### 数据与配置
 
 ```js
@@ -131,7 +152,13 @@ await host.setData('last-run', {...});
 await host.saveConfig({ endpoint: '...' });  // 按 schema 合成后持久化，触发 onConfig
 await host.record('manual', { name: 'read' });  // 执行记录
 await host.runs();
-await host.exec({ command: 'node', args: ['script.js'], cwd: '', stdin: '...' });  // 本机工具，5 分钟超时
+await host.exec({
+  command: 'node',
+  args: ['script.js'],
+  cwd: '',
+  stdin: '...',
+  timeoutMs: 300000,
+});  // 本机工具；默认 5 分钟，timeoutMs 可设置 1 秒至 1 小时
 ```
 
 ### 界面与网络
@@ -143,6 +170,7 @@ host.toast('提示'); host.open('https://example.com');
 host.addStyle('.my-plugin { color: var(--ink) }');
 host.createComponent({ tag: 'section', className: 'panel', children: [{ tag: 'h3', text: '标题' }] });
 host.asset('data.json'); host.assetURL('data.json', 'application/json');
+host.moduleURL('lib/tool.js');  // 可导入的包内 ES module URL
 host.patch(window, 'fetch', wrapped);  // 运行期补丁，停用时自动还原
 ```
 
@@ -156,5 +184,6 @@ host.patch(window, 'fetch', wrapped);  // 运行期补丁，停用时自动还�
 
 - 插件卡片显示契约版本、触发器、页面数量和权限声明；设置区按 schema 生成表单，无 schema 时保留 JSON 编辑器。
 - 「执行记录」查看每次触发的结果与错误。
+- 执行记录包含状态、耗时和错误；插件卡片显示最近异常，卡住的钩子会进入隔离期。
 - 升级只替换代码，配置、数据、执行记录保留；`revision` 递增后插件需要重新启用。
 - 停用仅停止运行；删除才清除本机数据。

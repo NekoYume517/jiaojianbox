@@ -209,7 +209,13 @@ func Run(version string) error {
 	chrome, background := desktopWindowChrome(getString(d.appearance, "theme"))
 	d.main = d.app.Window.NewWithOptions(application.WebviewWindowOptions{Name: "main", Title: windowTitle, Width: 1280, Height: 860, MinWidth: 360, MinHeight: 520, URL: "/?desktop=1", Frameless: false, EnableFileDrop: true, Hidden: silent, Windows: chrome, BackgroundColour: background})
 	d.notifier.onResponse(d.handleNotificationResponse)
-	d.app.Event.OnApplicationEvent(events.Common.ApplicationStarted, func(*application.ApplicationEvent) { d.startReminders() })
+	d.app.Event.OnApplicationEvent(events.Common.ApplicationStarted, func(*application.ApplicationEvent) {
+		d.startReminders()
+		// WebView2 creation is expensive. Build the small window while the
+		// desktop is idle instead of synchronously from Explorer's OLE drag loop.
+		d.ensureQuick()
+		d.startDragWatch()
+	})
 	d.main.OnWindowEvent(events.Common.WindowRuntimeReady, func(*application.WindowEvent) {
 		if runtime.GOOS == "windows" {
 			d.main.ExecJS(frameOnlyResizeJS)
@@ -260,7 +266,6 @@ func Run(version string) error {
 		d.requestActivation("tray-click")
 	})
 	d.app.GlobalShortcut.Register("Ctrl+Shift+Space", d.showQuick)
-	d.startDragWatch()
 	appendStartupLog(root, "application run beginning")
 	runErr := d.app.Run()
 	appendStartupLog(root, "application exited: %v", runErr)
@@ -530,6 +535,9 @@ func (d *Desktop) Invoke(method string, args []any) (any, error) {
 		out := getObjectCopy(d.prefs)
 		d.mu.Unlock()
 		if quick := d.quickWindow(); !store.Bool(out, "enabled") && quick != nil {
+			d.mu.Lock()
+			d.pinned = false
+			d.mu.Unlock()
 			quick.Hide()
 		}
 		d.emit("quick-preferences", out)
@@ -602,6 +610,9 @@ func (d *Desktop) Invoke(method string, args []any) (any, error) {
 		}
 		return nil, nil
 	case "quickHide":
+		d.mu.Lock()
+		d.pinned = false
+		d.mu.Unlock()
 		if quick := d.quickWindow(); quick != nil {
 			quick.Hide()
 		}

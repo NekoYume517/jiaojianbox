@@ -2,6 +2,7 @@ const assert=require('node:assert/strict');
 module.exports=async(page,browser,scratch)=>{
  const share=await page.evaluate(async()=>{const t=await api('/api/tasks','POST',{title:'班级截图收集'});const s=await api('/api/shares','POST',{task_id:t.id,purpose:'collect'});await refresh();await navigate('shares');await shares.refresh();return s});
  await page.locator(`[data-collection-studio="${share.id}"]`).click();
+ await page.locator('[data-studio-tab=fields]').click();
  await page.locator('[data-add-field=text]').click();
  await page.locator('[data-prop=label]').fill('姓名');
  await page.locator('[data-prop=required]').check();

@@ -458,7 +458,7 @@ func usage(metrics, usage Object) {
 	}
 	metrics["usage_reported"] = metrics["total_tokens"] != nil
 }
-func (s *Server) tools(ctx context.Context, user, name string, args Object) Object {
+func (s *Server) tools(ctx context.Context, user, messageID, name string, args Object) Object {
 	switch name {
 	case "get_now":
 		return Object{"now": time.Now().In(zone).Format(time.RFC3339Nano), "timezone": "Asia/Shanghai", "weekday": time.Now().In(zone).Weekday().String()}
@@ -495,6 +495,15 @@ func (s *Server) tools(ctx context.Context, user, name string, args Object) Obje
 			messages = append(messages, compactMessage(m))
 		}
 		return Object{"messages": messages}
+	case "append_to_task":
+		taskID := str(args, "task_id")
+		if taskID == "" {
+			return Object{"error": "缺少待办 ID"}
+		}
+		result := s.transaction(ctx, func(db store.SQL) any {
+			return s.appendToTask(ctx, db, user, messageID, taskID, args)
+		})
+		return object(result)
 	}
 	return Object{"error": "未知工具"}
 }

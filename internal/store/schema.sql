@@ -58,3 +58,21 @@
 
 CREATE TABLE IF NOT EXISTS collection_entries(id TEXT PRIMARY KEY REFERENCES share_submissions(id) ON DELETE CASCADE,share_id TEXT NOT NULL,browser_hash TEXT NOT NULL,payload TEXT NOT NULL,updated_at TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS ix_collection_entries ON collection_entries(share_id,browser_hash);
+
+CREATE TABLE IF NOT EXISTS collection_exemptions(
+    share_id TEXT NOT NULL REFERENCES shares(id) ON DELETE CASCADE,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    identity_key TEXT NOT NULL,
+    reason TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL,
+    PRIMARY KEY(share_id,identity_key));
+CREATE INDEX IF NOT EXISTS ix_collection_exemptions_owner ON collection_exemptions(user_id,share_id);
+
+CREATE TABLE IF NOT EXISTS task_templates(
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    payload TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS ix_task_templates_owner ON task_templates(user_id,updated_at);

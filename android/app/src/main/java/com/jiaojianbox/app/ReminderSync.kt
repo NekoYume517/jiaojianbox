@@ -41,6 +41,7 @@ object ReminderSync {
 
     /** 核心：把待办提醒时间对齐到系统日历。需要已授予日历权限。 */
     fun syncAll(context: Context, tasks: List<Task>) {
+        for (task in tasks) NotificationScheduler.syncTask(context, task)
         if (!CalendarReminders.available(context)) return
         val calendars = CalendarReminders.list(context)
         if (calendars.isEmpty()) return
@@ -52,7 +53,10 @@ object ReminderSync {
                     runCatching { ZonedDateTime.parse(arr.getString(i)).toInstant().toEpochMilli() }.getOrNull()
                 }
             }.orEmpty()
-            if (task.status in listOf("submitted", "archived")) continue
+            if (task.status in listOf("submitted", "archived")) {
+                if (existing.containsKey(task.id)) CalendarReminders.remove(context, task.id)
+                continue
+            }
             if (reminders.isEmpty()) {
                 // 云端没有提醒：若日历里有旧事件则清掉
                 if (existing.containsKey(task.id)) CalendarReminders.remove(context, task.id)

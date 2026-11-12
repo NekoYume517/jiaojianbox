@@ -49,7 +49,13 @@ func (d *Desktop) ensureQuick() *application.WebviewWindow {
 	}
 	d.quick = d.app.Window.NewWithOptions(options)
 	quick := d.quick
-	quick.OnWindowEvent(events.Common.WindowClosing, func(e *application.WindowEvent) { e.Cancel(); quick.Hide() })
+	quick.OnWindowEvent(events.Common.WindowClosing, func(e *application.WindowEvent) {
+		e.Cancel()
+		d.mu.Lock()
+		d.pinned = false
+		d.mu.Unlock()
+		quick.Hide()
+	})
 	quick.OnWindowEvent(events.Common.WindowDidMove, func(*application.WindowEvent) {
 		x, y := quick.Position()
 		d.positionMu.Lock()
@@ -78,21 +84,30 @@ func (d *Desktop) showQuick() { d.showQuickMode(true) }
 func (d *Desktop) showQuickMode(manual bool) {
 	d.mu.Lock()
 	enabled := store.Bool(d.prefs, "enabled")
-	if manual {
-		d.pinned = true
-	}
 	d.mu.Unlock()
 	if !enabled {
 		return
 	}
 	quick := d.ensureQuick()
-	quick.Show()
 	if manual {
+		quick.Show()
 		quick.Focus()
+		// Explicit user actions benefit from current data. Automatic Explorer
+		// drags must stay off the UI and database hot path.
+		d.emit("quick-refresh", nil)
+	} else {
+		// Explorer's OLE drag loop owns foreground state. A normal SW_SHOW can
+		// make the drag animation hitch while Windows switches activation.
+		showQuickNoActivate(quick)
 	}
-	d.emit("quick-refresh", nil)
 }
 func (d *Desktop) startDragWatch() {
+	d.mu.Lock()
+	if d.drag != nil {
+		d.mu.Unlock()
+		return
+	}
+	d.mu.Unlock()
 	if _, err := os.Stat(d.bridge("drag-watch.exe")); err != nil {
 		return
 	}
@@ -121,7 +136,7 @@ func (d *Desktop) startDragWatch() {
 					d.mu.Lock()
 					pinned := d.pinned
 					d.mu.Unlock()
-					if quick := d.quickWindow(); !pinned && quick != nil && !quick.IsFocused() {
+					if quick := d.quickWindow(); !pinned && quick != nil && !cursorWithin(quick) {
 						quick.Hide()
 					}
 				}()

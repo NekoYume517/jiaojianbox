@@ -68,6 +68,11 @@ func hideProcess(cmd *exec.Cmd)                               {}
 func launchInstaller(path string) error                       { return exec.Command(path).Start() }
 func cursorWithin(window *application.WebviewWindow) bool     { return window != nil && window.IsFocused() }
 func activateNativeWindow(*application.WebviewWindow)         {}
+func showQuickNoActivate(window *application.WebviewWindow) {
+	if window != nil {
+		window.Show()
+	}
+}
 
 func systemProxyFor(request *http.Request) (*url.URL, error) {
 	return http.ProxyFromEnvironment(request)

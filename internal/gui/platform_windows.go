@@ -279,6 +279,21 @@ func activateNativeWindow(window *application.WebviewWindow) {
 	user32.NewProc("SetForegroundWindow").Call(hwnd)
 }
 
+func showQuickNoActivate(window *application.WebviewWindow) {
+	if window == nil || window.NativeWindow() == nil {
+		return
+	}
+	const (
+		gwlExStyle     = ^uintptr(19) // -20 as an unsigned syscall word
+		wsExNoActivate = 0x08000000
+	)
+	hwnd := uintptr(window.NativeWindow())
+	style, _, _ := user32.NewProc("GetWindowLongPtrW").Call(hwnd, gwlExStyle)
+	user32.NewProc("SetWindowLongPtrW").Call(hwnd, gwlExStyle, style|wsExNoActivate)
+	window.Show()
+	user32.NewProc("SetWindowLongPtrW").Call(hwnd, gwlExStyle, style)
+}
+
 func cursorWithin(window *application.WebviewWindow) bool {
 	if window == nil || !window.IsVisible() {
 		return false

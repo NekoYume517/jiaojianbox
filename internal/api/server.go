@@ -195,6 +195,11 @@ func New(database *store.Store, assets fs.FS, version string) (*Server, error) {
 		s.transferRoutes()
 		s.statisticsRoutes()
 		s.shareRoutes()
+		s.templateRoutes()
+		s.recycleRoutes()
+		s.searchRoutes()
+		s.previewRoutes()
+		s.collectionStatusRoutes()
 		s.route("GET /health", "", func(r request) any { return Object{"status": "ok", "version": s.Version, "runtime": "go"} })
 		s.Mux.HandleFunc("GET /authorize", func(w http.ResponseWriter, r *http.Request) {
 			asset, err := s.Assets.Open("authorize.html")
@@ -227,6 +232,7 @@ func New(database *store.Store, assets fs.FS, version string) (*Server, error) {
 		})
 		s.Mux.Handle("GET /", http.FileServerFS(s.Assets))
 		exec(context.Background(), s.Store.DB, "UPDATE analysis_jobs SET state='queued' WHERE state='running'")
+		s.purgeExpiredRecycle(context.Background(), s.Store.DB, "")
 		return nil
 	})
 	if err != nil {
@@ -236,6 +242,8 @@ func New(database *store.Store, assets fs.FS, version string) (*Server, error) {
 	s.cancel = cancel
 	s.workers.Add(1)
 	go func() { defer s.workers.Done(); s.analyzeWorker(ctx) }()
+	s.workers.Add(1)
+	go s.recycleWorker(ctx)
 	return s, nil
 }
 func (s *Server) Close() {
@@ -264,7 +272,7 @@ func (s *Server) route(pattern, access string, fn func(request) any) {
 				status = f.Status
 				detail = f.Detail
 			} else {
-				log.Printf("request failed: %s %s", r.Method, r.URL.Path)
+				log.Printf("request failed: %s %s: %v", r.Method, r.URL.Path, err)
 			}
 			writeJSON(w, status, Object{"detail": detail})
 			return

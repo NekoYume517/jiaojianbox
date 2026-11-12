@@ -133,7 +133,7 @@ func (s *Server) runAnalysis(ctx context.Context, user string, body Object, p pr
 	}
 	notify(p, Object{"stage": "context", "context_count": len(contexts), "target_characters": len([]rune(str(target, "text")))})
 	tasks := []Object{}
-	for _, row := range query(ctx, s.Store.DB, "SELECT payload FROM tasks WHERE user_id=? ORDER BY rowid DESC LIMIT 40", user) {
+	for _, row := range query(ctx, s.Store.DB, "SELECT payload FROM tasks WHERE user_id=? AND deleted_at IS NULL ORDER BY rowid DESC LIMIT 40", user) {
 		tasks = append(tasks, store.Payload(row))
 	}
 	compact := []Object{}
@@ -153,6 +153,9 @@ func (s *Server) runAnalysis(ctx context.Context, user string, body Object, p pr
 	check(json.Unmarshal([]byte(toolSchemaJSON), &schemas))
 	tools := []Object{}
 	for name, schema := range schemas {
+		if name == "append_to_task" && !boolean(config, "auto_task") {
+			continue
+		}
 		schema["name"] = name
 		tools = append(tools, Object{"type": "function", "function": schema})
 	}
@@ -165,6 +168,7 @@ func (s *Server) runAnalysis(ctx context.Context, user string, body Object, p pr
 		attempt(func() any { s.recordLLM(safe, user, "notification", config, started, metrics, success); return nil })
 	}()
 	text := ""
+	appendedTaskID := ""
 	for round := 0; round < 3; round++ {
 		call := s.chat(ctx, config, key, conversation, tools, p, func(part Object) { metrics = mergeMetrics(metrics, part) })
 		if len(call.Calls) > 0 {
@@ -173,7 +177,11 @@ func (s *Server) runAnalysis(ctx context.Context, user string, body Object, p pr
 				fn := object(c["function"])
 				var args Object
 				json.Unmarshal([]byte(str(fn, "arguments")), &args)
-				conversation = append(conversation, Object{"role": "tool", "tool_call_id": c["id"], "content": store.JSON(s.tools(ctx, user, str(fn, "name"), args))})
+				toolResult := s.tools(ctx, user, id, str(fn, "name"), args)
+				if str(fn, "name") == "append_to_task" && boolean(toolResult, "appended") && appendedTaskID == "" {
+					appendedTaskID = str(toolResult, "task_id")
+				}
+				conversation = append(conversation, Object{"role": "tool", "tool_call_id": c["id"], "content": store.JSON(toolResult)})
 			}
 			continue
 		}
@@ -195,41 +203,69 @@ func (s *Server) runAnalysis(ctx context.Context, user string, body Object, p pr
 		contextIDs = append(contextIDs, str(m, "id"))
 	}
 	result["context_ids"] = contextIDs
+	if appendedTaskID != "" {
+		result["classification"] = "actionable"
+		if num(result, "confidence") < .8 {
+			result["confidence"] = .8
+		}
+		result["duplicate"] = true
+		result["duplicate_of"] = appendedTaskID
+	}
 	var created Object
+	action := ""
 	s.transaction(ctx, func(db store.SQL) any {
 		current := store.Payload(one(ctx, db, "SELECT payload FROM messages WHERE id=? AND user_id=?", id, user))
 		if boolean(config, "auto_task") && str(result, "classification") == "actionable" && num(result, "confidence") >= .8 && str(current, "triage") != "ignored" {
 			clientID := "auto-" + id
-			old := first(query(ctx, db, "SELECT id FROM tasks WHERE user_id=? AND client_id=?", user, clientID))
+			old := first(query(ctx, db, "SELECT id FROM tasks WHERE user_id=? AND client_id=? AND deleted_at IS NULL", user, clientID))
 			if duplicateID := str(result, "duplicate_of"); boolean(result, "duplicate") && duplicateID != "" {
-				if row := first(query(ctx, db, "SELECT id FROM tasks WHERE id=? AND user_id=?", duplicateID, user)); row != nil {
+				if row := first(query(ctx, db, "SELECT id FROM tasks WHERE id=? AND user_id=? AND deleted_at IS NULL", duplicateID, user)); row != nil {
 					old = row
 				}
 			}
 			if old != nil {
+				patch := appendPatchFromAnalysis(result)
+				if appendedTaskID != "" {
+					action = "appended"
+				} else if appendPatchHasChanges(patch) {
+					appended := s.appendToTask(ctx, db, user, id, str(old, "id"), patch)
+					if boolean(appended, "appended") {
+						action = "appended"
+					} else if action == "" {
+						action = "matched"
+					}
+				} else if action == "" {
+					action = "matched"
+				}
 				created = s.task(ctx, db, user, str(old, "id"))
 			} else {
 				title := str(valid, "title")
-				recent := first(query(ctx, db, "SELECT id FROM tasks WHERE user_id=? AND json_extract(payload,'$.title')=? AND json_extract(payload,'$.created_at')>=? ORDER BY rowid DESC LIMIT 1", user, title, time.Now().Add(-time.Minute).UTC().Format(time.RFC3339Nano)))
+				recent := first(query(ctx, db, "SELECT id FROM tasks WHERE user_id=? AND deleted_at IS NULL AND json_extract(payload,'$.title')=? AND json_extract(payload,'$.created_at')>=? ORDER BY rowid DESC LIMIT 1", user, title, time.Now().Add(-time.Minute).UTC().Format(time.RFC3339Nano)))
 				if recent != nil {
 					created = s.task(ctx, db, user, str(recent, "id"))
+					action = "matched"
 				} else {
 					t := valid
 					t["title"] = title
 					t["description"] = str(target, "text")
+					t["source_messages"] = []any{taskSourceMessage(target)}
+					t["append_log"] = []any{}
 					t["id"] = store.ID()
 					t["version"] = 1
 					t["client_id"] = clientID
 					t["source_message_id"] = id
 					t["created_at"] = store.Now()
 					t["updated_at"] = t["created_at"]
-					exec(ctx, db, "INSERT INTO tasks VALUES(?,?,?,?,?)", t["id"], user, 1, clientID, store.JSON(t))
+					exec(ctx, db, "INSERT INTO tasks(id,user_id,version,client_id,payload) VALUES(?,?,?,?,?)", t["id"], user, 1, clientID, store.JSON(t))
 					event(ctx, db, user, "task.upsert", str(t, "id"))
 					created = s.task(ctx, db, user, str(t, "id"))
+					action = "created"
 				}
 			}
 			if created != nil {
 				current["auto_task_id"] = created["id"]
+				current["auto_task_action"] = action
+				result["auto_task_action"] = action
 			}
 		}
 		current["analysis"] = result

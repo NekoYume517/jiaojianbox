@@ -524,7 +524,21 @@ func (d *Desktop) pluginExec(id string, options Object) (any, error) {
 			args = append(args, text)
 		}
 	}
-	ctx, cancel := context.WithTimeout(d.ctx, 5*time.Minute)
+	timeout := 5 * time.Minute
+	if value, ok := options["timeoutMs"].(float64); ok && value > 0 {
+		timeout = time.Duration(value) * time.Millisecond
+	} else if value, ok := options["timeoutSeconds"].(float64); ok && value > 0 {
+		timeout = time.Duration(value) * time.Second
+	} else if value, ok := options["timeout-seconds"].(float64); ok && value > 0 {
+		timeout = time.Duration(value) * time.Second
+	}
+	if timeout < time.Second {
+		timeout = time.Second
+	}
+	if timeout > time.Hour {
+		timeout = time.Hour
+	}
+	ctx, cancel := context.WithTimeout(d.ctx, timeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, executable, args...)
 	hideProcess(cmd)

@@ -19,7 +19,7 @@ let window, collector, collectorState = { state: 'stopped' };
 const storageWrites = new Map();
 const sourceRoot = path.resolve(__dirname, '..');
 const collectorRoot = app.isPackaged ? process.resourcesPath : sourceRoot;
-const allowedAssets = new Set(['index.html', 'admin.js', 'account.js', 'legacy-transfer.js', 'app.css', 'select-arrow.css', 'app.js', 'updater.js', 'analysis.js', 'statistics.js', 'vendor/echarts.min.js', 'theme.js', 'experience.js', 'shelf.js', 'icon.svg', 'edge.html', 'edge.css', 'edge.js']);
+const allowedAssets = new Set(['index.html', 'admin.js', 'account.js', 'legacy-transfer.js', 'app.css', 'select-arrow.css', 'app.js', 'updater.js', 'analysis.js', 'statistics.js', 'productivity.js', 'vendor/echarts.min.js', 'theme.js', 'experience.js', 'shelf.js', 'icon.svg', 'edge.html', 'edge.css', 'edge.js']);
 let appearance = { theme: 'system', density: 'comfortable', textSize: 'normal' };
 let qqManager,edgeWindow,localWorkspace;
 const bridgeRoot=app.isPackaged?path.join(process.resourcesPath,"bridge"):path.join(sourceRoot,"desktop");

@@ -547,7 +547,7 @@ func (s *Server) shareRoutes() {
 				item["values"] = store.Payload(extra)
 				item["updated_at"] = extra["updated_at"]
 			}
-			item["files"] = query(r.Context(), s.Store.DB, "SELECT a.id,a.name,a.size,a.kind FROM share_submission_files m JOIN attachments a ON a.id=m.attachment_id WHERE m.submission_id=? ORDER BY a.rowid", item["id"])
+			item["files"] = query(r.Context(), s.Store.DB, "SELECT a.id,a.name,a.size,a.kind FROM share_submission_files m JOIN attachments a ON a.id=m.attachment_id WHERE m.submission_id=? AND a.deleted_at IS NULL ORDER BY a.rowid", item["id"])
 		}
 		return Object{"submissions": rows}
 	})
@@ -660,7 +660,7 @@ func (s *Server) shareRoutes() {
 		} else if shareRank(str(payload, "access")) < shareRank("download") {
 			fail(403, shareFailure("forbidden", "当前分享不允许下载文件"))
 		}
-		file := one(r.Context(), s.Store.DB, "SELECT * FROM attachments WHERE id=? AND user_id=? AND task_id=?", r.PathValue("file_id"), str(row, "user_id"), str(row, "task_id"))
+		file := one(r.Context(), s.Store.DB, "SELECT * FROM attachments WHERE id=? AND user_id=? AND task_id=? AND deleted_at IS NULL", r.PathValue("file_id"), str(row, "user_id"), str(row, "task_id"))
 		path := s.blob(str(file, "id"))
 		if _, err := os.Stat(path); err != nil {
 			fail(404, "文件不存在")
@@ -686,7 +686,7 @@ func (s *Server) shareRoutes() {
 			task := s.task(r.Context(), db, owner, taskID)
 			version(task, r.integer("version", 0, 1, 1e9))
 			s.taskQuota(r.Context(), db, taskID, "", int64(num(file, "size")))
-			exec(r.Context(), db, "INSERT INTO attachments VALUES(?,?,?,?,?,?,?)", file["id"], owner, taskID, file["name"], file["size"], file["sha256"], kind)
+			exec(r.Context(), db, "INSERT INTO attachments(id,user_id,task_id,name,size,sha256,kind) VALUES(?,?,?,?,?,?,?)", file["id"], owner, taskID, file["name"], file["size"], file["sha256"], kind)
 			task["version"] = num(task, "version") + 1
 			delete(task, "attachments")
 			s.updateTask(r.Context(), db, owner, task)
@@ -702,15 +702,14 @@ func (s *Server) shareRoutes() {
 		s.transaction(r.Context(), func(db store.SQL) any {
 			task := s.task(r.Context(), db, owner, taskID)
 			version(task, r.integer("version", 0, 1, 1e9))
-			one(r.Context(), db, "SELECT id FROM attachments WHERE id=? AND user_id=? AND task_id=?", r.PathValue("file_id"), owner, taskID)
-			exec(r.Context(), db, "DELETE FROM attachments WHERE id=?", r.PathValue("file_id"))
+			one(r.Context(), db, "SELECT id FROM attachments WHERE id=? AND user_id=? AND task_id=? AND deleted_at IS NULL", r.PathValue("file_id"), owner, taskID)
+			exec(r.Context(), db, "UPDATE attachments SET deleted_at=? WHERE id=?", store.Now(), r.PathValue("file_id"))
 			task["version"] = num(task, "version") + 1
 			delete(task, "attachments")
 			s.updateTask(r.Context(), db, owner, task)
 			return nil
 		})
-		os.Remove(s.blob(r.PathValue("file_id")))
-		return Object{"ok": true}
+		return Object{"ok": true, "recoverable": true, "retention_days": 30}
 	})
 	s.collectionRoutes()
 	s.route("POST /api/shared/{token}/submit", "", func(r request) any {
@@ -809,7 +808,7 @@ func (s *Server) shareRoutes() {
 			exec(r.Context(), db, "INSERT INTO share_submissions VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,contact=excluded.contact,note=excluded.note", submissionID, row["id"], taskID, ownerID, name, contact, note, store.Hash(r.RemoteAddr), store.Now())
 			exec(r.Context(), db, "INSERT INTO collection_entries VALUES(?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET payload=excluded.payload,updated_at=excluded.updated_at", submissionID, row["id"], store.Hash(browser), store.JSON(values), store.Now())
 			for _, file := range uploads {
-				exec(r.Context(), db, "INSERT INTO attachments VALUES(?,?,?,?,?,?,?)", file["id"], owner, taskID, file["name"], file["size"], file["sha256"], file["kind"])
+				exec(r.Context(), db, "INSERT INTO attachments(id,user_id,task_id,name,size,sha256,kind) VALUES(?,?,?,?,?,?,?)", file["id"], owner, taskID, file["name"], file["size"], file["sha256"], file["kind"])
 				exec(r.Context(), db, "INSERT INTO share_submission_files VALUES(?,?)", submissionID, file["id"])
 			}
 			if len(uploads) > 0 {

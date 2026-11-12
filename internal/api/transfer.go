@@ -245,7 +245,7 @@ func (s *Server) importManifest(ctx context.Context, user string, m Object, entr
 			}
 			t["created_at"] = fallback(str(item, "created_at"), store.Now())
 			t["updated_at"] = store.Now()
-			exec(ctx, db, "INSERT INTO tasks VALUES(?,?,?,?,?)", local.id, user, 1, nil, store.JSON(t))
+			exec(ctx, db, "INSERT INTO tasks(id,user_id,version,client_id,payload) VALUES(?,?,?,?,?)", local.id, user, 1, nil, store.JSON(t))
 			event(ctx, db, user, "task.upsert", local.id)
 			counts["tasks"] = num(counts, "tasks") + 1
 		}
@@ -264,7 +264,7 @@ func (s *Server) importManifest(ctx context.Context, user string, m Object, entr
 			} else {
 				delete(item, "auto_task_id")
 			}
-			exec(ctx, db, "INSERT INTO messages VALUES(?,?,?,?,?)", local.id, user, "import:"+str(m, "workspace_id")+":"+id, store.JSON(item), store.Now())
+			exec(ctx, db, "INSERT INTO messages(id,user_id,dedup,payload,created_at) VALUES(?,?,?,?,?)", local.id, user, "import:"+str(m, "workspace_id")+":"+id, store.JSON(item), store.Now())
 			event(ctx, db, user, "message.upsert", local.id)
 			counts["messages"] = num(counts, "messages") + 1
 		}
@@ -308,7 +308,7 @@ func (s *Server) importManifest(ctx context.Context, user string, m Object, entr
 				kind = "receipt"
 			}
 			name := safeName(filepath.Base(strings.ReplaceAll(str(item, "name"), "\\", "/")))
-			exec(ctx, db, "INSERT INTO attachments VALUES(?,?,?,?,?,?,?)", local.id, user, taskID, name, item["size"], item["sha256"], kind)
+			exec(ctx, db, "INSERT INTO attachments(id,user_id,task_id,name,size,sha256,kind) VALUES(?,?,?,?,?,?,?)", local.id, user, taskID, name, item["size"], item["sha256"], kind)
 			category := fallback(str(shelf[str(item, "id")], "category"), "inbox")
 			if task != "" {
 				category = kind

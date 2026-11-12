@@ -3,16 +3,155 @@
    (MIT; see THIRD_PARTY_NOTICES). Packages, code, config and history live on
    this computer. The browser build never executes or installs plugins. */
 (() => {
-  const HOST_API = '1.0';
+  const HOST_API = '1.1';
   const running = new Map(), pages = new Map(), commands = new Map(), services = new Map();
-  const pageSelection = new Map(), pluginErrors = new Map(), brokenPages = new Map();
+  const pageSelection = new Map(), pluginIssues = new Map(), brokenPages = new Map();
   let entries = [], identity = '', syncing = false, lastSync = 0, pageCleanup, epoch = 0;
-  let previousTasks = new Map(), renderedPage = '', renderedSelection = '', renderedTarget = null;
+  let previousTasks = new Map(), snapshotInitialized = false, renderedPage = '', renderedSelection = '', renderedTarget = null;
+  let issueRenderTimer = 0;
+  const TRIGGER_QUEUE_LIMIT = 32;
+  const RUNTIME_DEFAULTS = Object.freeze({
+    activationTimeoutMs: 8000,
+    mountTimeoutMs: 15000,
+    triggerTimeoutMs: 300000,
+    hookTimeoutMs: 2500,
+    eventTimeoutMs: 1000,
+    commandTimeoutMs: 30000,
+    serviceTimeoutMs: 10000,
+    failureThreshold: 3,
+    cooldownMs: 30000,
+  });
   const key = () => state.session ? state.session.server + '|' + state.session.user_id : '';
   const errorText = error => String(error?.message || error);
+  const runtimeNumber = (value, fallback, min, max) => {
+    const number = Number(value);
+    return Number.isFinite(number) ? Math.min(max, Math.max(min, Math.round(number))) : fallback;
+  };
+  const pluginRuntime = manifest => {
+    const source = manifest?.runtime && typeof manifest.runtime === 'object' ? manifest.runtime : {};
+    return {
+      activationTimeoutMs: runtimeNumber(source.activationTimeoutMs, RUNTIME_DEFAULTS.activationTimeoutMs, 100, 60000),
+      mountTimeoutMs: runtimeNumber(source.mountTimeoutMs, RUNTIME_DEFAULTS.mountTimeoutMs, 100, 120000),
+      triggerTimeoutMs: runtimeNumber(source.triggerTimeoutMs, RUNTIME_DEFAULTS.triggerTimeoutMs, 100, 3600000),
+      hookTimeoutMs: runtimeNumber(source.hookTimeoutMs, RUNTIME_DEFAULTS.hookTimeoutMs, 50, 30000),
+      eventTimeoutMs: runtimeNumber(source.eventTimeoutMs, RUNTIME_DEFAULTS.eventTimeoutMs, 50, 30000),
+      commandTimeoutMs: runtimeNumber(source.commandTimeoutMs, RUNTIME_DEFAULTS.commandTimeoutMs, 100, 3600000),
+      serviceTimeoutMs: runtimeNumber(source.serviceTimeoutMs, RUNTIME_DEFAULTS.serviceTimeoutMs, 100, 120000),
+      failureThreshold: runtimeNumber(source.failureThreshold, RUNTIME_DEFAULTS.failureThreshold, 1, 20),
+      cooldownMs: runtimeNumber(source.cooldownMs, RUNTIME_DEFAULTS.cooldownMs, 1000, 3600000),
+    };
+  };
+  function timeoutError(label, ms) {
+    const error = new Error(`${label}超时（${ms}ms），已跳过本次执行`);
+    error.code = 'PLUGIN_TIMEOUT';
+    return error;
+  }
+  function withTimeout(task, ms, label) {
+    let timer = 0;
+    const operation = typeof task === 'function' ? Promise.resolve().then(task) : Promise.resolve(task);
+    const timeout = new Promise((_, reject) => {
+      timer = setTimeout(() => reject(timeoutError(label, ms)), ms);
+    });
+    return Promise.race([operation, timeout]).finally(() => clearTimeout(timer));
+  }
+  function scheduleIssueRender() {
+    clearTimeout(issueRenderTimer);
+    issueRenderTimer = setTimeout(() => {
+      if (state.page === 'plugins') render();
+    }, 80);
+  }
+  function setPluginIssue(plugin, label, error, fatal = false) {
+    const message = `${label}：${errorText(error)}`;
+    plugin.lastError = message;
+    pluginIssues.set(plugin.id, { message, fatal, at: Date.now() });
+    console.error(`[jjb-plugin] ${plugin.id}: ${message}`, error);
+    scheduleIssueRender();
+  }
+  function clearPluginIssue(plugin) {
+    plugin.lastError = '';
+    pluginIssues.delete(plugin.id);
+  }
+  async function recordRuntime(plugin, event, status, result, error, startedAt) {
+    try {
+      await desktop.pluginRecord(plugin.id, {
+        event,
+        status,
+        durationMs: Math.max(0, Math.round(performance.now() - startedAt)),
+        ...(result === undefined ? {} : { result }),
+        ...(error ? { error: errorText(error) } : {}),
+      });
+    } catch (recordError) {
+      console.error(`[jjb-plugin] ${plugin.id}: 无法保存执行记录`, recordError);
+    }
+  }
+  function requestHookReady(plugin) {
+    return !plugin.requestHooksSuspendedUntil || Date.now() >= plugin.requestHooksSuspendedUntil;
+  }
+  function requestHookSucceeded(plugin) {
+    plugin.requestHookFailures = 0;
+  }
+  function requestHookFailed(plugin, label, error) {
+    plugin.requestHookFailures = (plugin.requestHookFailures || 0) + 1;
+    if (plugin.requestHookFailures >= plugin.runtime.failureThreshold) {
+      plugin.requestHookFailures = 0;
+      plugin.requestHooksSuspendedUntil = Date.now() + plugin.runtime.cooldownMs;
+      setPluginIssue(plugin, label, new Error(`连续失败，已暂停插件钩子 ${Math.ceil(plugin.runtime.cooldownMs / 1000)} 秒`), false);
+    } else {
+      setPluginIssue(plugin, label, error, false);
+    }
+  }
   const matches = (pattern, route) => pattern === '*' || pattern === '/api/*' ? /^\/api(?:\/|$)/.test(route) :
     new RegExp('^' + String(pattern).replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '(?:[/?#]|$)').test(route);
   const pageKey = (pluginId, partKey) => `plugin:${pluginId}:${partKey}`;
+
+  function normalizeModulePath(name) {
+    const parts = [];
+    for (const part of String(name).replace(/\\/g, '/').split('/')) {
+      if (!part || part === '.') continue;
+      if (part === '..') {
+        if (!parts.length) return '';
+        parts.pop();
+      } else parts.push(part);
+    }
+    return parts.join('/');
+  }
+
+  function resolveModulePath(parent, specifier) {
+    const slash = parent.lastIndexOf('/');
+    return normalizeModulePath((slash >= 0 ? parent.slice(0, slash + 1) : '') + specifier);
+  }
+
+  function pluginModuleURL(plugin, bundle, name, stack = []) {
+    name = normalizeModulePath(name);
+    if (!name || !(name in bundle.files)) throw Error(`插件模块不存在：${name || '(空路径)'}`);
+    if (stack.includes(name)) throw Error(`插件模块存在循环依赖：${[...stack, name].join(' → ')}`);
+    if (plugin.moduleURLs.has(name)) return plugin.moduleURLs.get(name);
+    const declaredType = bundle.manifest?.assets?.[name];
+    if (declaredType === 'css' || /\.css$/i.test(name)) {
+      throw Error(`CSS 文件请通过 host.addStyle(host.asset('${name}')) 引入`);
+    }
+    let source = String(bundle.files[name]);
+    if (/\.json$/i.test(name)) {
+      try { JSON.parse(source); } catch (error) { throw Error(`${name} 不是有效 JSON：${error.message}`); }
+      source = `export default ${source};`;
+    } else if (!/\.(?:m?js)$/i.test(name) && declaredType !== 'javascript') {
+      throw Error(`不是可导入的 JavaScript 模块：${name}`);
+    } else {
+      const rewrite = (prefix, quote, specifier) => {
+        if (!specifier.startsWith('./') && !specifier.startsWith('../')) return prefix + quote + specifier + quote;
+        const dependency = resolveModulePath(name, specifier);
+        const dependencyURL = pluginModuleURL(plugin, bundle, dependency, [...stack, name]);
+        return prefix + quote + dependencyURL + quote;
+      };
+      source = source.replace(/(\bfrom\s*|\bimport\s*\(\s*)(['"])(\.{1,2}\/[^'"]+)\2/g, (_, prefix, quote, specifier) => rewrite(prefix, quote, specifier));
+      source = source.replace(/(\bimport\s*)(['"])(\.{1,2}\/[^'"]+)\2/g, (_, prefix, quote, specifier) => rewrite(prefix, quote, specifier));
+    }
+    source += `\n//# sourceURL=jjb-plugin://${plugin.id}/${name}`;
+    const url = URL.createObjectURL(new Blob([source], { type: 'text/javascript' }));
+    plugin.moduleURLs.set(name, url);
+    plugin.urls.push(url);
+    return url;
+  }
 
   /* ---- Schema: manifest settings declare the form; config composes like
          Magpie's Compose. Defaults first, then values the schema allows. ---- */
@@ -123,24 +262,31 @@
 
   function dispose(plugin) {
     plugin.controller.abort();
+    plugin.queuedTriggers.clear();
     for (const cleanup of plugin.cleanup.reverse()) {
-      try { cleanup(); } catch (error) { console.error(error); }
+      try {
+        const result = cleanup();
+        if (result && typeof result.then === 'function') result.catch(error => console.error(`[jjb-plugin] ${plugin.id}: 清理失败`, error));
+      } catch (error) { console.error(`[jjb-plugin] ${plugin.id}: 清理失败`, error); }
     }
     for (const [id, page] of [...pages]) if (page.owner === plugin.id) removePage(id);
     for (const [id, command] of [...commands]) if (command.owner === plugin.id) commands.delete(id);
     for (const [id, service] of [...services]) if (service.owner === plugin.id) services.delete(id);
     for (const url of plugin.urls) URL.revokeObjectURL(url);
-    pluginErrors.delete(plugin.id);
+    plugin.moduleURLs.clear();
+    pluginIssues.delete(plugin.id);
   }
 
   function stop() {
     epoch++;
+    clearTimeout(issueRenderTimer);
     for (const plugin of running.values()) dispose(plugin);
     running.clear();
     entries = [];
-    pluginErrors.clear();
+    pluginIssues.clear();
     identity = '';
     previousTasks.clear();
+    snapshotInitialized = false;
     document.querySelectorAll('[data-plugin-tab]').forEach(button => button.remove());
     pageCleanup?.();
     pageCleanup = null;
@@ -181,7 +327,25 @@
     if (!spec?.title || typeof spec.run !== 'function') throw Error('command 需要 title 和 run');
     const id = `plugin:${plugin.id}:${spec.id || commands.size}`;
     if (commands.has(id)) throw Error('command id 重复');
-    const command = { id, icon: spec.icon || 'connect', label: spec.title, kbd: spec.kbd || '', run: spec.run, owner: plugin.id };
+    const command = {
+      id,
+      icon: spec.icon || 'connect',
+      label: spec.title,
+      kbd: spec.kbd || '',
+      owner: plugin.id,
+      async run(...args) {
+        if (plugin.controller.signal.aborted) return;
+        const startedAt = performance.now();
+        try {
+          const result = await withTimeout(() => spec.run(...args), plugin.runtime.commandTimeoutMs, '插件命令');
+          return result;
+        } catch (error) {
+          setPluginIssue(plugin, `命令「${spec.title}」`, error, false);
+          await recordRuntime(plugin, 'command', 'failed', undefined, error, startedAt);
+          throw error;
+        }
+      },
+    };
     commands.set(id, command);
     const remove = () => commands.delete(id);
     plugin.cleanup.push(remove);
@@ -193,7 +357,21 @@
     const id = `plugin:${plugin.id}:${spec.id}`;
     if (services.has(id)) throw Error('service id 重复');
     services.set(id, { ...spec, owner: plugin.id });
-    const remove = () => services.delete(id);
+    const service = spec.service;
+    if (typeof service.start === 'function') {
+      withTimeout(() => service.start({ signal: plugin.controller.signal, host: plugin.host }), plugin.runtime.serviceTimeoutMs, `服务「${spec.id}」启动`)
+        .catch(error => setPluginIssue(plugin, `服务「${spec.id}」启动`, error, false));
+    }
+    const remove = async () => {
+      services.delete(id);
+      if (typeof service.stop === 'function') {
+        try {
+          await withTimeout(() => service.stop({ signal: plugin.controller.signal, host: plugin.host }), plugin.runtime.serviceTimeoutMs, `服务「${spec.id}」停止`);
+        } catch (error) {
+          console.error(`[jjb-plugin] ${plugin.id}: 服务「${spec.id}」停止失败`, error);
+        }
+      }
+    };
     plugin.cleanup.push(remove);
     return remove;
   }
@@ -262,8 +440,47 @@
       },
       onRender(name, handler) {
         if (typeof handler !== 'function') throw Error('渲染钩子需要 handler');
+        let scheduled = false, runningEvent = false, pending = null;
+        const run = async () => {
+          if (runningEvent || plugin.controller.signal.aborted) return;
+          runningEvent = true;
+          try {
+            while (pending && !plugin.controller.signal.aborted) {
+              const detail = pending;
+              pending = null;
+              const startedAt = performance.now();
+              try {
+                await withTimeout(() => handler(detail), plugin.runtime.eventTimeoutMs, `页面「${name}」渲染钩子`);
+              } catch (error) {
+                setPluginIssue(plugin, `页面「${name}」渲染钩子`, error, false);
+                await recordRuntime(plugin, `render:${name}`, 'failed', undefined, error, startedAt);
+              }
+            }
+          } finally {
+            runningEvent = false;
+            if (pending && !plugin.controller.signal.aborted) {
+              scheduled = true;
+              requestAnimationFrame(() => {
+                scheduled = false;
+                run();
+              });
+            }
+          }
+        };
+        const schedule = () => {
+          if (runningEvent) return;
+          if (scheduled) return;
+          scheduled = true;
+          requestAnimationFrame(() => {
+            scheduled = false;
+            run();
+          });
+        };
         const listener = event => {
-          if (event.detail?.page === name && !plugin.controller.signal.aborted) handler(event.detail);
+          if (event.detail?.page === name && !plugin.controller.signal.aborted) {
+            pending = event.detail;
+            schedule();
+          }
         };
         window.addEventListener('workspace-render', listener);
         const remove = () => window.removeEventListener('workspace-render', listener);
@@ -272,7 +489,47 @@
       },
       onSnapshot(handler) {
         if (typeof handler !== 'function') throw Error('快照钩子需要 handler');
-        const listener = () => !plugin.controller.signal.aborted && handler(state.snapshot);
+        let scheduled = false, runningSnapshot = false, pending = null;
+        const run = async () => {
+          if (runningSnapshot || plugin.controller.signal.aborted) return;
+          runningSnapshot = true;
+          try {
+            while (pending && !plugin.controller.signal.aborted) {
+              const snapshot = pending;
+              pending = null;
+              const startedAt = performance.now();
+              try {
+                await withTimeout(() => handler(snapshot), plugin.runtime.eventTimeoutMs, '快照钩子');
+              } catch (error) {
+                setPluginIssue(plugin, '快照钩子', error, false);
+                await recordRuntime(plugin, 'snapshot', 'failed', undefined, error, startedAt);
+              }
+            }
+          } finally {
+            runningSnapshot = false;
+            if (pending && !plugin.controller.signal.aborted) {
+              scheduled = true;
+              requestAnimationFrame(() => {
+                scheduled = false;
+                run();
+              });
+            }
+          }
+        };
+        const schedule = () => {
+          if (runningSnapshot) return;
+          if (scheduled) return;
+          scheduled = true;
+          requestAnimationFrame(() => {
+            scheduled = false;
+            run();
+          });
+        };
+        const listener = event => {
+          if (plugin.controller.signal.aborted) return;
+          pending = event?.detail || state.snapshot;
+          schedule();
+        };
         window.addEventListener('snapshot-updated', listener);
         const remove = () => window.removeEventListener('snapshot-updated', listener);
         plugin.cleanup.push(remove);
@@ -318,6 +575,9 @@
         plugin.urls.push(url);
         return url;
       },
+      moduleURL(name) {
+        return pluginModuleURL(plugin, bundle, name);
+      },
       patch(target, name, replacement) {
         const original = target[name];
         target[name] = replacement;
@@ -340,21 +600,37 @@
     plugin.config = config;
     if (JSON.stringify(config) === before) return;
     for (const listener of [...plugin.configListeners]) {
-      try { listener(config); } catch (error) { console.error(error); }
+      withTimeout(() => listener(config), plugin.runtime.eventTimeoutMs, '配置变化钩子')
+        .catch(error => {
+          setPluginIssue(plugin, '配置变化钩子', error, false);
+          recordRuntime(plugin, 'config', 'failed', undefined, error, performance.now());
+        });
     }
   }
 
   async function beforeRequest(request) {
     let current = { ...request };
     for (const plugin of running.values()) {
+      if (plugin.controller.signal.aborted || !requestHookReady(plugin)) continue;
       for (const item of plugin.requests) {
         if (plugin.controller.signal.aborted || !matches(item.pattern, current.route)) continue;
-        const next = await item.handler({ ...current, request: current });
-        if (next) current = {
-          route: String(next.route || current.route),
-          method: String(next.method || current.method).toUpperCase(),
-          body: next.body,
-        };
+        const startedAt = performance.now();
+        try {
+          const next = await withTimeout(
+            () => item.handler({ ...current, request: current }),
+            plugin.runtime.hookTimeoutMs,
+            `请求拦截「${item.pattern}」`,
+          );
+          requestHookSucceeded(plugin);
+          if (next) current = {
+            route: String(next.route || current.route),
+            method: String(next.method || current.method).toUpperCase(),
+            body: next.body,
+          };
+        } catch (error) {
+          requestHookFailed(plugin, `请求拦截「${item.pattern}」`, error);
+          await recordRuntime(plugin, `request:${item.pattern}`, 'failed', undefined, error, startedAt);
+        }
       }
     }
     return current;
@@ -362,10 +638,22 @@
 
   async function afterResponse(request, response, result) {
     for (const plugin of running.values()) {
+      if (plugin.controller.signal.aborted || !requestHookReady(plugin)) continue;
       for (const item of plugin.responses) {
         if (plugin.controller.signal.aborted || !matches(item.pattern, request.route)) continue;
-        const next = await item.handler({ ...request, response, status: response.status, ok: response.ok, result });
-        if (next !== undefined) result = next;
+        const startedAt = performance.now();
+        try {
+          const next = await withTimeout(
+            () => item.handler({ ...request, response, status: response.status, ok: response.ok, result }),
+            plugin.runtime.hookTimeoutMs,
+            `响应钩子「${item.pattern}」`,
+          );
+          requestHookSucceeded(plugin);
+          if (next !== undefined) result = next;
+        } catch (error) {
+          requestHookFailed(plugin, `响应钩子「${item.pattern}」`, error);
+          await recordRuntime(plugin, `response:${item.pattern}`, 'failed', undefined, error, startedAt);
+        }
       }
     }
     return result;
@@ -393,24 +681,29 @@
         if (!entry.enabled || running.has(entry.id)) continue;
         const plugin = {
           id: entry.id, revision: entry.revision, config: composeConfig(entry.manifest, entry.config),
-          triggers: new Map(), requests: [], responses: [], configListeners: [],
-          cleanup: [], urls: [], controller: new AbortController(), error: '',
+          triggers: new Map(), runningTriggers: new Set(), queuedTriggers: new Map(), requests: [], responses: [], configListeners: [],
+          cleanup: [], urls: [], moduleURLs: new Map(), controller: new AbortController(), error: '',
+          runtime: pluginRuntime(entry.manifest), requestHookFailures: 0, requestHooksSuspendedUntil: 0, lastError: '',
         };
         running.set(plugin.id, plugin);
+        const startedAt = performance.now();
         try {
           const bundle = await desktop.pluginGet(entry.id);
           if (mine !== epoch || plugin.controller.signal.aborted) continue;
           const api = host(plugin, bundle);
           plugin.host = api;
-          const url = api.assetURL(bundle.manifest.entry, 'text/javascript');
-          const module = await import(url);
+          const url = pluginModuleURL(plugin, bundle, bundle.manifest.entry);
+          const module = await withTimeout(() => import(url), plugin.runtime.activationTimeoutMs, '插件加载');
           if (mine !== epoch || plugin.controller.signal.aborted) continue;
-          const cleanup = await (module.activate || module.default)?.(api);
+          const activate = module.activate || module.default;
+          if (typeof activate !== 'function') throw Error('入口必须导出 activate(host) 或 default(host)');
+          const cleanup = await withTimeout(() => activate(api), plugin.runtime.activationTimeoutMs, '插件启用');
           if (typeof cleanup === 'function') plugin.cleanup.push(cleanup);
-          pluginErrors.delete(plugin.id);
+          clearPluginIssue(plugin);
         } catch (error) {
           dispose(plugin);
-          pluginErrors.set(plugin.id, errorText(error));
+          pluginIssues.set(plugin.id, { message: `启用：${errorText(error)}`, fatal: true, at: Date.now() });
+          recordRuntime(plugin, 'activate', 'failed', undefined, error, startedAt);
         }
       }
       if (state.page.startsWith('plugin:') && !pages.has(state.page) && state.page !== 'plugins') navigate('plugins');
@@ -466,7 +759,14 @@
     };
     if (typeof result === 'function') return onCleanup(result);
     if (result && typeof result.then === 'function') {
-      Promise.resolve(result).then(apply).catch(error => breakPage(signature.page, signature.owner, 'mount', error));
+      const plugin = running.get(signature.owner);
+      const timeoutMs = plugin?.runtime.mountTimeoutMs || RUNTIME_DEFAULTS.mountTimeoutMs;
+      withTimeout(result, timeoutMs, '页面挂载')
+        .then(apply)
+        .catch(error => {
+          breakPage(signature.page, signature.owner, 'mount', error);
+          if (plugin) setPluginIssue(plugin, `页面「${signature.page}」挂载`, error, false);
+        });
       return;
     }
     apply(result);
@@ -527,22 +827,84 @@
   }
 
   async function dispatchTrigger(event, payload) {
+    const tasks = [];
     for (const plugin of running.values()) {
       const declared = entries.find(entry => entry.id === plugin.id)?.manifest.events || [];
-      const matched = declared.includes('*') || declared.includes(event);
+      const matched = !declared.length || declared.includes('*') || declared.includes(event);
       const handler = plugin.triggers.get(event) || plugin.triggers.get('*');
       if (!matched || !handler) continue;
-      let result, error = '';
-      try { result = await handler(payload, plugin.host); }
-      catch (triggerError) { error = errorText(triggerError); }
-      try { await desktop.pluginRecord(plugin.id, { event, status: error ? 'failed' : 'done', result: result || {}, error }); }
-      catch (recordError) { console.error(recordError); }
+      const runningKey = plugin.id + '\u0000' + event;
+      // A timed-out Promise cannot be cancelled from the same JS realm. Keep
+      // the key until the original Promise settles so repeated snapshots do
+      // not launch an unbounded pile of copies.
+      if (plugin.runningTriggers.has(runningKey)) {
+        const queue = plugin.queuedTriggers.get(runningKey) || [];
+        if (queue.length >= TRIGGER_QUEUE_LIMIT) {
+          queue.shift();
+          setPluginIssue(plugin, `触发器「${event}」`, new Error(`待处理事件已达到 ${TRIGGER_QUEUE_LIMIT} 条，正在丢弃最旧事件`), false);
+        }
+        queue.push({ handler, payload });
+        plugin.queuedTriggers.set(runningKey, queue);
+        continue;
+      }
+      tasks.push(startTrigger(plugin, event, handler, payload, runningKey));
     }
+    await Promise.allSettled(tasks);
   }
 
-  function detectTaskEvents() {
-    const snapshot = state.snapshot;
+  function startTrigger(plugin, event, handler, payload, runningKey) {
+    plugin.runningTriggers.add(runningKey);
+    const startedAt = performance.now();
+    let recorded = false;
+    let timeoutDone;
+    const timeoutCompletion = new Promise(resolve => { timeoutDone = resolve; });
+    const operation = Promise.resolve().then(() => handler(payload, plugin.host));
+    const timeout = setTimeout(async () => {
+      if (!recorded && !plugin.controller.signal.aborted) {
+        recorded = true;
+        const error = timeoutError(`触发器「${event}」`, plugin.runtime.triggerTimeoutMs);
+        setPluginIssue(plugin, `触发器「${event}」`, error, false);
+        await recordRuntime(plugin, event, 'failed', undefined, error, startedAt);
+      }
+      timeoutDone();
+    }, plugin.runtime.triggerTimeoutMs);
+    const finish = async (status, result, error) => {
+      clearTimeout(timeout);
+      if (!recorded) {
+        recorded = true;
+        await recordRuntime(plugin, event, status, result || {}, error, startedAt);
+      }
+      plugin.runningTriggers.delete(runningKey);
+      if (plugin.controller.signal.aborted) return;
+      const queue = plugin.queuedTriggers.get(runningKey);
+      const next = queue?.shift();
+      if (!queue?.length) plugin.queuedTriggers.delete(runningKey);
+      if (next) startTrigger(plugin, event, next.handler, next.payload, runningKey);
+    };
+    const settled = operation.then(
+      result => finish('done', result, null),
+      error => {
+        if (!recorded) setPluginIssue(plugin, `触发器「${event}」`, error, false);
+        return finish('failed', undefined, error);
+      },
+    );
+    return Promise.race([settled, timeoutCompletion]);
+  }
+
+  function detectTaskEvents(event) {
+    // The event payload is the snapshot that was actually published. Reading
+    // state.snapshot here can race a background refresh and miss a queued task
+    // even though the event that announced it already arrived.
+    const snapshot = event?.detail || state.snapshot;
     const current = new Map((snapshot.tasks || []).map(task => [task.id, task]));
+    // The first snapshot establishes the baseline. Existing tasks must not be
+    // emitted as task.created, or task-agent plugins run once per historical
+    // task on every login/startup.
+    if (!snapshotInitialized) {
+      previousTasks = current;
+      snapshotInitialized = true;
+      return;
+    }
     for (const task of current.values()) {
       const old = previousTasks.get(task.id);
       if (!old) dispatchTrigger('task.created', { event: 'task.created', task });
@@ -588,11 +950,16 @@
 
   function pluginPage(entry) {
     const runtime = running.get(entry.id);
-    const runtimeError = pluginErrors.get(entry.id);
+    const issue = pluginIssues.get(entry.id);
+    const isolated = runtime?.requestHooksSuspendedUntil > Date.now();
     const triggers = entry.manifest.events?.length ? entry.manifest.events.join('、') : '手动调用';
-    const status = runtimeError
-      ? `<span class="tag red">运行错误</span>`
-      : entry.enabled ? `<span class="tag green">运行中</span>` : `<span class="tag">已停用</span>`;
+    const status = isolated
+      ? `<span class="tag red">钩子已隔离</span>`
+      : issue?.fatal
+        ? `<span class="tag red">运行错误</span>`
+        : entry.enabled && runtime
+          ? `<span class="tag green">运行中</span>`
+          : `<span class="tag">已停用</span>`;
     const owned = [...pages].filter(([, page]) => page.owner === entry.id).map(([id, page]) => [id, page.title]);
     const permissions = Array.isArray(entry.manifest.permissions) ? entry.manifest.permissions : [];
     return `<section class="plugin-card plugin-row" data-plugin-id="${esc(entry.id)}">
@@ -611,12 +978,12 @@
         ${owned.length ? `<span class="plugin-chip">${owned.length} 个页面</span>` : `<span class="plugin-chip">无页面入口</span>`}
         ${permissions.map(permission => `<span class="plugin-chip">${esc(permission)}</span>`).join('')}
       </div>
-      ${runtimeError ? `<div class="plugin-error">${esc(runtimeError)}</div>` : ''}
+      ${issue ? `<div class="plugin-error"><strong>${issue.fatal ? '插件未能运行' : '最近一次运行时异常'}</strong><span>${esc(issue.message)}</span></div>` : ''}
       <details class="plugin-debug">
         <summary>设置与调试<small>${Array.isArray(entry.manifest.settings)?.length ? '声明式设置 · 执行记录' : '本机配置 · 执行记录'}</small></summary>
         <div class="plugin-debug-body">
           ${settingsEditor(entry)}
-          <div class="plugin-actions"><button class="secondary" data-plugin-save>保存设置</button><button class="secondary" data-plugin-runs>执行记录</button></div>
+          <div class="plugin-actions"><button class="secondary" data-plugin-save>保存设置</button><button class="secondary" data-plugin-runs>执行记录</button><button class="secondary" data-plugin-reload>重新加载</button></div>
           <pre class="plugin-output" data-plugin-output hidden></pre>
         </div>
       </details>
@@ -677,6 +1044,14 @@
     try {
       if (event.target.matches('[data-plugin-open]')) navigate(event.target.dataset.pluginOpen);
       if (event.target.matches('[data-plugin-delete]')) { await desktop.pluginDelete(id); await sync(true); }
+      if (event.target.matches('[data-plugin-reload]')) {
+        const plugin = running.get(id);
+        if (plugin) dispose(plugin);
+        running.delete(id);
+        pluginIssues.delete(id);
+        await sync(true);
+        toast('插件已重新加载');
+      }
       if (event.target.matches('[data-plugin-save]')) {
         const values = schemaValues(entry);
         const config = values || JSON.parse(row.querySelector('[data-plugin-config]').value);

@@ -3,8 +3,6 @@ package api
 import (
 	"context"
 	"net/http"
-	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -28,9 +26,9 @@ func objects(value any) []Object {
 	return out
 }
 func (s *Server) task(ctx context.Context, db store.SQL, user, id string) Object {
-	row := one(ctx, db, "SELECT * FROM tasks WHERE id=? AND user_id=?", id, user)
+	row := one(ctx, db, "SELECT * FROM tasks WHERE id=? AND user_id=? AND deleted_at IS NULL", id, user)
 	o := store.Payload(row)
-	o["attachments"] = query(ctx, db, "SELECT id,name,size,sha256,kind FROM attachments WHERE task_id=? AND user_id=? ORDER BY rowid", id, user)
+	o["attachments"] = query(ctx, db, "SELECT id,name,size,sha256,kind FROM attachments WHERE task_id=? AND user_id=? AND deleted_at IS NULL ORDER BY rowid", id, user)
 	return o
 }
 func (s *Server) updateTask(ctx context.Context, db store.SQL, user string, t Object) {
@@ -44,7 +42,7 @@ func version(t Object, expected int) {
 	}
 }
 func taskInput(input Object) Object {
-	out := Object{"title": "", "description": "", "due_at": nil, "status": "collecting", "urgency": nil, "reminders": []any{}, "requirements": []any{}, "max_total_bytes": nil, "naming_hint": "", "filename_pattern": "", "submit_url": "", "source_message_id": nil, "client_id": nil, "collection": nil, "version": 0}
+	out := Object{"title": "", "description": "", "due_at": nil, "status": "collecting", "urgency": nil, "reminders": []any{}, "requirements": []any{}, "max_total_bytes": nil, "naming_hint": "", "filename_pattern": "", "submit_url": "", "source_message_id": nil, "client_id": nil, "collection": nil, "repeat_rule": nil, "version": 0}
 	for k := range out {
 		if v, ok := input[k]; ok {
 			out[k] = v
@@ -66,6 +64,21 @@ func taskInput(input Object) Object {
 		if _, ok := out["collection"].(bool); !ok {
 			fail(422, "字段类型无效：collection")
 		}
+	}
+	if out["repeat_rule"] != nil {
+		repeat := object(out["repeat_rule"])
+		if len(repeat) == 0 {
+			fail(422, "重复规则无效")
+		}
+		frequency := fallback(str(repeat, "frequency"), "weekly")
+		interval := int(num(repeat, "interval"))
+		if interval == 0 {
+			interval = 1
+		}
+		if !choice(frequency, "daily", "weekly", "monthly") || interval < 1 || interval > 52 {
+			fail(422, "重复周期无效")
+		}
+		out["repeat_rule"] = Object{"enabled": boolean(repeat, "enabled"), "frequency": frequency, "interval": interval}
 	}
 	for _, key := range []string{"reminders", "requirements"} {
 		if _, ok := out[key].([]any); !ok {
@@ -157,7 +170,9 @@ func (s *Server) taskRoutes() {
 				}
 			}
 			if id := str(b, "source_message_id"); id != "" {
-				one(r.Context(), db, "SELECT id FROM messages WHERE id=? AND user_id=?", id, r.User)
+				message := store.Payload(one(r.Context(), db, "SELECT payload FROM messages WHERE id=? AND user_id=?", id, r.User))
+				b["source_messages"] = []any{taskSourceMessage(message)}
+				b["append_log"] = []any{}
 			}
 			if b["collection"] == nil {
 				b["collection"] = false
@@ -166,7 +181,7 @@ func (s *Server) taskRoutes() {
 			b["version"] = 1
 			b["created_at"] = store.Now()
 			b["updated_at"] = b["created_at"]
-			exec(r.Context(), db, "INSERT INTO tasks VALUES(?,?,?,?,?)", b["id"], r.User, 1, b["client_id"], store.JSON(b))
+			exec(r.Context(), db, "INSERT INTO tasks(id,user_id,version,client_id,payload) VALUES(?,?,?,?,?)", b["id"], r.User, 1, b["client_id"], store.JSON(b))
 			event(r.Context(), db, r.User, "task.upsert", str(b, "id"))
 			b["attachments"] = []Object{}
 			return b
@@ -184,31 +199,25 @@ func (s *Server) taskRoutes() {
 			if b["urgency"] == nil {
 				b["urgency"] = t["urgency"]
 			}
+			if b["repeat_rule"] == nil {
+				b["repeat_rule"] = t["repeat_rule"]
+			}
 			b["client_id"] = t["client_id"]
 			b["source_message_id"] = t["source_message_id"]
+			b["source_messages"] = t["source_messages"]
+			b["append_log"] = t["append_log"]
 			for k, v := range b {
 				t[k] = v
 			}
 			t["version"] = int(num(b, "version")) + 1
 			delete(t, "attachments")
 			s.updateTask(r.Context(), db, r.User, t)
+			s.maybeCreateNextTask(r.Context(), db, r.User, t)
 			return s.task(r.Context(), db, r.User, str(t, "id"))
 		})
 	})
 	s.route("DELETE /api/tasks/{task_id}", "owner", func(r request) any {
-		files := []Object{}
-		s.transaction(r.Context(), func(db store.SQL) any {
-			t := s.task(r.Context(), db, r.User, r.PathValue("task_id"))
-			version(t, r.integer("version", 0, 1, 1e9))
-			files = objects(t["attachments"])
-			exec(r.Context(), db, "DELETE FROM tasks WHERE id=? AND user_id=?", t["id"], r.User)
-			event(r.Context(), db, r.User, "task.delete", str(t, "id"))
-			return nil
-		})
-		for _, f := range files {
-			os.Remove(filepath.Join(s.Store.Root, "files", str(f, "id")))
-		}
-		return Object{"ok": true}
+		return s.trashTask(r)
 	})
 }
 func (s *Server) messages(ctx context.Context, db store.SQL, rows []Object) []Object {
@@ -256,10 +265,10 @@ func (s *Server) snapshot(ctx context.Context, user string) any {
 	return s.transaction(ctx, func(db store.SQL) any {
 		cursor := one(ctx, db, "SELECT COALESCE(MAX(seq),0) AS cursor FROM events WHERE user_id=?", user)
 		tasks := []Object{}
-		for _, t := range query(ctx, db, "SELECT id FROM tasks WHERE user_id=? ORDER BY rowid DESC", user) {
+		for _, t := range query(ctx, db, "SELECT id FROM tasks WHERE user_id=? AND deleted_at IS NULL ORDER BY rowid DESC", user) {
 			tasks = append(tasks, s.task(ctx, db, user, str(t, "id")))
 		}
-		messages := s.messages(ctx, db, query(ctx, db, "SELECT payload FROM messages WHERE user_id=? ORDER BY rowid DESC LIMIT 200", user))
+		messages := s.messages(ctx, db, query(ctx, db, "SELECT payload FROM messages WHERE user_id=? AND deleted_at IS NULL ORDER BY rowid DESC LIMIT 200", user))
 		shelf := s.shelfItems(ctx, db, user)
 		return Object{"cursor": cursor["cursor"], "tasks": tasks, "messages": messages, "shelf": shelf}
 	})
@@ -277,7 +286,7 @@ func (s *Server) messageRoutes() {
 	})
 	s.Mux.HandleFunc("GET /api/sync", s.syncSocket)
 	s.route("GET /api/messages", "owner", func(r request) any {
-		q := "SELECT payload FROM messages WHERE user_id=?"
+		q := "SELECT payload FROM messages WHERE user_id=? AND deleted_at IS NULL"
 		args := []any{r.User}
 		if before := r.URL.Query().Get("before"); before != "" {
 			q += " AND rowid<(SELECT rowid FROM messages WHERE id=? AND user_id=?)"
@@ -316,12 +325,12 @@ func (s *Server) messageRoutes() {
 				parts = append(parts, store.JSON(b[k]))
 			}
 			dedup := "[" + strings.Join(parts, ", ") + "]"
-			if old := query(r.Context(), db, "SELECT payload FROM messages WHERE user_id=? AND dedup=?", r.User, dedup); len(old) > 0 {
+			if old := query(r.Context(), db, "SELECT payload FROM messages WHERE user_id=? AND dedup=? AND deleted_at IS NULL", r.User, dedup); len(old) > 0 {
 				return s.messages(r.Context(), db, old)[0]
 			}
 			key := clip(strings.Join(strings.Fields(str(b, "text")), ""), 500)
 			if key != "" {
-				recent := query(r.Context(), db, "SELECT payload FROM messages WHERE user_id=? AND json_extract(payload,'$.conversation_id')=? AND json_extract(payload,'$.sender_id')=? AND json_extract(payload,'$.account_id')=? AND created_at>=? ORDER BY rowid DESC LIMIT 20", r.User, b["conversation_id"], str(b, "sender_id"), b["account_id"], time.Now().Add(-time.Minute).UTC().Format(time.RFC3339Nano))
+				recent := query(r.Context(), db, "SELECT payload FROM messages WHERE user_id=? AND deleted_at IS NULL AND json_extract(payload,'$.conversation_id')=? AND json_extract(payload,'$.sender_id')=? AND json_extract(payload,'$.account_id')=? AND created_at>=? ORDER BY rowid DESC LIMIT 20", r.User, b["conversation_id"], str(b, "sender_id"), b["account_id"], time.Now().Add(-time.Minute).UTC().Format(time.RFC3339Nano))
 				for _, old := range recent {
 					p := store.Payload(old)
 					t, _ := time.Parse(time.RFC3339Nano, str(p, "sent_at"))
@@ -340,7 +349,7 @@ func (s *Server) messageRoutes() {
 			m["id"] = store.ID()
 			m["created_at"] = store.Now()
 			m["draft"] = extract(str(m, "text"), sent)
-			exec(r.Context(), db, "INSERT INTO messages VALUES(?,?,?,?,?)", m["id"], r.User, dedup, store.JSON(m), m["created_at"])
+			exec(r.Context(), db, "INSERT INTO messages(id,user_id,dedup,payload,created_at) VALUES(?,?,?,?,?)", m["id"], r.User, dedup, store.JSON(m), m["created_at"])
 			settings := first(query(r.Context(), db, "SELECT payload FROM llm_settings WHERE user_id=?", r.User))
 			if settings != nil && eligible(store.Payload(settings), str(m, "text")) {
 				exec(r.Context(), db, "INSERT OR IGNORE INTO analysis_jobs(user_id,message_id) VALUES(?,?)", r.User, m["id"])
@@ -357,7 +366,7 @@ func (s *Server) messageRoutes() {
 			fail(422, "消息状态无效")
 		}
 		return s.transaction(r.Context(), func(db store.SQL) any {
-			m := store.Payload(one(r.Context(), db, "SELECT payload FROM messages WHERE id=? AND user_id=?", r.PathValue("message_id"), r.User))
+			m := store.Payload(one(r.Context(), db, "SELECT payload FROM messages WHERE id=? AND user_id=? AND deleted_at IS NULL", r.PathValue("message_id"), r.User))
 			m["triage"] = state
 			delete(m, "analysis_pending")
 			delete(m, "analysis_state")
@@ -367,6 +376,15 @@ func (s *Server) messageRoutes() {
 			}
 			event(r.Context(), db, r.User, "message.upsert", str(m, "id"))
 			return m
+		})
+	})
+	s.route("DELETE /api/messages/{message_id}", "owner", func(r request) any {
+		return s.transaction(r.Context(), func(db store.SQL) any {
+			m := store.Payload(one(r.Context(), db, "SELECT payload FROM messages WHERE id=? AND user_id=? AND deleted_at IS NULL", r.PathValue("message_id"), r.User))
+			exec(r.Context(), db, "UPDATE messages SET deleted_at=? WHERE id=? AND user_id=?", store.Now(), m["id"], r.User)
+			exec(r.Context(), db, "UPDATE analysis_jobs SET state='deleted' WHERE message_id=?", m["id"])
+			event(r.Context(), db, r.User, "message.delete", str(m, "id"))
+			return Object{"ok": true, "recoverable": true, "retention_days": 30}
 		})
 	})
 }
