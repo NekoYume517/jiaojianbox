@@ -3,8 +3,10 @@ package gui
 import (
 	"context"
 	"encoding/json"
+	"encoding/xml"
 	"errors"
 	"fmt"
+	"html"
 	"io"
 	"net/http"
 	"os"
@@ -23,6 +25,9 @@ const updaterRepo = "NekoYume517/jiaojianbox"
 
 const updateThreadCount = 4
 
+var updaterAPIURL = "https://api.github.com/repos/" + updaterRepo + "/releases/latest"
+var updaterAtomURL = "https://github.com/" + updaterRepo + "/releases.atom"
+
 var updateTransport = http.DefaultTransport.(*http.Transport).Clone()
 
 func init() {
@@ -35,6 +40,9 @@ var updateClient = &http.Client{Transport: updateTransport}
 var updateDefaults = Object{"autoCheck": true, "intervalMinutes": 360.0, "autoDownload": false, "channel": "stable", "skipVersion": ""}
 
 var updateAssetPattern = regexp.MustCompile(`(?i)^JiaojianBox-Setup-\d[\w.-]*-x64\.exe$`)
+var atomBreakPattern = regexp.MustCompile(`(?i)<br\s*/?>`)
+var atomParagraphEndPattern = regexp.MustCompile(`(?i)</p\s*>`)
+var atomTagPattern = regexp.MustCompile(`(?s)<[^>]+>`)
 
 func compareVersions(a, b string) int {
 	parts := func(value string) []int {
@@ -139,14 +147,13 @@ func (d *Desktop) UpdateSet(patch Object) Object {
 	return d.UpdateGet()
 }
 
-func (d *Desktop) fetchLatestRelease() (Object, error) {
-	ctx, cancel := context.WithTimeout(d.ctx, 20*time.Second)
-	defer cancel()
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://api.github.com/repos/"+updaterRepo+"/releases/latest", nil)
+func (d *Desktop) fetchLatestReleaseAPI(ctx context.Context) (Object, error) {
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, updaterAPIURL, nil)
 	if err != nil {
 		return nil, err
 	}
 	request.Header.Set("Accept", "application/vnd.github+json")
+	request.Header.Set("User-Agent", "JiaojianBox/"+d.version)
 	response, err := updateClient.Do(request)
 	if err != nil {
 		return nil, err
@@ -180,6 +187,119 @@ func (d *Desktop) fetchLatestRelease() (Object, error) {
 		}
 	}
 	return out, nil
+}
+
+type updaterAtomFeed struct {
+	Entries []struct {
+		Title string `xml:"title"`
+		Links []struct {
+			Rel  string `xml:"rel,attr"`
+			Href string `xml:"href,attr"`
+		} `xml:"link"`
+		Content string `xml:"content"`
+	} `xml:"entry"`
+}
+
+func updateAsset(latest string) string {
+	return fmt.Sprintf("JiaojianBox-Setup-%s-x64.exe", strings.TrimPrefix(latest, "v"))
+}
+
+func updateAssetURL(latest string) string {
+	version := strings.TrimPrefix(strings.TrimSpace(latest), "v")
+	return fmt.Sprintf("https://github.com/%s/releases/download/v%s/%s", updaterRepo, version, updateAsset(version))
+}
+
+func atomReleaseNotes(value string) string {
+	value = html.UnescapeString(value)
+	value = atomBreakPattern.ReplaceAllString(value, "\n")
+	value = atomParagraphEndPattern.ReplaceAllString(value, "\n\n")
+	value = atomTagPattern.ReplaceAllString(value, "")
+	value = html.UnescapeString(value)
+	lines := strings.Split(value, "\n")
+	cleaned := make([]string, 0, len(lines))
+	for _, line := range lines {
+		line = strings.Join(strings.Fields(line), " ")
+		if line != "" {
+			cleaned = append(cleaned, line)
+		}
+	}
+	return strings.TrimSpace(strings.Join(cleaned, "\n"))
+}
+
+func releaseFromAtom(body []byte) (Object, error) {
+	var feed updaterAtomFeed
+	if err := xml.Unmarshal(body, &feed); err != nil {
+		return nil, err
+	}
+	if len(feed.Entries) == 0 {
+		return nil, errors.New("尚无发布版本")
+	}
+	entry := feed.Entries[0]
+	latest := strings.TrimPrefix(strings.TrimSpace(entry.Title), "v")
+	if latest == "" {
+		return nil, errors.New("GitHub 发布信息缺少版本号")
+	}
+	releaseURL := fmt.Sprintf("https://github.com/%s/releases/tag/v%s", updaterRepo, latest)
+	for _, link := range entry.Links {
+		if link.Rel == "alternate" && link.Href != "" {
+			releaseURL = link.Href
+			break
+		}
+	}
+	asset := updateAsset(latest)
+	return Object{
+		"latest":   latest,
+		"url":      releaseURL,
+		"notes":    atomReleaseNotes(entry.Content),
+		"asset":    asset,
+		"assetUrl": updateAssetURL(latest),
+	}, nil
+}
+
+func (d *Desktop) fetchLatestReleaseAtom(ctx context.Context) (Object, error) {
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, updaterAtomURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	request.Header.Set("Accept", "application/atom+xml")
+	request.Header.Set("User-Agent", "JiaojianBox/"+d.version)
+	response, err := updateClient.Do(request)
+	if err != nil {
+		return nil, err
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("检查更新失败（HTTP %d）", response.StatusCode)
+	}
+	body, err := io.ReadAll(io.LimitReader(response.Body, 2<<20))
+	if err != nil {
+		return nil, err
+	}
+	return releaseFromAtom(body)
+}
+
+func (d *Desktop) fetchLatestRelease() (Object, error) {
+	ctx, cancel := context.WithTimeout(d.ctx, 28*time.Second)
+	defer cancel()
+	apiCtx, cancelAPI := context.WithTimeout(ctx, 12*time.Second)
+	release, apiErr := d.fetchLatestReleaseAPI(apiCtx)
+	cancelAPI()
+	if apiErr == nil {
+		return release, nil
+	}
+	// GitHub's unauthenticated API quota can be exhausted by an ISP-level
+	// shared IP. The public Atom feed is the same release source without that
+	// quota and is used automatically when the API is unavailable.
+	atomCtx, cancelAtom := context.WithTimeout(ctx, 12*time.Second)
+	release, atomErr := d.fetchLatestReleaseAtom(atomCtx)
+	cancelAtom()
+	if atomErr == nil {
+		return release, nil
+	}
+	if errors.Is(apiErr, context.DeadlineExceeded) || errors.Is(apiErr, context.Canceled) {
+		return nil, apiErr
+	}
+	return nil, fmt.Errorf("检查更新失败：%v；备用通道：%v", apiErr, atomErr)
 }
 
 func (d *Desktop) UpdateCheck() (Object, error) {

@@ -2,6 +2,8 @@
 /* GitHub Releases 更新检查：只读，不自动安装。桌面端与浏览器共用。 */
 (() => {
   const REPO = 'NekoYume517/jiaojianbox';
+  const API_URL = `https://api.github.com/repos/${REPO}/releases/latest`;
+  const FALLBACK_URL = `https://data.jsdelivr.com/v1/package/gh/${REPO}`;
 
   function compareVersions(a, b) {
     const pa = String(a).split(/[.\-]/).map(x => parseInt(x, 10) || 0);
@@ -13,26 +15,67 @@
     return 0;
   }
 
-  async function check(currentVersion) {
-    const response = await fetch(`https://api.github.com/repos/${REPO}/releases/latest`, {
-      headers: { Accept: 'application/vnd.github+json' },
-      signal: AbortSignal.timeout(15000),
-    });
-    if (response.status === 404) return { updatable: false, current: currentVersion, reason: '尚无发布版本' };
-    if (!response.ok) throw new Error(`检查更新失败（HTTP ${response.status}）`);
-    const release = await response.json();
-    const latest = String(release.tag_name || '').replace(/^v/, '');
-    const asset = (release.assets || []).find(a => /-setup-.*x64\.exe$/i.test(a.name))
-      || (release.assets || []).find(a => /win32-x64\.zip$/i.test(a.name));
+  function resultForRelease(currentVersion, latest, { notes = '', url = '', download = '' } = {}) {
     return {
       updatable: compareVersions(latest, currentVersion) > 0,
       current: currentVersion,
       latest,
-      notes: release.body || '',
-      url: release.html_url,
-      download: asset ? asset.browser_download_url : release.html_url,
+      notes,
+      url: url || `https://github.com/${REPO}/releases/tag/v${latest}`,
+      download: download || `https://github.com/${REPO}/releases/download/v${latest}/JiaojianBox-Setup-${latest}-x64.exe`,
     };
   }
 
-  window.updater = { check, compareVersions };
+  async function checkAPI(currentVersion) {
+    const response = await fetch(API_URL, {
+      headers: { Accept: 'application/vnd.github+json' },
+      signal: AbortSignal.timeout(15000),
+    });
+    if (response.status === 404) return null;
+    if (!response.ok) throw new Error(`GitHub 接口 HTTP ${response.status}`);
+    const release = await response.json();
+    const latest = String(release.tag_name || '').replace(/^v/, '');
+    const assets = release.assets || [];
+    const asset = assets.find(a => /-setup-.*x64\.exe$/i.test(a.name))
+      || assets.find(a => /win32-x64\.zip$/i.test(a.name));
+    if (!latest) throw new Error('GitHub 接口未返回版本号');
+    return resultForRelease(currentVersion, latest, {
+      notes: release.body || '',
+      url: release.html_url,
+      download: asset ? asset.browser_download_url : '',
+    });
+  }
+
+  async function checkFallback(currentVersion) {
+    const response = await fetch(FALLBACK_URL, {
+      headers: { Accept: 'application/json' },
+      signal: AbortSignal.timeout(15000),
+    });
+    if (!response.ok) throw new Error(`备用接口 HTTP ${response.status}`);
+    const manifest = await response.json();
+    const versions = Array.isArray(manifest.versions) ? manifest.versions.map(v => String(v)) : [];
+    if (!versions.length) return { updatable: false, current: currentVersion, reason: '尚无发布版本' };
+    const latest = versions.reduce((best, value) => compareVersions(value, best) > 0 ? value : best, versions[0]);
+    return resultForRelease(currentVersion, latest);
+  }
+
+  async function check(currentVersion) {
+    let primaryError = null;
+    try {
+      const result = await checkAPI(currentVersion);
+      if (result) return result;
+    } catch (error) {
+      primaryError = error;
+    }
+    try {
+      return await checkFallback(currentVersion);
+    } catch (fallbackError) {
+      if (primaryError) {
+        throw new Error(`检查更新失败：${primaryError.message}；备用通道：${fallbackError.message}`);
+      }
+      throw fallbackError;
+    }
+  }
+
+  window.updater = { check, compareVersions, resultForRelease };
 })();
