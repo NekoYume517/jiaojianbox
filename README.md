@@ -10,7 +10,7 @@
 >
 > 完整范围与删除、备份和安全边界见 [隐私与数据处理](PRIVACY.md)，微信本地只读采集规则见 [微信采集协议](docs/wechat-collection.md)。使用者应遵守适用法律、平台规则和所在组织的数据制度，并仅在具有合法处理依据时收集他人信息。
 
-桌面端和服务端共用 Go 核心；Windows 桌面使用 Wails v3 与系统 WebView2，界面采用原生 JavaScript/CSS，本机能力通过 Wails 绑定调用，不再启动 Electron、FastAPI 或 Python UI 进程。Android 在线模式采用 M3 登录门、共享网页工作区和文件/日历连接器，见 [Android 套壳预览说明](docs/android-web-shell.md)。技术结构参考 [Magpie](https://github.com/yetone/magpie)，视觉采用中性表面、克制圆角和细边框，支持浅色、深色、跟随系统，以及 Tokyo Night、Nord、Graphite 配色。
+桌面端和服务端共用 Go 核心；Windows 桌面使用 Wails v3 与系统 WebView2，界面采用原生 JavaScript/CSS，本机能力通过 Wails 绑定调用。Android 在线模式采用 M3 登录门、共享网页工作区和文件/日历连接器，见 [Android 套壳预览说明](docs/android-web-shell.md)。技术结构参考 [Magpie](https://github.com/yetone/magpie)，视觉采用中性表面、克制圆角和细边框，支持浅色、深色、跟随系统，以及 Tokyo Night、Nord、Graphite 配色。
 
 所有界面开发以 [UI、控件与动效规范](docs/ui-design-standard.md) 为统一基线，涵盖配色、字号、间距、布局、tab、表单、文件拖放、进度反馈、动效与验收矩阵。主工作区和服务端页面复用同一运行时与验收脚本，快捷收集保持轻量例外。
 
@@ -55,7 +55,7 @@ python -X utf8 scripts/verify-installer.py
 
 云端始终挂载原 `/data` 数据卷。不要在升级时删除或替换卷，也不要更换 `master.key`/`JJB_MASTER_KEY`。云端与本机迁移为复制式，不删除来源，不迁移账号凭证和模型密钥。部署步骤见 [Coolify 指南](docs/deploy-coolify.md)。
 
-当前桌面端、安装包和服务端镜像均不包含 Electron 或 FastAPI 运行链路。`server/` 仅保留用于兼容测试与历史数据行为的参考文件；历史架构说明见 [历史文档](docs/legacy-implementation.md)。
+当前发行包统一使用 Go 核心、Wails v3 桌面、共享 Web 界面、独立采集组件与自定义安装程序。`server/` 仅保留用于兼容测试与历史数据行为；历史架构说明见 [历史文档](docs/legacy-implementation.md)。
 
 ## 插件开发
 

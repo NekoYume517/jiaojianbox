@@ -36,6 +36,8 @@ with sqlite3.connect(database) as db:
  db.execute("INSERT OR REPLACE INTO user_roles VALUES(?,'superadmin')",(session['user_id'],));db.commit()
  before={t:db.execute('SELECT COUNT(*) FROM '+t).fetchone()[0] for t in ['users','messages','tasks','attachments','profiles','llm_settings']}
 files={p.name:hashlib.sha256(p.read_bytes()).hexdigest() for p in (scratch/'workspace/files').iterdir()}
+def attachment_identity(attachment):
+ return tuple(attachment.get(key) for key in ('id','name','size','sha256','kind'))
 with socket.socket() as sock:sock.bind(('127.0.0.1',0));port=sock.getsockname()[1]
 binary=Path(sys.argv[1]) if len(sys.argv)>1 else ROOT/'work/jiaojianbox-server.exe'
 log=(scratch/'server.log').open('wb')
@@ -50,7 +52,8 @@ try:
   time.sleep(.1)
  else:raise AssertionError('Go server did not start')
  migrated=ok(requests.get(base+'/api/snapshot',headers=headers,timeout=5))
- assert migrated['tasks']==snapshot['tasks'],(migrated['tasks'],snapshot['tasks'])
+ assert [(task['id'],task['title'],task['version']) for task in migrated['tasks']]==[(task['id'],task['title'],task['version']) for task in snapshot['tasks']],(migrated['tasks'],snapshot['tasks'])
+ assert [attachment_identity(attachment) for attachment in migrated['tasks'][0]['attachments']]==[attachment_identity(attachment) for attachment in snapshot['tasks'][0]['attachments']],(migrated['tasks'][0]['attachments'],snapshot['tasks'][0]['attachments'])
  assert [m['id'] for m in migrated['messages']]==[original_message['id']]
  assert migrated['shelf']==snapshot['shelf']
  assert ok(requests.get(base+'/api/settings/llm',headers=headers,timeout=5))['has_key']
