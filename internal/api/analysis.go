@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"io"
-	"net/http"
 	"strings"
 	"time"
 
@@ -15,7 +14,7 @@ func (s *Server) aiRoutes() {
 	s.route("GET /api/settings/llm", "owner", func(r request) any { c, key := s.llmConfig(r.Context(), r.User); c["has_key"] = key != ""; return c })
 	s.route("PUT /api/settings/llm", "owner", func(r request) any {
 		b := r.body()
-		c := llmInput(b)
+		c := llmInput(r.Context(), b)
 		_, key := s.llmConfig(r.Context(), r.User)
 		if value, present := b["api_key"]; present && value != nil {
 			key = str(b, "api_key")
@@ -42,12 +41,14 @@ func (s *Server) aiRoutes() {
 		if str(c, "base_url") == "" {
 			fail(400, "请先保存 API 地址")
 		}
-		req, err := http.NewRequestWithContext(r.Context(), "GET", endpoint(str(c, "base_url"), "models"), nil)
-		check(err)
+		req, err := outboundRequest(r.Context(), "GET", endpoint(str(c, "base_url"), "models"), nil)
+		if err != nil {
+			fail(502, err.Error())
+		}
 		if key != "" {
 			req.Header.Set("Authorization", "Bearer "+key)
 		}
-		client := &http.Client{Timeout: 15 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+		client := outboundClient(15 * time.Second)
 		resp, err := client.Do(req)
 		if err != nil {
 			fail(502, "无法读取模型列表，请检查连接")

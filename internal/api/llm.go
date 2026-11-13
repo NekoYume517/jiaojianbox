@@ -41,7 +41,7 @@ func (s *Server) llmConfig(ctx context.Context, user string) (Object, string) {
 	check(err)
 	return config, key
 }
-func llmInput(body Object) Object {
+func llmInput(ctx context.Context, body Object) Object {
 	out := defaultLLM()
 	for k := range out {
 		if v, ok := body[k]; ok {
@@ -65,7 +65,10 @@ func llmInput(body Object) Object {
 		fail(422, "上下文条数须为整数")
 	}
 	if str(out, "base_url") != "" {
-		endpoint(str(out, "base_url"), "chat/completions")
+		url := endpoint(str(out, "base_url"), "chat/completions")
+		if err := validateStoredOutboundURL(url); err != nil {
+			fail(422, err.Error())
+		}
 	}
 	if num(out, "context_count") < 0 || num(out, "context_count") > 50 {
 		fail(422, "上下文条数应为 0 至 50")
@@ -342,13 +345,15 @@ func (s *Server) chat(ctx context.Context, config Object, key string, messages [
 	out.Metrics["input_chars"] = len([]rune(store.JSON(messages)))
 	notify(p, Object{"stage": "request", "input_chars": out.Metrics["input_chars"]})
 	for retries := 0; retries < 4; retries++ {
-		req, err := http.NewRequestWithContext(ctx, "POST", endpoint(str(config, "base_url"), "chat/completions"), strings.NewReader(store.JSON(body)))
-		check(err)
+		req, err := outboundRequest(ctx, "POST", endpoint(str(config, "base_url"), "chat/completions"), strings.NewReader(store.JSON(body)))
+		if err != nil {
+			fail(502, err.Error())
+		}
 		req.Header.Set("Content-Type", "application/json")
 		if key != "" {
 			req.Header.Set("Authorization", "Bearer "+key)
 		}
-		client := &http.Client{Timeout: 180 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+		client := outboundClient(180 * time.Second)
 		resp, err := client.Do(req)
 		if err != nil {
 			fail(502, "AI 连接失败或超时，请检查模型接口")
@@ -629,7 +634,6 @@ func (s *Server) streamRequest(r request, timeout time.Duration, detach bool, wo
 	updates := make(chan Object, 16)
 	done := make(chan outcome, 1)
 	go func() {
-		defer cancel()
 		result, err := attempt(func() any {
 			return work(ctx, func(value Object) {
 				select {
@@ -686,5 +690,6 @@ loop:
 	} else {
 		emit("result", result)
 	}
+	cancel()
 	return nil
 }

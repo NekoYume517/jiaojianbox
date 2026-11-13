@@ -75,9 +75,8 @@ func TestPythonCredentialsAndImmutableUpgradeBackup(t *testing.T) {
 	if err = backup.QueryRow("SELECT COUNT(*) FROM users").Scan(&count); err != nil || count != 1 {
 		t.Fatal("backup is not a consistent database", err)
 	}
-	_, err = os.Stat(filepath.Join(root, "backups", "v0.6.0", "master.key"))
-	if err != nil {
-		t.Fatal(err)
+	if _, err = os.Stat(filepath.Join(root, "backups", "v0.6.0", "master.key")); !os.IsNotExist(err) {
+		t.Fatal("managed deployment key was copied into an upgrade backup")
 	}
 	if report, err := VerifyBackup(context.Background(), root, "v0.6.0"); err != nil || Number(report, "preserved_records") != 1 {
 		t.Fatal(report, err)
@@ -109,6 +108,25 @@ func TestMissingLegacyEncryptionKeyStopsWithoutChangingDatabase(t *testing.T) {
 	}
 	if _, err = os.Stat(filepath.Join(root, "master.key")); !os.IsNotExist(err) {
 		t.Fatal("created replacement key")
+	}
+}
+
+func TestOpenRejectsDatabaseFromNewerSchema(t *testing.T) {
+	t.Setenv("JJB_MASTER_KEY", base64.URLEncoding.EncodeToString(make([]byte, 32)))
+	root := t.TempDir()
+	s, err := Open(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.DB.Exec("PRAGMA user_version = 2"); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if reopened, err := Open(root); err == nil {
+		reopened.Close()
+		t.Fatal("opened a database written by a newer schema")
 	}
 }
 

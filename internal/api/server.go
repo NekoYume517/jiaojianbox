@@ -2,6 +2,7 @@
 package api
 
 import (
+	"compress/gzip"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -12,7 +13,10 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
+	"path"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"sync"
@@ -255,13 +259,39 @@ func New(database *store.Store, assets fs.FS, version string) (*Server, error) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	s.cancel = cancel
-	s.workers.Add(1)
-	go func() { defer s.workers.Done(); s.analyzeWorker(ctx) }()
-	s.workers.Add(1)
-	go func() { defer s.workers.Done(); s.triageWorker(ctx) }()
-	s.workers.Add(1)
-	go s.recycleWorker(ctx)
+	s.startWorker(ctx, "analysis", s.analyzeWorker)
+	s.startWorker(ctx, "triage", s.triageWorker)
+	s.startWorker(ctx, "recycle", s.recycleWorker)
 	return s, nil
+}
+func (s *Server) startWorker(ctx context.Context, name string, run func(context.Context)) {
+	s.workers.Add(1)
+	go func() {
+		defer s.workers.Done()
+		for ctx.Err() == nil {
+			panicked := false
+			func() {
+				defer func() {
+					if recovered := recover(); recovered != nil {
+						panicked = true
+						log.Printf("%s worker panic: %v\n%s", name, recovered, debug.Stack())
+					}
+				}()
+				run(ctx)
+			}()
+			if ctx.Err() != nil {
+				return
+			}
+			if !panicked {
+				log.Printf("%s worker exited unexpectedly; restarting", name)
+			}
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(time.Second):
+			}
+		}
+	}()
 }
 func (s *Server) Close() {
 	if s.cancel != nil {
@@ -308,12 +338,109 @@ func writeJSON(w http.ResponseWriter, status int, value any) {
 	w.WriteHeader(status)
 	json.NewEncoder(w).Encode(value)
 }
+
+func (s *Server) allowedOrigin(r *http.Request, origin string) bool {
+	if origin == "" {
+		return false
+	}
+	parsed, err := url.Parse(origin)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return false
+	}
+	if strings.EqualFold(parsed.Host, r.Host) || strings.EqualFold(parsed.Host, "wails.localhost") {
+		return true
+	}
+	requestHost := r.Host
+	if host, _, err := net.SplitHostPort(r.Host); err == nil {
+		requestHost = strings.Trim(host, "[]")
+	}
+	originHost := parsed.Hostname()
+	originIP := net.ParseIP(originHost)
+	requestIP := net.ParseIP(requestHost)
+	if strings.EqualFold(originHost, requestHost) &&
+		(strings.EqualFold(originHost, "localhost") || originIP != nil && originIP.IsLoopback()) &&
+		(requestIP == nil || requestIP.IsLoopback() || strings.EqualFold(requestHost, "localhost")) {
+		// Desktop development and native Wails can bridge through a separate
+		// loopback port. A public hostname still requires an exact env entry.
+		return true
+	}
+	if public, err := url.Parse(env("JJB_PUBLIC_URL", "")); err == nil && public.Host != "" && strings.EqualFold(parsed.Host, public.Host) {
+		return true
+	}
+	for _, allowed := range strings.Split(env("JJB_ALLOWED_ORIGINS", ""), ",") {
+		candidate, err := url.Parse(strings.TrimSpace(allowed))
+		if err == nil && candidate.Scheme != "" && strings.EqualFold(candidate.Scheme+"://"+candidate.Host, origin) {
+			return true
+		}
+	}
+	return false
+}
+
+func staticCacheControl(name string) string {
+	if name == "" || strings.HasSuffix(name, "/") {
+		return "no-cache"
+	}
+	switch strings.ToLower(path.Ext(name)) {
+	case ".html":
+		return "no-cache"
+	case ".woff", ".woff2", ".ttf":
+		return "public, max-age=31536000, immutable"
+	default:
+		return "public, max-age=300, must-revalidate"
+	}
+}
+
+func gzipEligible(r *http.Request) bool {
+	if r.Method != http.MethodGet || r.Header.Get("Range") != "" || !strings.Contains(strings.ToLower(r.Header.Get("Accept-Encoding")), "gzip") {
+		return false
+	}
+	if r.URL.Path == "" || strings.HasSuffix(r.URL.Path, "/") {
+		return true
+	}
+	switch strings.ToLower(path.Ext(r.URL.Path)) {
+	case ".html", ".css", ".js", ".mjs", ".json", ".svg", ".txt", ".xml":
+		return true
+	default:
+		return false
+	}
+}
+
+type gzipResponseWriter struct {
+	http.ResponseWriter
+	writer *gzip.Writer
+}
+
+func (w *gzipResponseWriter) WriteHeader(status int) {
+	w.Header().Del("Content-Length")
+	w.ResponseWriter.WriteHeader(status)
+}
+
+func (w *gzipResponseWriter) Write(data []byte) (int, error) {
+	w.Header().Del("Content-Length")
+	return w.writer.Write(data)
+}
+
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("X-Content-Type-Options", "nosniff")
-	w.Header().Set("Cache-Control", "no-store")
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
-	w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type")
+	w.Header().Set("Referrer-Policy", "same-origin")
+	w.Header().Set("X-Frame-Options", "SAMEORIGIN")
+	apiRequest := strings.HasPrefix(r.URL.Path, "/api/")
+	if apiRequest {
+		w.Header().Set("Cache-Control", "no-store")
+		origin := r.Header.Get("Origin")
+		if origin != "" && !s.allowedOrigin(r, origin) {
+			http.Error(w, "origin not allowed", http.StatusForbidden)
+			return
+		}
+		if origin != "" {
+			w.Header().Set("Access-Control-Allow-Origin", origin)
+			w.Header().Add("Vary", "Origin")
+			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type")
+		}
+	} else if r.Method == http.MethodGet || r.Method == http.MethodHead {
+		w.Header().Set("Cache-Control", staticCacheControl(r.URL.Path))
+	}
 	if r.Method == "OPTIONS" {
 		w.WriteHeader(204)
 		return
@@ -323,12 +450,21 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 429, Object{"detail": "操作过于频繁，请稍后再试"})
 		return
 	}
-	if strings.HasPrefix(r.URL.Path, "/api/") {
+	if apiRequest {
 		s.Mux.ServeHTTP(w, r)
 		return
 	}
 	if strings.HasSuffix(r.URL.Path, ".go") {
 		http.NotFound(w, r)
+		return
+	}
+	if gzipEligible(r) {
+		w.Header().Set("Vary", "Accept-Encoding")
+		w.Header().Set("Content-Encoding", "gzip")
+		w.Header().Del("Content-Length")
+		compressed := &gzipResponseWriter{ResponseWriter: w, writer: gzip.NewWriter(w)}
+		s.Mux.ServeHTTP(compressed, r)
+		_ = compressed.writer.Close()
 		return
 	}
 	s.Mux.ServeHTTP(w, r)

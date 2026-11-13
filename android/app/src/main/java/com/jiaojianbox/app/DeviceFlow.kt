@@ -3,6 +3,7 @@ package com.jiaojianbox.app
 import org.json.JSONObject
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.RequestBody.Companion.toRequestBody
+import java.net.URI
 
 /** Device Flow 协议封装（与桌面端 auth/device 接口一致）。 */
 object DeviceFlow {
@@ -21,6 +22,7 @@ object DeviceFlow {
         .build()
 
     private fun post(base: String, route: String, body: String): JSONObject {
+        require(secureServerURL(base)) { "服务器地址必须使用 HTTPS" }
         val req = okhttp3.Request.Builder()
             .url(base.trimEnd('/') + route)
             .post(body.toRequestBody("application/json".toMediaType()))
@@ -53,3 +55,13 @@ object DeviceFlow {
         }
     }
 }
+
+fun secureServerURL(value: String): Boolean = runCatching {
+    val uri = URI(value.trim())
+    uri.scheme.equals("https", ignoreCase = true) &&
+        !uri.host.isNullOrBlank() &&
+        uri.userInfo == null &&
+        uri.query == null &&
+        uri.fragment == null &&
+        uri.path.orEmpty().let { it.isEmpty() || it == "/" }
+}.getOrDefault(false)

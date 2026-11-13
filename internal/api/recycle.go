@@ -161,7 +161,6 @@ func (s *Server) purgeExpiredRecycle(ctx context.Context, db store.SQL, user str
 }
 
 func (s *Server) recycleWorker(ctx context.Context) {
-	defer s.workers.Done()
 	ticker := time.NewTicker(6 * time.Hour)
 	defer ticker.Stop()
 	for {

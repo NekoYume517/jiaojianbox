@@ -17,7 +17,12 @@ const assert = require('node:assert/strict');
   const server = spawn(serverBinary, ['-data', scratch, '-listen', '127.0.0.1:' + port], {
     windowsHide: true,
     stdio: 'ignore',
-    env: { ...process.env, JJB_REQUIRE_EMAIL: 'false' },
+    env: {
+      ...process.env,
+      JJB_REQUIRE_EMAIL: 'false',
+      JJB_ALLOW_REGISTRATION: 'true',
+      JJB_ALLOW_PRIVATE_UPSTREAMS: 'true',
+    },
   });
   let browser;
   try {

@@ -64,7 +64,7 @@ func (s *Server) registrationMode(ctx context.Context, db store.SQL) string {
 	if row != nil {
 		return str(row, "value")
 	}
-	if env("JJB_ALLOW_REGISTRATION", "true") == "false" {
+	if env("JJB_ALLOW_REGISTRATION", "false") == "false" {
 		return "closed"
 	}
 	return "public"

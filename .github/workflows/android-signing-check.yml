@@ -31,11 +31,15 @@ jobs:
 
       - name: Verify stored signing certificate
         env:
-          SIGNING_KEY: ${{ secrets.JJB_ANDROID_DEBUG_KEYSTORE }}
+          STABLE_SIGNING_KEY: ${{ secrets.JJB_ANDROID_STABLE_KEYSTORE }}
+          LEGACY_SIGNING_KEY: ${{ secrets.JJB_ANDROID_DEBUG_KEYSTORE }}
           JJB_ANDROID_KEYSTORE_PATH: ${{ runner.temp }}/jiaojianbox-signing.keystore
+          JJB_ANDROID_KEYSTORE_PASSWORD: ${{ secrets.JJB_ANDROID_KEYSTORE_PASSWORD }}
         shell: bash
         run: |
+          SIGNING_KEY="${STABLE_SIGNING_KEY:-$LEGACY_SIGNING_KEY}"
           test -n "$SIGNING_KEY" || { echo 'Stable Android signing key is required'; exit 1; }
+          test -n "$JJB_ANDROID_KEYSTORE_PASSWORD" || { echo 'JJB_ANDROID_KEYSTORE_PASSWORD secret is required'; exit 1; }
           trap 'rm -f "$JJB_ANDROID_KEYSTORE_PATH"' EXIT
           printf '%s' "$SIGNING_KEY" | base64 --decode > "$JJB_ANDROID_KEYSTORE_PATH"
           chmod 600 "$JJB_ANDROID_KEYSTORE_PATH"
@@ -44,11 +48,17 @@ jobs:
 
       - name: Confirm Gradle resolves the same signing identity
         env:
-          SIGNING_KEY: ${{ secrets.JJB_ANDROID_DEBUG_KEYSTORE }}
+          STABLE_SIGNING_KEY: ${{ secrets.JJB_ANDROID_STABLE_KEYSTORE }}
+          LEGACY_SIGNING_KEY: ${{ secrets.JJB_ANDROID_DEBUG_KEYSTORE }}
           JJB_ANDROID_KEYSTORE_PATH: ${{ runner.temp }}/jiaojianbox-signing.keystore
+          JJB_ANDROID_KEYSTORE_PASSWORD: ${{ secrets.JJB_ANDROID_KEYSTORE_PASSWORD }}
+          JJB_ANDROID_KEY_PASSWORD: ${{ secrets.JJB_ANDROID_KEY_PASSWORD }}
         working-directory: android
         shell: bash
         run: |
+          SIGNING_KEY="${STABLE_SIGNING_KEY:-$LEGACY_SIGNING_KEY}"
+          test -n "$JJB_ANDROID_KEYSTORE_PASSWORD" || { echo 'JJB_ANDROID_KEYSTORE_PASSWORD secret is required'; exit 1; }
+          trap 'rm -f "$JJB_ANDROID_KEYSTORE_PATH"' EXIT
           printf '%s' "$SIGNING_KEY" | base64 --decode > "$JJB_ANDROID_KEYSTORE_PATH"
           chmod 600 "$JJB_ANDROID_KEYSTORE_PATH"
           chmod +x gradlew

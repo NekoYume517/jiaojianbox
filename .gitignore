@@ -10,6 +10,8 @@ node_modules/
 dist/
 *.user
 *.log
+*.apk
+*.aab
 verification-artifacts/
 .DS_Store
 
@@ -20,4 +22,6 @@ android/build/
 android/app/build/
 android/keystore/*.keystore
 android/keystore/*.p12
+android/keystore/signing.properties
 work/keystore/
+**/master.key

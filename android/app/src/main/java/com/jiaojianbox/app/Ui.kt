@@ -57,6 +57,7 @@ fun JjbApp(
     val session by store.session.collectAsState(initial = null)
     var sessionState by remember { mutableStateOf<Session?>(null) }
     var loaded by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) { runCatching { store.migrateLegacyToken() } }
     LaunchedEffect(session) { sessionState = session; loaded = true }
     if (!loaded) return
     val scope = rememberCoroutineScope()

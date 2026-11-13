@@ -92,7 +92,7 @@ fun LoginScreen(onLogin: (Session) -> Unit, onCancel: (() -> Unit)? = null, exte
                     }.onFailure { if(it is CancellationException)throw it; browserError = it.message ?: "授权失败"; browserBusy = false }
                 }
             },
-            enabled = !browserBusy && server.startsWith("http"),
+            enabled = !browserBusy && secureServerURL(server),
             modifier = Modifier.fillMaxWidth(),
         ) { Text(if (browserBusy) "等待浏览器确认…" else "在浏览器中登录") }
         if (browserBusy) {
@@ -108,6 +108,10 @@ fun LoginScreen(onLogin: (Session) -> Unit, onCancel: (() -> Unit)? = null, exte
         if (browserError.isNotBlank()) {
             Spacer(Modifier.height(6.dp))
             Text(browserError, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+        }
+        if (!secureServerURL(server)) {
+            Spacer(Modifier.height(6.dp))
+            Text("服务器地址必须使用 HTTPS。", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
         }
         Spacer(Modifier.height(14.dp))
         TextButton(onClick = { showPassword = !showPassword }) {
@@ -133,13 +137,13 @@ fun LoginScreen(onLogin: (Session) -> Unit, onCancel: (() -> Unit)? = null, exte
                         pwBusy = false
                     }
                 },
-                enabled = !pwBusy && server.startsWith("http") && username.length >= 3 && password.length >= 10,
+                enabled = !pwBusy && secureServerURL(server) && username.length >= 3 && password.length >= 10,
                 modifier = Modifier.fillMaxWidth(),
             ) { Text(if (pwBusy) "登录中…" else "登录") }
         }
         Spacer(Modifier.height(10.dp))
         TextButton(enabled = !browserBusy && !pwBusy, onClick = { onLogin(LocalWorkspace.session()) }) { Text("不连接服务器，离线使用") }
-        TextButton(onClick = { openBrowser(server.trimEnd('/') + "/?forgot=1") }) { Text("忘记密码") }
+        TextButton(enabled = secureServerURL(server), onClick = { openBrowser(server.trimEnd('/') + "/?forgot=1") }) { Text("忘记密码") }
         if(externalError.isNotBlank())Text(externalError,color=MaterialTheme.colorScheme.error)
         if(onCancel!=null)TextButton(onClick=onCancel){Text("返回当前工作区")}
         Text("首次使用可在浏览器中通过邮箱注册。离线数据只保存在本机。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)

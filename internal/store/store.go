@@ -28,6 +28,8 @@ import (
 //go:embed schema.sql
 var schema string
 
+const schemaVersion = 1
+
 type Object = map[string]any
 type SQL interface {
 	ExecContext(context.Context, string, ...any) (sql.Result, error)
@@ -38,6 +40,10 @@ type Store struct {
 	DB   *sql.DB
 	Root string
 	key  []byte
+}
+
+func environmentKey() string {
+	return strings.TrimSpace(os.Getenv("JJB_MASTER_KEY"))
 }
 
 func Open(root string) (*Store, error) {
@@ -53,7 +59,7 @@ func Open(root string) (*Store, error) {
 	}
 	previousInfo, previousErr := os.Stat(filepath.Join(root, "jiaojianbox.sqlite3"))
 	existingDatabase := previousErr == nil && previousInfo.Size() > 0
-	encoded := strings.TrimSpace(os.Getenv("JJB_MASTER_KEY"))
+	encoded := environmentKey()
 	if encoded == "" {
 		file := filepath.Join(root, "master.key")
 		existing, readErr := os.ReadFile(file)
@@ -89,12 +95,25 @@ func Open(root string) (*Store, error) {
 	if err != nil || len(key) != 32 {
 		return nil, errors.New("工作空间加密密钥无效")
 	}
-	db, err := sql.Open("sqlite", filepath.ToSlash(filepath.Join(root, "jiaojianbox.sqlite3"))+"?_pragma=foreign_keys(1)&_pragma=busy_timeout(30000)")
+	db, err := sql.Open("sqlite", filepath.ToSlash(filepath.Join(root, "jiaojianbox.sqlite3"))+"?_pragma=foreign_keys(1)&_pragma=busy_timeout(30000)&_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)")
 	if err != nil {
 		return nil, err
 	}
-	db.SetMaxOpenConns(1)
+	// WAL allows readers and short writers to proceed concurrently. Keep a
+	// bounded pool so long API streams do not serialize every account behind a
+	// single SQLite connection while still avoiding unbounded file handles.
+	db.SetMaxOpenConns(8)
+	db.SetMaxIdleConns(4)
 	s := &Store{DB: db, Root: root, key: key}
+	var currentSchemaVersion int
+	if err = db.QueryRowContext(context.Background(), "PRAGMA user_version").Scan(&currentSchemaVersion); err != nil {
+		db.Close()
+		return nil, err
+	}
+	if currentSchemaVersion > schemaVersion {
+		db.Close()
+		return nil, fmt.Errorf("数据库版本 %d 高于当前程序支持的版本 %d", currentSchemaVersion, schemaVersion)
+	}
 	if existingDatabase {
 		if err = s.BackupVersion(context.Background(), "before-go"); err != nil {
 			log.Printf("迁移前备份失败，继续使用已通过完整性检查的工作区: %v", err)
@@ -136,6 +155,12 @@ func Open(root string) (*Store, error) {
 	if _, err = db.Exec("CREATE INDEX IF NOT EXISTS ix_agent_messages_session ON agent_messages(user_id,session_id,created_at)"); err != nil {
 		db.Close()
 		return nil, err
+	}
+	if currentSchemaVersion < schemaVersion {
+		if _, err = db.Exec(fmt.Sprintf("PRAGMA user_version = %d", schemaVersion)); err != nil {
+			db.Close()
+			return nil, err
+		}
 	}
 	return s, nil
 }
@@ -426,7 +451,13 @@ func (s *Store) BackupVersion(ctx context.Context, version string) error {
 			return err
 		}
 	}
-	if err := os.WriteFile(filepath.Join(directory, "master.key"), []byte(base64.URLEncoding.EncodeToString(s.key)), 0600); err != nil {
+	keySource := "file"
+	if environmentKey() != "" {
+		// A deployment key supplied through JJB_MASTER_KEY stays in the
+		// orchestrator secret store. Copying it into every backup defeats that
+		// boundary and makes a shared archive equivalent to plaintext credentials.
+		keySource = "environment"
+	} else if err := os.WriteFile(filepath.Join(directory, "master.key"), []byte(base64.URLEncoding.EncodeToString(s.key)), 0600); err != nil {
 		return err
 	}
 	if data, err := os.ReadFile(filepath.Join(s.Root, "workspace.id")); err == nil {
@@ -434,5 +465,5 @@ func (s *Store) BackupVersion(ctx context.Context, version string) error {
 			return err
 		}
 	}
-	return os.WriteFile(marker, []byte(JSON(Object{"version": version, "created_at": Now(), "database": "jiaojianbox.sqlite3", "attachments": "files", "verified_files": len(files), "mode": "immutable-code-upgrade"})), 0600)
+	return os.WriteFile(marker, []byte(JSON(Object{"version": version, "created_at": Now(), "database": "jiaojianbox.sqlite3", "attachments": "files", "verified_files": len(files), "key_source": keySource, "mode": "immutable-code-upgrade"})), 0600)
 }

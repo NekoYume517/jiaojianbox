@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- 允许明文 HTTP：局域网自部署场景（http://192.168.x.x:8765）。生产建议 HTTPS。 -->
+<!-- Tokens and workspace data are only sent over HTTPS in release builds. -->
 <network-security-config>
-    <base-config cleartextTrafficPermitted="true">
+    <base-config cleartextTrafficPermitted="false">
         <trust-anchors>
             <certificates src="system" />
         </trust-anchors>

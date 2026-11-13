@@ -4,7 +4,7 @@ const path=require('node:path'),fs=require('node:fs/promises'),net=require('node
 (async()=>{
   const root=path.resolve(__dirname,'..'),scratch=await fs.mkdtemp(path.join(root,'work/browser-experience-'));
   const socket=net.createServer();await new Promise(resolve=>socket.listen(0,'127.0.0.1',resolve));const port=socket.address().port;await new Promise(resolve=>socket.close(resolve));
-  const base='http://127.0.0.1:'+port,server=spawn(process.env.JJB_VERIFY_SERVER||path.join(root,'work/JiaojianBox-UISmoke.exe'),['-data',scratch,'-listen','127.0.0.1:'+port],{windowsHide:true,stdio:'ignore',env:{...process.env,JJB_REQUIRE_EMAIL:'false'}});
+  const base='http://127.0.0.1:'+port,server=spawn(process.env.JJB_VERIFY_SERVER||path.join(root,'work/JiaojianBox-UISmoke.exe'),['-data',scratch,'-listen','127.0.0.1:'+port],{windowsHide:true,stdio:'ignore',env:{...process.env,JJB_REQUIRE_EMAIL:'false',JJB_ALLOW_REGISTRATION:'true',JJB_ALLOW_PRIVATE_UPSTREAMS:'true'}});
   let browser;
   try{
     const deadline=Date.now()+15000;while(true){try{if((await fetch(base+'/health')).ok)break;}catch{}if(Date.now()>deadline)throw Error('Server did not start');await new Promise(resolve=>setTimeout(resolve,100));}

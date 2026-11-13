@@ -85,7 +85,11 @@ class MobileShellActivity : ComponentActivity() {
         if (android.os.Build.VERSION.SDK_INT >= 29) window.isNavigationBarContrastEnforced = false
         if (android.os.Build.VERSION.SDK_INT >= 28) window.navigationBarDividerColor = android.graphics.Color.TRANSPARENT
         lifecycleScope.launch {
-            session = store.session.first(); loaded = true; loadCalendars()
+            session = runCatching { store.sessionOnce() }
+                .onFailure { message = "读取本机会话失败，请重新登录：${it.message}" }
+                .getOrNull()
+            loaded = true
+            loadCalendars()
             val current = session
             if (current != null && !current.offline && android.os.Build.VERSION.SDK_INT >= 33 &&
                 ContextCompat.checkSelfPermission(this@MobileShellActivity, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED

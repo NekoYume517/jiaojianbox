@@ -106,7 +106,10 @@
     </details>`;
   }
 
-  const markdown = (text,id) => window.jjbMarkdown?.render(text,`msg-${String(id||'live').replace(/[^a-zA-Z0-9_-]/g,'')}`) || esc(text);
+  const markdown = (text,id) => {
+    window.loadJjbMarkdown?.().catch(() => {});
+    return window.jjbMarkdown?.render(text,`msg-${String(id||'live').replace(/[^a-zA-Z0-9_-]/g,'')}`) || esc(text);
+  };
   const toolState = tool => tool.state || (tool.ok ? 'done' : 'error');
   const toolJSON = value => typeof value === 'string' ? value : JSON.stringify(value ?? {},null,2);
   function toolRow(tool,index=0) {
@@ -645,6 +648,12 @@
     if (event.key === 'Escape') document.querySelectorAll('.agent-permission-picker[open],.agent-context-peek[open]').forEach(picker => { picker.open = false; });
     if (!activePage || !event.target.matches('[data-agent-input]')) return;
     if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); event.target.closest('form')?.requestSubmit(); }
+  });
+
+  document.addEventListener('jjb:markdown-ready', () => {
+    if (!activePage || streaming || !snapshot) return;
+    renderedSessionID = '';
+    render();
   });
 
   window.agentUI = {

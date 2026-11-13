@@ -14,7 +14,7 @@ const assert = require('node:assert/strict');
   await new Promise(resolve => socket.close(resolve));
   const base = 'http://127.0.0.1:' + port;
   const serverBinary = process.env.JJB_VERIFY_SERVER || path.join(root, 'work/JiaojianBox-UISmoke.exe');
-  const server = spawn(serverBinary, ['-data', scratch, '-listen', '127.0.0.1:' + port], { windowsHide: true, stdio: 'ignore', env: { ...process.env, JJB_REQUIRE_EMAIL: 'false' } });
+  const server = spawn(serverBinary, ['-data', scratch, '-listen', '127.0.0.1:' + port], { windowsHide: true, stdio: 'ignore', env: { ...process.env, JJB_REQUIRE_EMAIL: 'false', JJB_ALLOW_REGISTRATION: 'true', JJB_ALLOW_PRIVATE_UPSTREAMS: 'true' } });
   let browser;
   try {
     for (let i = 0; i < 100; i++) {

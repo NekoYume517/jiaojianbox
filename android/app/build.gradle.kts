@@ -1,40 +1,46 @@
+import java.io.File
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
-// Permanent signing identity of the shipped app. See docs/android-signing.md.
-// Never generate a replacement key: a new key changes the signature and forces every
-// user to uninstall the previous build before installing an update.
-val stableKeystore: File = run {
-    val fromEnvironment = System.getenv("JJB_ANDROID_KEYSTORE_PATH")?.let { file(it) }
-    val fromRepository = rootProject.file("keystore/jiaojianbox-signing.keystore")
-    val resolved = fromEnvironment ?: fromRepository.takeIf { it.isFile }
-    if (resolved == null) {
-        throw GradleException(
-            """
-            Missing the permanent Android signing keystore.
-
-            Expected it at: ${rootProject.file("keystore/jiaojianbox-signing.keystore")}
-            or set JJB_ANDROID_KEYSTORE_PATH to its location.
-
-            This keystore is the app identity (certificate SHA-256
-            256994e591fe61061ed76b88aabe518f140deefb4dab7f947d64e461dbb158ab). Replacing or
-            regenerating it silently breaks upgrades for every installed device. Read
-            docs/android-signing.md.
-            """.trimIndent(),
-        )
+// Permanent signing identity of shipped release builds. Debug builds use the
+// Android toolchain's local debug identity and must never overwrite a release.
+// See docs/android-signing.md.
+val localSigningFile = rootProject.file("keystore/signing.properties")
+val localSigning = Properties().apply {
+    if (localSigningFile.isFile) {
+        localSigningFile.inputStream().buffered().use(::load)
     }
-    if (!resolved.isFile) {
-        throw GradleException("Android signing keystore not found: $resolved (see docs/android-signing.md)")
-    }
-    resolved
+}
+fun signingSetting(name: String): String? = localSigning.getProperty(name)?.takeIf { it.isNotBlank() }
+fun signingFile(value: String?): File? {
+    val raw = value?.trim()?.takeIf { it.isNotEmpty() } ?: return null
+    val path = File(raw)
+    return if (path.isAbsolute) path else rootProject.file("keystore/$raw")
 }
 
-val stableStorePassword: String = System.getenv("JJB_ANDROID_KEYSTORE_PASSWORD") ?: "android"
-val stableKeyAlias: String = System.getenv("JJB_ANDROID_KEY_ALIAS") ?: "androiddebugkey"
-val stableKeyPassword: String = System.getenv("JJB_ANDROID_KEY_PASSWORD") ?: stableStorePassword
+val configuredStableKeystore = signingFile(System.getenv("JJB_ANDROID_KEYSTORE_PATH") ?: signingSetting("storeFile"))
+val repositoryStableKeystore = rootProject.file("keystore/jiaojianbox-signing.keystore").takeIf { it.isFile }
+val stableKeystore: File? = configuredStableKeystore ?: repositoryStableKeystore
+val stableStorePassword: String? = System.getenv("JJB_ANDROID_KEYSTORE_PASSWORD")?.takeIf { it.isNotBlank() }
+    ?: signingSetting("storePassword")
+val stableKeyAlias: String = System.getenv("JJB_ANDROID_KEY_ALIAS")?.takeIf { it.isNotBlank() }
+    ?: signingSetting("keyAlias")
+    ?: "androiddebugkey"
+val stableKeyPassword: String? = System.getenv("JJB_ANDROID_KEY_PASSWORD")?.takeIf { it.isNotBlank() }
+    ?: signingSetting("keyPassword")
+    ?: stableStorePassword
+val stableStoreType: String = System.getenv("JJB_ANDROID_STORE_TYPE")?.takeIf { it.isNotBlank() }
+    ?: signingSetting("storeType")
+    ?: "PKCS12"
+
+if (configuredStableKeystore != null && !configuredStableKeystore.isFile) {
+    throw GradleException("Android signing keystore not found: $configuredStableKeystore (see docs/android-signing.md)")
+}
 
 android {
     namespace = "com.jiaojianbox.app"
@@ -44,29 +50,28 @@ android {
         applicationId = "com.jiaojianbox.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 28
-        versionName = "0.6.20"
+        versionCode = 29
+        versionName = "0.6.21"
     }
     signingConfigs {
-        create("stable") {
-            storeFile = stableKeystore
-            storePassword = stableStorePassword
-            keyAlias = stableKeyAlias
-            keyPassword = stableKeyPassword
-            storeType = "PKCS12"
-            enableV1Signing = true
-            enableV2Signing = true
+        if (stableKeystore != null && stableStorePassword != null) {
+            create("stable") {
+                storeFile = stableKeystore
+                storePassword = stableStorePassword
+                keyAlias = stableKeyAlias
+                keyPassword = stableKeyPassword
+                storeType = stableStoreType
+                enableV1Signing = true
+                enableV2Signing = true
+            }
         }
     }
     buildTypes {
-        debug {
-            // Both variants use the permanent key so no build can drift to a fresh one.
-            signingConfig = signingConfigs.getByName("stable")
-        }
+        debug {}
         release {
             isMinifyEnabled = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
-            signingConfig = signingConfigs.getByName("stable")
+            signingConfigs.findByName("stable")?.let { signingConfig = it }
         }
     }
     compileOptions {
@@ -76,6 +81,18 @@ android {
     kotlinOptions { jvmTarget = "17" }
     buildFeatures { compose = true }
     sourceSets.getByName("main").assets.srcDir(layout.buildDirectory.dir("generated/workspaceAssets"))
+}
+
+tasks.matching { it.name == "assembleRelease" || it.name == "bundleRelease" }.configureEach {
+    doFirst {
+        if (stableKeystore == null || stableStorePassword == null) {
+            throw GradleException(
+                "Release builds require the permanent Android signing keystore and " +
+                    "JJB_ANDROID_KEYSTORE_PASSWORD or android/keystore/signing.properties. " +
+                    "See docs/android-signing.md.",
+            )
+        }
+    }
 }
 
 val syncWorkspaceAssets by tasks.registering(Sync::class) {

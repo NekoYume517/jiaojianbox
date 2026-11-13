@@ -89,8 +89,8 @@ nav .count{margin-left:auto;font-size:0.82rem;font-variant-numeric:tabular-nums;
 .page-heading .actions{display:flex;gap:8px}
 .toolbar{display:flex;gap:10px;align-items:center;margin-bottom:18px;flex-wrap:wrap}
 .search{position:relative;flex:1;min-width:180px;max-width:360px}
-.search>input.search-field,.search input{padding-left:38px!important;background:var(--panel);line-height:1.5}
-.search>span{position:absolute;left:12px;top:50%;transform:translateY(-50%);color:var(--muted);display:flex;align-items:center}
+.search>input.search-field,.search input{padding-left:44px!important;background:var(--panel);line-height:1.5}
+.search>span{position:absolute;left:13px;top:50%;transform:translateY(-50%);color:var(--muted);display:flex;align-items:center;width:16px;pointer-events:none}
 .search svg{width:16px;height:16px}
 .toolbar select{width:auto;min-width:132px;padding-right:34px}
 .toolbar .result-count{margin-left:auto;color:var(--muted);font-size:0.82rem}
@@ -510,7 +510,7 @@ dialog{max-height:calc(100dvh - var(--titlebar) - 30px);background:var(--panel)}
  .file-row{flex-wrap:wrap;gap:6px;padding:10px}.file-info{min-width:100px}.file-row .icon-button{width:30px;height:34px}
  .auth-layout{padding:76px 0 26px}.auth-form{margin:0 auto;width:85%}.auth-story{border:0;width:85%}.auth-utilities{right:20px;top:20px}.auth-story h1{font-size:2.142857rem}
  .appearance-panel{padding:21px 18px}.appearance-heading{flex-wrap:wrap}.theme-options{gap:8px}.theme-option{padding:8px}.theme-option>span{font-size:.83rem;gap:5px}.theme-preview{height:55px}.theme-preview:after{margin:11px 6px}
- .requirement-row{grid-template-columns:minmax(0,1fr) minmax(0,1fr) 47px 26px}.toast{bottom:calc(85px + env(safe-area-inset-bottom));width:max-content}
+ .requirement-row{grid-template-columns:minmax(0,1fr) minmax(0,1fr) 47px 26px}.toast{bottom:calc(85px + env(safe-area-inset-bottom));width:max-content}.toast.corner{right:16px;max-width:calc(100vw - 32px)}
   .cmdk-backdrop{
     inset:calc(var(--jjb-viewport-offset-top,0px) + var(--jjb-mobile-topbar-bottom,60px) + 8px) 12px auto;
     height:max(0px,calc(var(--jjb-viewport-height,100dvh) - var(--jjb-viewport-offset-top,0px) - var(--jjb-mobile-topbar-bottom,60px) - var(--jjb-mobile-nav-offset,80px) - 32px));

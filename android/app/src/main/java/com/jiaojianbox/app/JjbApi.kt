@@ -94,10 +94,12 @@ class JjbApi(private val session: Session) {
     }
 
     suspend fun login(server: String, username: String, password: String): Session = withContext(Dispatchers.IO) {
+        require(secureServerURL(server)) { "服务器地址必须使用 HTTPS" }
+        val normalizedServer = server.trim().trimEnd('/')
         val payload = JSONObject().put("username", username).put("password", password).toString().toRequestBody("application/json".toMediaType())
-        http.newCall(Request.Builder().url(server.trimEnd('/') + "/api/auth/login").post(payload).build()).await().use { response ->
+        http.newCall(Request.Builder().url(normalizedServer + "/api/auth/login").post(payload).build()).await().use { response ->
             val obj = response.jsonOrThrow()
-            Session(server = server.trimEnd('/'), token = obj.getString("token"), username = obj.getString("username"), userId = obj.optString("user_id"))
+            Session(server = normalizedServer, token = obj.getString("token"), username = obj.getString("username"), userId = obj.optString("user_id"))
         }
     }
 

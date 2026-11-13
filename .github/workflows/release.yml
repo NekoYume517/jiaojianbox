@@ -13,6 +13,8 @@ on:
 
 permissions:
   contents: write
+  id-token: write
+  attestations: write
 
 jobs:
   core:
@@ -50,38 +52,45 @@ jobs:
 
       - name: Restore stable Android signing key
         env:
+          JJB_ANDROID_STABLE_KEYSTORE: ${{ secrets.JJB_ANDROID_STABLE_KEYSTORE }}
           JJB_ANDROID_DEBUG_KEYSTORE: ${{ secrets.JJB_ANDROID_DEBUG_KEYSTORE }}
+          JJB_ANDROID_KEYSTORE_PASSWORD: ${{ secrets.JJB_ANDROID_KEYSTORE_PASSWORD }}
+          JJB_ANDROID_KEY_PASSWORD: ${{ secrets.JJB_ANDROID_KEY_PASSWORD }}
         run: |
-          test -n "$JJB_ANDROID_DEBUG_KEYSTORE" || { echo 'Stable Android signing key is required'; exit 1; }
-          key="$RUNNER_TEMP/jiaojianbox-debug.keystore"
-          printf '%s' "$JJB_ANDROID_DEBUG_KEYSTORE" | base64 --decode > "$key"
+          encoded="${JJB_ANDROID_STABLE_KEYSTORE:-$JJB_ANDROID_DEBUG_KEYSTORE}"
+          test -n "$encoded" || { echo 'Stable Android signing key is required'; exit 1; }
+          test -n "$JJB_ANDROID_KEYSTORE_PASSWORD" || { echo 'JJB_ANDROID_KEYSTORE_PASSWORD secret is required'; exit 1; }
+          key="$RUNNER_TEMP/jiaojianbox-stable.keystore"
+          printf '%s' "$encoded" | base64 --decode > "$key"
           chmod 600 "$key"
           echo "JJB_ANDROID_KEYSTORE_PATH=$key" >> "$GITHUB_ENV"
+          echo "JJB_ANDROID_KEYSTORE_PASSWORD=$JJB_ANDROID_KEYSTORE_PASSWORD" >> "$GITHUB_ENV"
+          if [ -n "$JJB_ANDROID_KEY_PASSWORD" ]; then echo "JJB_ANDROID_KEY_PASSWORD=$JJB_ANDROID_KEY_PASSWORD" >> "$GITHUB_ENV"; fi
 
       - name: Verify stored signing identity matches the pinned certificate
         run: python -X utf8 scripts/verify-android-signing.py --keystore "$JJB_ANDROID_KEYSTORE_PATH"
 
-      - name: Build debug APK
+      - name: Build release APK
         working-directory: android
         run: |
           chmod +x gradlew
-          ./gradlew clean signingReport assembleDebug --no-build-cache
+          ./gradlew clean signingReport assembleRelease --no-build-cache
 
       - name: Rename APK
         env:
           RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
         run: |
           mkdir -p dist
-          cp android/app/build/outputs/apk/debug/app-debug.apk "dist/JiaojianBox-${RELEASE_TAG}-android-debug.apk"
+          cp android/app/build/outputs/apk/release/app-release.apk "dist/JiaojianBox-${RELEASE_TAG}-android.apk"
 
-      - name: Verify APK uses the stable signing key
-        run: python -X utf8 scripts/verify-android-signing.py --apk android/app/build/outputs/apk/debug/app-debug.apk
+      - name: Verify release APK signature and non-debuggable manifest
+        run: python -X utf8 scripts/verify-android-signing.py --apk android/app/build/outputs/apk/release/app-release.apk --require-release
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: jiaojianbox-android
-          path: dist/JiaojianBox-*-android-debug.apk
+          path: dist/JiaojianBox-*-android.apk
 
   windows:
     name: Go Wails custom installer
@@ -112,6 +121,11 @@ jobs:
         env:
           JJB_DATA_DIR: ${{ runner.temp }}/jjb-test
         run: python -m pytest tests -q
+
+      - name: Verify Go packages and Windows GUI tests
+        run: |
+          go test ./internal/... ./cmd/... ./web -count=1
+          go vet ./...
 
       - name: Verify version and frontend contracts
         run: |
@@ -166,7 +180,15 @@ jobs:
         shell: bash
         run: |
           cd dist
-          sha256sum JiaojianBox-Setup-*-x64.exe JiaojianBox-*-android-debug.apk > SHA256SUMS.txt
+          sha256sum JiaojianBox-Setup-*-x64.exe JiaojianBox-*-android.apk > SHA256SUMS.txt
+
+      - name: Attest release artifacts
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: |
+            dist/JiaojianBox-Setup-*-x64.exe
+            dist/JiaojianBox-*-android.apk
+            dist/SHA256SUMS.txt
 
       - name: Create release
         uses: softprops/action-gh-release@v2
@@ -174,9 +196,9 @@ jobs:
           tag_name: ${{ inputs.release_tag || github.ref_name }}
           body_path: docs/releases/${{ inputs.release_tag || github.ref_name }}.md
           generate_release_notes: true
-          overwrite_files: true
+          overwrite_files: false
           draft: false
           files: |
             dist/JiaojianBox-Setup-*-x64.exe
-            dist/JiaojianBox-*-android-debug.apk
+            dist/JiaojianBox-*-android.apk
             dist/SHA256SUMS.txt

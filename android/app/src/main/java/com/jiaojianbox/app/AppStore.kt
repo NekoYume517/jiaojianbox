@@ -10,7 +10,7 @@ import kotlinx.coroutines.flow.map
 
 private val Context.dataStore by preferencesDataStore(name = "jiaojianbox")
 
-/** 本机持久化：服务端地址、登录令牌。令牌只存 DataStore，不上日志。 */
+/** 本机持久化：服务端地址、登录令牌。令牌经 Android Keystore 加密后写入 DataStore。 */
 class AppStore(private val context: Context) {
     private val serverKey = stringPreferencesKey("server")
     private val tokenKey = stringPreferencesKey("token")
@@ -18,22 +18,45 @@ class AppStore(private val context: Context) {
     private val userIdKey = stringPreferencesKey("user_id")
 
     val session: Flow<Session?> = context.dataStore.data.map { prefs ->
-        val token = prefs[tokenKey] ?: return@map null
+        val stored = prefs[tokenKey] ?: return@map null
+        val token = if (TokenCipher.isEncrypted(stored)) TokenCipher.decrypt(stored) ?: return@map null else stored
         Session(server = prefs[serverKey] ?: "", token = token, username = prefs[usernameKey] ?: "", userId = prefs[userIdKey] ?: "")
     }
 
     suspend fun saveSession(session: Session) {
         context.dataStore.edit { prefs ->
             prefs[serverKey] = session.server
-            prefs[tokenKey] = session.token
+            prefs[tokenKey] = TokenCipher.encrypt(session.token)
             prefs[usernameKey] = session.username
             prefs[userIdKey] = session.userId
         }
     }
 
-    suspend fun clearSession() = context.dataStore.edit { it.remove(tokenKey) }
+    /**
+     * Migrates tokens written by releases that predate TokenCipher. This runs
+     * outside the DataStore flow transform so an edit cannot block the same
+     * stream that triggered it.
+     */
+    suspend fun migrateLegacyToken() {
+        val stored = context.dataStore.data.first()[tokenKey] ?: return
+        if (TokenCipher.isEncrypted(stored)) return
+        val encrypted = TokenCipher.encrypt(stored)
+        context.dataStore.edit { prefs ->
+            if (prefs[tokenKey] == stored) prefs[tokenKey] = encrypted
+        }
+    }
 
-    suspend fun sessionOnce(): Session? = session.first()
+    suspend fun clearSession() = context.dataStore.edit { prefs ->
+        prefs.remove(serverKey)
+        prefs.remove(tokenKey)
+        prefs.remove(usernameKey)
+        prefs.remove(userIdKey)
+    }
+
+    suspend fun sessionOnce(): Session? {
+        migrateLegacyToken()
+        return session.first()
+    }
 }
 
 const val DEFAULT_SERVER = "https://jiaojianbox.bansonic.top"

@@ -56,3 +56,20 @@ test('main shell keeps required shared UI assets', () => {
     assert.match(html, new RegExp(asset.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
   }
 });
+
+test('Markdown renderer loads only when rendered content needs it', () => {
+  const html = read('index.html');
+  const loader = read('markdown-loader.js');
+  const agent = read('agent.js');
+  assert.match(html, /\.\/markdown-loader\.js/);
+  assert.doesNotMatch(loader, /requestIdleCallback|setTimeout\(\(\) => load/);
+  assert.match(agent, /loadJjbMarkdown/);
+});
+
+test('CSP blocks remote scripts while allowing configured API connections', () => {
+  const html = read('index.html');
+  const policy = html.match(/http-equiv="Content-Security-Policy" content="([^"]+)"/)?.[1] || '';
+  assert.match(policy, /script-src 'self' blob:/);
+  assert.doesNotMatch(policy, /script-src[^;]*(?:https?:|\*)/);
+  assert.match(policy, /connect-src 'self' http: https: ws: wss:/);
+});

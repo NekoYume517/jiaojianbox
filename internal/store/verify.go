@@ -81,7 +81,7 @@ func VerifyBackup(ctx context.Context, root, version string) (Object, error) {
 		total += len(before)
 		modified += edits
 	}
-	active := strings.TrimSpace(os.Getenv("JJB_MASTER_KEY"))
+	active := environmentKey()
 	if active == "" {
 		key, e := os.ReadFile(filepath.Join(root, "master.key"))
 		if e != nil {
@@ -89,11 +89,13 @@ func VerifyBackup(ctx context.Context, root, version string) (Object, error) {
 		}
 		active = strings.TrimSpace(string(key))
 	}
-	original, err := os.ReadFile(filepath.Join(directory, "master.key"))
-	if err != nil {
-		return nil, err
+	original, readErr := os.ReadFile(filepath.Join(directory, "master.key"))
+	if readErr != nil && !(errors.Is(readErr, os.ErrNotExist) && active != "") {
+		return nil, readErr
 	}
-	if active != strings.TrimSpace(string(original)) {
+	if active == "" {
+		active = strings.TrimSpace(string(original))
+	} else if len(original) > 0 && active != strings.TrimSpace(string(original)) {
 		return nil, errors.New("加密密钥发生变化")
 	}
 	return Object{"integrity": "ok", "preserved_records": total, "modified_records": modified, "key_preserved": true, "attachments_verified": true, "tables": report}, nil

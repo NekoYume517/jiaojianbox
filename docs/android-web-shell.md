@@ -1,6 +1,6 @@
 # Android 网页套壳预览版
 
-版本：0.6.20。在线模式采用 M3 登录门、共享网页工作区、Android 文件与日历连接器。APK 保持原应用 ID 和永久签名，可以覆盖原有签名一致的版本；不删除旧本机数据。
+版本：0.6.21。在线模式采用 M3 登录门、共享网页工作区、Android 文件与日历连接器。APK 保持原应用 ID 和永久签名，可以覆盖原有签名一致的版本；不删除旧本机数据。
 
 ## 界面与登录
 
@@ -38,6 +38,8 @@ cd ..
 python scripts/verify-android-signing.py --apk android/app/build/outputs/apk/debug/app-debug.apk
 node scripts/verify-mobile-shell.cjs
 ```
+
+日常调试包使用本地 Android 调试签名，只用于开发。接受验收或对外分发时必须构建 `assembleRelease`，并通过 `scripts/verify-android-signing.py --require-release` 检查固定签名和不可调试标记。
 
 浏览器验证脚本要求本机隔离测试服务（默认 `127.0.0.1:8776`，可设 `JJB_MOBILE_TEST_SERVER`），会创建临时测试用户；原生桥传输是 mock，API 是真实本机服务。它验证会话衔接、文件上传、下载/日历命令和移动导航，不替代真实设备上的系统选择器或 CalendarProvider 检查。
 

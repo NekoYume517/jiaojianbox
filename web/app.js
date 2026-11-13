@@ -20,6 +20,10 @@ const paths = {
   arrow: '<path d="M5 12h14m-6-6 6 6-6 6"/>',
   file: '<path d="M5 3h9l5 5v13H5V3Z"/><path d="M14 3v6h5M9 13h6M9 17h5"/>',
   share: '<circle cx="6" cy="12" r="3"/><circle cx="18" cy="6" r="3"/><circle cx="18" cy="18" r="3"/><path d="m9 11 6-3.5M9 13l6 3.5"/>',
+  preview: '<path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Z"/><circle cx="12" cy="12" r="2.5"/>',
+  edit: '<path d="m4 20 4.2-1 10.9-10.9a2.1 2.1 0 0 0-3-3L5.2 16 4 20Z"/><path d="m14.8 6.4 2.8 2.8"/>',
+  download: '<path d="M12 3v12m-5-5 5 5 5-5M5 20h14"/>',
+  trash: '<path d="M4 7h16M9 7V4h6v3m3 0-1 13H7L6 7M10 11v5M14 11v5"/>',
 };
 const icon = name => `<svg viewBox="0 0 24 24" aria-hidden="true">${paths[name] || paths.file}</svg>`;
 const sizeText = size => size >= 1048576 ? (size / 1048576).toFixed(1) + ' MB' : size >= 1024 ? (size / 1024).toFixed(1) + ' KB' : size + ' B';
@@ -48,13 +52,17 @@ function syncToastPosition() {
   cancelAnimationFrame(toastPositionFrame);
   toastPositionFrame = requestAnimationFrame(() => {
     const el = $('#toast');
-    const card = $('#status-suggest');
-    if (!el || el.hidden || !el.classList.contains('corner') || !card) {
+    if (!el || el.hidden || !el.classList.contains('corner')) {
       el?.style.removeProperty('--toast-lift-y');
       return;
     }
     const baseBottom = Number.parseFloat(getComputedStyle(el).bottom) || 0;
-    const targetBottom = innerHeight - card.getBoundingClientRect().top + 16;
+    const blockers = ['#onboard', '#status-suggest'].map(selector => document.querySelector(selector)).filter(node => {
+      if (!node || node.getClientRects().length === 0) return false;
+      const style = getComputedStyle(node);
+      return style.display !== 'none' && style.visibility !== 'hidden';
+    });
+    const targetBottom = blockers.reduce((bottom, node) => Math.max(bottom, innerHeight - node.getBoundingClientRect().top + 14), baseBottom);
     el.style.setProperty('--toast-lift-y', Math.min(0, baseBottom - targetBottom) + 'px');
   });
 }
@@ -341,15 +349,16 @@ function renderOnboard() {
   const card = document.createElement('div'); card.id = 'onboard'; card.className = 'onboard-card'; card.setAttribute('role', 'dialog'); card.setAttribute('aria-label', '新手引导');
   card.innerHTML = `<div class="eyebrow">${esc(step.hint)}</div><h3>${esc(step.title)}</h3><p>${esc(step.body)}</p><div class="onboard-dots">${ONBOARD_STEPS.map((_, i) => `<i class="${i === onboardStep ? 'on' : i < onboardStep ? 'done' : ''}"></i>`).join('')}</div><div class="detail-actions"><button class="plain-button" data-onboard="skip">跳过</button><span class="flex-spacer"></span>${onboardStep > 0 ? '<button class="secondary" data-onboard="prev">上一步</button>' : ''}<button class="primary" data-onboard="${step.action ? 'goto' : 'next'}">${step.action ? '去' + (step.action === 'sources' ? '触发器' : '设置') : onboardStep === ONBOARD_STEPS.length - 1 ? '开始使用' : '下一步'}</button></div>`;
   document.body.append(card);
+  requestAnimationFrame(syncToastPosition);
 }
 document.addEventListener('click', async event => {
   const button = event.target.closest('[data-onboard]'); if (!button) return;
   const action = button.dataset.onboard;
-  if (action === 'skip') { onboardActive = false; $('#onboard')?.remove(); return storeSet('onboarded-' + state.profile, true); }
+  if (action === 'skip') { onboardActive = false; $('#onboard')?.remove(); syncToastPosition(); return storeSet('onboarded-' + state.profile, true); }
   if (action === 'prev') { onboardStep = Math.max(0, onboardStep - 1); return renderOnboard(); }
   if (action === 'goto') { const target = ONBOARD_STEPS[onboardStep].action; onboardStep++; renderOnboard(); return navigate(target); }
   if (action === 'next') {
-    if (onboardStep >= ONBOARD_STEPS.length - 1) { onboardActive = false; $('#onboard')?.remove(); await storeSet('onboarded-' + state.profile, true); return; }
+    if (onboardStep >= ONBOARD_STEPS.length - 1) { onboardActive = false; $('#onboard')?.remove(); syncToastPosition(); await storeSet('onboarded-' + state.profile, true); return; }
     onboardStep++; return renderOnboard();
   }
 });
@@ -535,7 +544,7 @@ function tasksView() {
   return heading('待办', '要求、材料与提交回执，一处整理。', `<button class="plain-button" data-productivity-action="templates">模板</button><button class="plain-button" data-productivity-action="recycle">回收站</button><button class="secondary" data-action="show-archived">已归档（${all.filter(t=>t.status==='archived').length}）</button><button class="primary" data-action="new-task">${icon('plus')}新建待办</button>`) +
     `<div class="task-summary">${[['collecting','准备材料'],['ready','待提交'],['submitted','已提交']].map(([s,label])=>`<div class="summary-cell"><strong>${all.filter(t=>t.status===s).length}</strong><span>${label}</span></div>`).join('')}</div><div class="toolbar"><div class="search"><span>${icon('search')}</span><input id="task-search" placeholder="搜索待办" value="${esc(state.search)}" aria-label="搜索待办"></div><select id="task-filter" aria-label="待办进度"><option value="active">进行中</option><option value="all">全部待办</option><option value="collecting">准备材料</option><option value="ready">待提交</option><option value="submitted">已提交</option><option value="archived">已归档</option></select></div><div class="task-grid ${state.firstRenderDone ? '' : 'stagger'}">${list.map(t => `<article class="task-card ${state.firstRenderDone ? '' : 'stagger-item'} ${dueUrgency(t) === 'overdue' ? 'card-overdue' : ''}" tabindex="0" role="button" data-task="${esc(t.id)}"><div class="pill-row">${tag(...states[t.status])}${t.pending ? tag(t.conflict ? '同步冲突' : '待同步', 'orange') : ''}${dueUrgency(t) ? `<span class="due-chip ${dueUrgency(t)}">${dueUrgency(t) === 'overdue' ? '已逾期' : dueUrgency(t) === 'today' ? '今天截止' : '3 天内截止'}</span>` : ''}</div><h3>${esc(t.title)}</h3><p>${esc(t.description || '暂无补充说明')}</p><div class="task-card-footer"><span class="${t.due_at && new Date(t.due_at) < new Date() && !['submitted', 'archived'].includes(t.status) ? 'overdue' : ''}">${dueBadge(t.due_at)}</span><span>${t.attachments.filter(f => f.kind === 'material').length} 份材料</span></div></article>`).join('')}</div>${list.length ? '' : `<div class="panel">${empty('把下一次交件安排好', '从通知生成待办，或直接创建一项。', '<button class="primary" data-action="new-task">新建待办</button>')}</div>`}`;
 }
-function fileRow(f, task) { const ext = f.name.split('.').pop().toLowerCase().slice(0, 5); return `<div class="file-row"><span class="file-icon" data-ext="${esc(ext)}">${esc(ext)}</span><span class="file-info"><strong>${esc(f.name)}</strong><small>${bytes(f.size)}</small></span><button class="plain-button file-kind-button" data-change-kind="${esc(f.id)}" data-next-kind="${f.kind==='receipt'?'material':'receipt'}" data-version="${task.version}" ${task.pending?'disabled':''} title="${f.kind==='receipt'?'移动到待办材料，参与材料核对':'移动到提交回执'}">${f.kind==='receipt'?'转为材料':'转为回执'}</button><button class="icon-button" data-preview-file="${esc(f.id)}" data-name="${esc(f.name)}" title="预览" aria-label="预览 ${esc(f.name)}">◫</button><button class="icon-button" data-rename-file="${esc(f.id)}" data-name="${esc(f.name)}" data-version="${task.version}" title="重命名" aria-label="重命名 ${esc(f.name)}">✎</button><button class="icon-button" data-download="${esc(f.id)}" data-name="${esc(f.name)}" title="下载" aria-label="下载 ${esc(f.name)}">↓</button><button class="icon-button" data-delete-file="${esc(f.id)}" data-version="${task.version}" title="移入回收站" aria-label="移入回收站 ${esc(f.name)}">×</button></div>`; }
+function fileRow(f, task) { const ext = f.name.split('.').pop().toLowerCase().slice(0, 5); return `<div class="file-row"><span class="file-icon" data-ext="${esc(ext)}">${esc(ext)}</span><span class="file-info"><strong>${esc(f.name)}</strong><small>${bytes(f.size)}</small></span><button class="plain-button file-kind-button" data-change-kind="${esc(f.id)}" data-next-kind="${f.kind==='receipt'?'material':'receipt'}" data-version="${task.version}" ${task.pending?'disabled':''} title="${f.kind==='receipt'?'移动到待办材料，参与材料核对':'移动到提交回执'}">${f.kind==='receipt'?'转为材料':'转为回执'}</button><button class="icon-button" data-preview-file="${esc(f.id)}" data-name="${esc(f.name)}" title="预览" aria-label="预览 ${esc(f.name)}">${icon('preview')}</button><button class="icon-button" data-rename-file="${esc(f.id)}" data-name="${esc(f.name)}" data-version="${task.version}" title="重命名" aria-label="重命名 ${esc(f.name)}">${icon('edit')}</button><button class="icon-button" data-download="${esc(f.id)}" data-name="${esc(f.name)}" title="下载" aria-label="下载 ${esc(f.name)}">${icon('download')}</button><button class="icon-button" data-delete-file="${esc(f.id)}" data-version="${task.version}" title="移入回收站" aria-label="移入回收站 ${esc(f.name)}">${icon('trash')}</button></div>`; }
 function urgencySwitch(t) {
   return ['high', 'normal', 'low'].map(u => `<button class="status-step ${((t.urgency || 'normal') === u) ? 'on' : ''} ${u === 'high' ? 'red' : ''}" data-set-urgency="${u}" ${t.pending ? 'disabled' : ''}>${({ high: '紧急', normal: '普通', low: '不急' })[u]}</button>`).join('');
 }

@@ -9,9 +9,14 @@
 3. **分支**：`main`
 4. **构建**：仓库根目录的 `Dockerfile`（Go 多阶段编译 + Debian slim，自带健康检查 `/health`）
 5. **端口**：容器内 `8765`，对外由 Coolify 反代
-6. **持久卷**：`jiaojianbox-data:/data`（SQLite + 附件 + `master.key` 都在这里，**备份要带整个 /data**）
+6. **持久卷**：`jiaojianbox-data:/data`（SQLite、附件和默认的 `master.key` 都在这里；使用托管 `JJB_MASTER_KEY` 时，密钥由平台 Secret 保存，不写入卷）
 7. **环境变量**（Coolify 环境变量面板）：
-   - `JJB_ALLOW_REGISTRATION=false`（首个账号注册后关闭开放注册）
+   - `JJB_ALLOW_REGISTRATION=false`（默认关闭公开注册）
+   - `JJB_BOOTSTRAP_ADMIN_USERNAME` / `JJB_BOOTSTRAP_ADMIN_PASSWORD`（首次启动创建管理员，确认登录后移除）
+   - `JJB_MASTER_KEY`（可选；设置后由平台 Secret 管理数据密钥）
+   - `JJB_PUBLIC_URL=https://jiaojianbox.bansonic.top`
+   - `JJB_ALLOWED_ORIGINS`（仅独立网页前端需要时填写逗号分隔的完整 Origin）
+   - `JJB_ALLOW_PRIVATE_UPSTREAMS=false`（公网部署保持关闭；此时自定义模型接口必须使用 HTTPS。启用后允许本机、局域网和 HTTP 模型，存在 SSRF 风险，只应在受信任网络中设置）
    - `JJB_MAX_UPLOAD_MB=50`
 8. **域名**：Coolify 应用 → Domains 绑定 `jiaojianbox.bansonic.top`，勾选 Let's Encrypt 证书（HTTPS 自动配好；WebSocket `/api/sync` 由 Coolify 反代默认支持）
 
@@ -51,6 +56,6 @@ v0.5.0：桌面端和安卓端默认连接 `https://jiaojianbox.bansonic.top`，
 
 ## 0.6.0 升级与回滚
 
-保留原 `/data` 持久卷和 UID 1000，并另外备份完整 SQLite、附件和实际加密密钥。新进程首次启动时会生成 `/data/backups/before-go/`，每次代码版本升级生成对应版本目录；包括一致性数据库、master.key、workspace.id 和按 SHA-256 验证的附件。备份前会先合并 WAL 并执行完整性检查，0 字节、中断或未通过校验的备份会被隔离后重建。主库损坏或缺失时会先尝试原位修复，再恢复最新完整备份；无法恢复的坏文件会移到 `/data/recovery/`。只要当前数据库仍通过完整性检查，附件备份失败不会阻断服务启动，并会记录警告供运维处理。
+保留原 `/data` 持久卷和 UID 1000，并另外备份完整 SQLite、附件和实际加密密钥。新进程首次启动时会生成 `/data/backups/before-go/`，每次代码版本升级生成对应版本目录；包括一致性数据库、workspace.id 和按 SHA-256 验证的附件。使用文件密钥时目录还会包含 `master.key`；使用托管 `JJB_MASTER_KEY` 时，备份 marker 会记录 `key_source=environment`，密钥留在平台 Secret 中，不复制进备份。备份前会先合并 WAL 并执行完整性检查，0 字节、中断或未通过校验的备份会被隔离后重建。主库损坏或缺失时会先尝试原位修复，再恢复最新完整备份；无法恢复的坏文件会移到 `/data/recovery/`。只要当前数据库仍通过完整性检查，附件备份失败不会阻断服务启动，并会记录警告供运维处理。
 
-部署后必须核对健康状态、账号/待办/消息/附件计数，并测试已有账号登录。需要回滚时优先切回原镜像且继续挂载当前卷；自动化兼容验收已覆盖 Go 写入后旧 Python 版本读取。若要恢复历史数据，先停止写入，再整体恢复同一份备份中的数据库、附件和密钥；不要只恢复数据库或把加密密钥替换为新生成的文件。
+部署后必须核对健康状态、账号/待办/消息/附件计数，并测试已有账号登录。需要回滚时优先切回原镜像且继续挂载当前卷；自动化兼容验收已覆盖 Go 写入后旧 Python 版本读取。若要恢复历史数据，先停止写入，再整体恢复同一份备份中的数据库、附件和密钥；使用环境变量密钥时必须同时恢复原来平台 Secret 中的值。不要只恢复数据库或把加密密钥替换为新生成的文件。

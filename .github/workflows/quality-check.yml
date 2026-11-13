@@ -41,3 +41,18 @@ jobs:
 
       - name: Verify legacy compatibility
         run: python -m pytest tests -q
+
+  windows-gui:
+    name: Windows GUI package tests
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Verify Windows GUI tests
+        run: |
+          go test ./internal/gui -count=1
+          go vet ./internal/gui

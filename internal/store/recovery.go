@@ -174,16 +174,21 @@ func validateBackup(directory string) error {
 	if err = prepareSQLite(database); err != nil {
 		return err
 	}
-	keyData, err := os.ReadFile(filepath.Join(directory, "master.key"))
-	if err != nil {
-		return err
+	keyData, keyErr := os.ReadFile(filepath.Join(directory, "master.key"))
+	managedKey := environmentKey()
+	if keyErr != nil && !(errors.Is(keyErr, os.ErrNotExist) && managedKey != "") {
+		return keyErr
 	}
-	key, err := base64.URLEncoding.DecodeString(strings.TrimSpace(string(keyData)))
+	keyValue := strings.TrimSpace(string(keyData))
+	if managedKey != "" {
+		if keyValue != "" && keyValue != managedKey {
+			return errors.New("备份加密密钥与环境变量不一致")
+		}
+		keyValue = managedKey
+	}
+	key, err := base64.URLEncoding.DecodeString(keyValue)
 	if err != nil || len(key) != 32 {
 		return errors.New("备份加密密钥无效")
-	}
-	if encoded := strings.TrimSpace(os.Getenv("JJB_MASTER_KEY")); encoded != "" && encoded != strings.TrimSpace(string(keyData)) {
-		return errors.New("备份加密密钥与环境变量不一致")
 	}
 	db, err := sql.Open("sqlite", filepath.ToSlash(database)+"?mode=ro")
 	if err != nil {
@@ -286,6 +291,11 @@ func restoreBackupFiles(root, backupDirectory, quarantine string) error {
 }
 
 func restoreBackupKey(root, backupDirectory, quarantine string) error {
+	if environmentKey() != "" {
+		// Store.Open reads a managed deployment key directly from the
+		// orchestrator secret. Never materialize it on the persistent volume.
+		return nil
+	}
 	backupKey := filepath.Join(backupDirectory, "master.key")
 	expected, err := os.ReadFile(backupKey)
 	if err != nil {

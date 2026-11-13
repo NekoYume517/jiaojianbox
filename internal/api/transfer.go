@@ -321,7 +321,7 @@ func (s *Server) importManifest(ctx context.Context, user string, m Object, entr
 			counts["files"] = num(counts, "files") + 1
 		}
 		if settings := object(m["llm_settings"]); len(settings) > 0 && len(query(ctx, db, "SELECT 1 FROM llm_settings WHERE user_id=?", user)) == 0 {
-			config := llmInput(settings)
+			config := llmInput(ctx, settings)
 			exec(ctx, db, "INSERT INTO llm_settings VALUES(?,?,?)", user, store.JSON(config), "")
 		}
 		return Object{"imported": counts, "message": "复制导入完成；来源数据保持不变，重复内容已跳过。"}

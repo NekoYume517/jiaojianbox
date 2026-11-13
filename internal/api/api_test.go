@@ -22,6 +22,7 @@ func testServer(t *testing.T) *Server {
 	t.Helper()
 	t.Setenv("JJB_REQUIRE_EMAIL", "false")
 	t.Setenv("JJB_ALLOW_REGISTRATION", "true")
+	t.Setenv("JJB_ALLOW_PRIVATE_UPSTREAMS", "true")
 	t.Setenv("JJB_BOOTSTRAP_ADMIN_USERNAME", "")
 	t.Setenv("JJB_MASTER_KEY", "")
 	db, err := store.Open(t.TempDir())
