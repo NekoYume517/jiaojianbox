@@ -29,14 +29,16 @@
 
 ## 开发与验证
 
-需要 Go 1.26.8 或更新版本。Windows 桌面开发需要系统 WebView2。核心 HTTP 服务不依赖 Node 或 Python。
+需要 Go 1.26.10 或更新版本。Windows 桌面开发需要系统 WebView2。核心 HTTP 服务不依赖 Node 或 Python。
 
 ```powershell
 go run ./cmd/jiaojianbox-server
 go run ./cmd/jiaojianbox
-go test ./internal/api ./internal/store ./internal/setup ./internal/gui
+npm test
 go vet ./internal/api ./internal/store ./internal/setup ./internal/gui
 ```
+
+`npm test` 会先校验 README、Go、Docker、Android 与锁文件中的版本一致性，再运行前端静态契约和 Go 核心测试。浏览器体验测试使用 `npm run test:web:e2e`，动效规则可用 `node --test scripts/verify-motion-contract.cjs` 单独检查。
 
 仅构建采集组件/安装程序时需要 Python 和 Node 构建工具：
 
@@ -55,7 +57,7 @@ python -X utf8 scripts/verify-installer.py
 
 云端始终挂载原 `/data` 数据卷。不要在升级时删除或替换卷，也不要更换 `master.key`/`JJB_MASTER_KEY`。云端与本机迁移为复制式，不删除来源，不迁移账号凭证和模型密钥。部署步骤见 [Coolify 指南](docs/deploy-coolify.md)。
 
-当前发行包统一使用 Go 核心、Wails v3 桌面、共享 Web 界面、独立采集组件与自定义安装程序。`server/` 仅保留用于兼容测试与历史数据行为；历史架构说明见 [历史文档](docs/legacy-implementation.md)。
+当前发行包统一使用 Go 核心、Wails v3 桌面、共享 Web 界面、独立采集组件与自定义安装程序。`server/` 仅保留用于兼容测试与历史数据行为，计划在 0.7.0 发布前把迁移夹具移入 `tests/fixtures/` 并移除该目录；历史架构说明见 [历史文档](docs/legacy-implementation.md)。
 
 ## 插件开发
 

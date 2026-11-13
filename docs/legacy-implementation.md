@@ -2,6 +2,8 @@
 
 以下说明对应 0.5.x 及更早版本，当前实现请以根目录 README 为准。
 
+`server/` 是历史迁移与兼容验证用的 Python/FastAPI 夹具，不属于当前运行链路。迁移测试所需的数据库、账号和附件样本应先迁入 `tests/fixtures/`，并在 0.7.0 发布前移除 `server/`；在此之前不得用 `server/` 启动生产服务。
+
 # 交件箱 0.3.0
 
 Windows 私人验收包：解压后直接运行 JiaojianBox.exe。内置独立 Python 3.13、微信数据库读取模块（wechatauto-replica 1.2.9 的 db.py）和 SnowLuma 2.1.1，无需安装系统 Python，也无需打开 SnowLuma 配置网页。

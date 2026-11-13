@@ -9,8 +9,11 @@
     "start": "go run ./cmd/jiaojianbox",
     "server": "go run ./cmd/jiaojianbox-server",
     "package:win": "node scripts/package-win.mjs",
-    "test": "go test ./internal/api ./internal/store ./internal/setup",
+    "test": "npm run verify:version && node --test scripts/web-contract.test.cjs scripts/verify-motion-contract.cjs && go test ./internal/api ./internal/store ./internal/setup",
+    "test:web": "node --test scripts/web-contract.test.cjs scripts/verify-motion-contract.cjs",
+    "test:web:e2e": "node scripts/verify-browser-experience.cjs",
     "test:legacy": "python -m pytest tests -q",
+    "verify:version": "python -X utf8 scripts/verify-version.py",
     "verify:signing": "python -X utf8 scripts/verify-android-signing.py"
   },
   "devDependencies": {
