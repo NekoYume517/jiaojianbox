@@ -395,14 +395,16 @@ func (s *Server) messageRoutes() {
 				m["triage"] = "ignored"
 			}
 			if settings != nil && verdict.Verdict != "noise" && eligible(config, str(m, "text")) {
-				exec(r.Context(), db, "INSERT OR IGNORE INTO analysis_jobs(user_id,message_id) VALUES(?,?)", r.User, m["id"])
-				sessionID := s.ensureConversationSession(r.Context(), db, r.User, m, agentContextLimitFromConfig(config))
-				s.queueAgentRun(r.Context(), db, r.User, "notification-"+str(m, "id"), sessionID, str(m, "id"))
-				m["analysis_pending"] = true
-				m["analysis_state"] = "queued"
 				if verdict.Verdict == "unknown" && boolean(config, "batch_triage") {
-					// 第二层：进入分诊队列，由分诊 worker 批量判断后再决定是否深度分析。
+					// Queue only the lightweight triage step. Analysis and Agent
+					// runs are created after the batch verdict is actionable.
 					m["triage_state"] = "pending"
+				} else {
+					exec(r.Context(), db, "INSERT OR IGNORE INTO analysis_jobs(user_id,message_id) VALUES(?,?)", r.User, str(m, "id"))
+					sessionID := s.ensureConversationSession(r.Context(), db, r.User, m, agentContextLimitFromConfig(config))
+					s.queueAgentRun(r.Context(), db, r.User, "notification-"+str(m, "id"), sessionID, str(m, "id"))
+					m["analysis_pending"] = true
+					m["analysis_state"] = "queued"
 				}
 			}
 			exec(r.Context(), db, "INSERT INTO messages(id,user_id,dedup,payload,created_at) VALUES(?,?,?,?,?)", m["id"], r.User, dedup, store.JSON(m), m["created_at"])

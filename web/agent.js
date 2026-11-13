@@ -133,7 +133,7 @@
     holder.querySelector('[data-tool-group-label]').textContent=pending?'正在执行工具':'已执行 '+holder.querySelectorAll('.agent-tool-row').length+' 项操作';
   }
   const stageLabel = run => ({queued:'排队中',starting:'正在准备分析',context:'正在读取会话上下文',request:'等待模型响应',receiving:'正在接收模型输出',tool:'正在执行工具',compressing:'正在压缩上下文',compressed:'上下文已压缩',validating:'正在整理分析结果',waiting:'等待模型继续输出'}[run.stage] || '正在分析');
-  const runLabel = run => run.state==='cancelled'?'已停止':run.state==='failed'?'本轮未完成':run.state==='interrupted'?'上次处理已中断':run.state==='queued'?(run.stage==='retrying'?'等待重试':'排队中'):stageLabel(run);
+  const runLabel = run => run.state==='skipped'?'已跳过':run.state==='cancelled'?'已停止':run.state==='failed'?'本轮未完成':run.state==='interrupted'?'上次处理已中断':run.state==='queued'?(run.stage==='retrying'?'等待重试':'排队中'):stageLabel(run);
   const runActive = run => ['queued','running'].includes(run.state);
   function runMarkup(run) {
     return `<article class="agent-message agent-message-assistant agent-live-run" data-agent-run="${esc(run.id)}"><div class="agent-message-role">${run.source_message_id?'触发器分析':'交件箱 Agent'}</div><div class="agent-message-bubble"><div class="agent-run-heading"><span class="agent-run-status" data-run-status>${esc(runLabel(run))}</span><button type="button" class="plain-button agent-run-stop" data-agent-stop data-run-id="${esc(run.id)}" ${runActive(run)?'':'hidden'}>停止</button></div>${toolsMarkup(Array.isArray(run.tools)?run.tools:[])}<div class="agent-message-copy markdown-body" data-run-text>${markdown(run.text||'',run.id)}</div><p class="agent-run-note" data-run-note>${run.received_chars?'已接收 '+run.received_chars+' 字':''}</p></div></article>`;

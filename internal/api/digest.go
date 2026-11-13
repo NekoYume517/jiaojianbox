@@ -48,7 +48,7 @@ func (s *Server) digestInput(b Object) Object {
 // digestCandidates 取该会话里「尚未进入摘要、且已经过了冷却时间」的消息。
 func (s *Server) digestCandidates(ctx context.Context, db store.SQL, user, source, account, conversation string) []Object {
 	rows := query(ctx, db, `SELECT payload FROM messages
-		WHERE user_id=? AND json_extract(payload,'$.source')=?
+		WHERE user_id=? AND deleted_at IS NULL AND json_extract(payload,'$.source')=?
 		  AND json_extract(payload,'$.account_id')=?
 		  AND json_extract(payload,'$.conversation_id')=?
 		  AND COALESCE(json_extract(payload,'$.triage'),'') <> 'ignored'
@@ -207,23 +207,30 @@ func (s *Server) digestOne(ctx context.Context, user string, body Object, p prog
 		last["messages"] = append(list(last, "messages"), orphan...)
 	}
 
+	headline := strings.TrimSpace(clip(fmtValue(raw["headline"]), 200))
+	if headline == "" && len(topics) > 0 {
+		headline = str(topics[0], "title")
+	}
+	if headline == "" {
+		headline = "群聊摘要"
+	}
 	result := Object{
-		"id":               store.ID(),
-		"source":           source,
-		"account_id":       account,
-		"conversation_id":  conversation,
+		"id":                store.ID(),
+		"source":            source,
+		"account_id":        account,
+		"conversation_id":   conversation,
 		"conversation_name": fallback(str(fresh[0], "conversation_name"), conversation),
-		"headline":         clip(fmtValue(raw["headline"]), 200),
-		"topics":           topics,
-		"decisions":        textList(raw["decisions"], 3, 200),
-		"todo_hints":       textList(raw["todo_hints"], 3, 200),
-		"message_ids":      collectIDs(items),
-		"message_count":    len(items),
-		"from":             str(fresh[0], "sent_at"),
-		"to":               str(fresh[len(fresh)-1], "sent_at"),
-		"model":            str(config, "model"),
-		"created_at":       store.Now(),
-		"performance":      metrics,
+		"headline":          headline,
+		"topics":            topics,
+		"decisions":         textList(raw["decisions"], 3, 200),
+		"todo_hints":        textList(raw["todo_hints"], 3, 200),
+		"message_ids":       collectIDs(items),
+		"message_count":     len(items),
+		"from":              str(fresh[0], "sent_at"),
+		"to":                str(fresh[len(fresh)-1], "sent_at"),
+		"model":             str(config, "model"),
+		"created_at":        store.Now(),
+		"performance":       metrics,
 	}
 	s.transaction(ctx, func(db store.SQL) any {
 		exec(ctx, db, `INSERT INTO digests(id,user_id,source,account_id,conversation_id,payload,created_at)

@@ -5,7 +5,6 @@ package api
 
 import (
 	"context"
-	"strings"
 	"time"
 
 	"github.com/NekoYume517/jiaojianbox/internal/store"
@@ -14,49 +13,69 @@ import (
 const (
 	triageIdleMinutes = 3
 	triageMaxWait     = 20 * time.Minute
+	triageGroupsPass  = 24
+	triageRetryDelay  = 2 * time.Minute
 )
 
 type triageGroup struct {
-	User       string
-	Source     string
-	Account    string
+	User         string
+	Source       string
+	Account      string
 	Conversation string
-	Name       string
-	Messages   []Object
+	Name         string
+	Messages     []Object
 }
 
 func (s *Server) pendingTriageGroups(ctx context.Context, force bool) []triageGroup {
-	rows := query(ctx, s.Store.DB, `SELECT user_id,rowid AS message_rowid,payload FROM messages
-		WHERE json_extract(payload,'$.triage_state')='pending'
-		ORDER BY rowid LIMIT 400`)
-	groups := map[string]*triageGroup{}
-	order := []string{}
-	for _, row := range rows {
-		m := store.Payload(row)
-		owner := str(row, "user_id")
-		if owner == "" {
-			owner = str(m, "user_id")
+	// Select one conversation for each user before loading its messages. A
+	// single busy account can therefore never consume the global batch limit.
+	users := query(ctx, s.Store.DB, `
+		SELECT user_id,MIN(rowid) AS first_row
+		FROM messages
+		WHERE deleted_at IS NULL
+			AND json_extract(payload,'$.triage_state')='pending'
+		GROUP BY user_id
+		ORDER BY first_row
+		LIMIT ?`, triageGroupsPass)
+	groupRows := []Object{}
+	for _, userRow := range users {
+		row := first(query(ctx, s.Store.DB, `
+			SELECT user_id,
+				json_extract(payload,'$.source') AS source,
+				json_extract(payload,'$.account_id') AS account_id,
+				json_extract(payload,'$.conversation_id') AS conversation_id,
+				MIN(rowid) AS first_row
+			FROM messages
+			WHERE user_id=? AND deleted_at IS NULL
+				AND json_extract(payload,'$.triage_state')='pending'
+			GROUP BY source,account_id,conversation_id
+			ORDER BY first_row LIMIT 1`, str(userRow, "user_id")))
+		if row != nil {
+			groupRows = append(groupRows, row)
 		}
-		key := strings.Join([]string{owner, str(m, "source"), str(m, "account_id"), str(m, "conversation_id")}, "\x00")
-		group := groups[key]
-		if group == nil {
-			group = &triageGroup{
-				User: owner, Source: str(m, "source"),
-				Account: str(m, "account_id"), Conversation: str(m, "conversation_id"),
-				Name: str(m, "conversation_name"),
-			}
-			groups[key] = group
-			order = append(order, key)
-		}
-		group.Messages = append(group.Messages, m)
 	}
 	// 同一会话里等待最久的消息超过阈值，或已静默足够久，才触发一次批量判断。
 	now := time.Now()
 	ready := []triageGroup{}
-	for _, key := range order {
-		group := groups[key]
-		messages := group.Messages
-		if len(messages) == 0 {
+	for _, groupRow := range groupRows {
+		rows := query(ctx, s.Store.DB, `SELECT user_id,rowid AS message_rowid,payload
+			FROM messages
+			WHERE user_id=? AND deleted_at IS NULL
+				AND json_extract(payload,'$.source')=?
+				AND json_extract(payload,'$.account_id')=?
+				AND json_extract(payload,'$.conversation_id')=?
+				AND json_extract(payload,'$.triage_state')='pending'
+			ORDER BY rowid LIMIT ?`,
+			str(groupRow, "user_id"), str(groupRow, "source"), str(groupRow, "account_id"),
+			str(groupRow, "conversation_id"), triageBatchSize)
+		if len(rows) == 0 {
+			continue
+		}
+		messages := []Object{}
+		for _, row := range rows {
+			messages = append(messages, store.Payload(row))
+		}
+		if retryAt, err := time.Parse(time.RFC3339Nano, str(messages[0], "triage_next_at")); err == nil && retryAt.After(now) {
 			continue
 		}
 		oldest, _ := time.Parse(time.RFC3339Nano, str(messages[0], "created_at"))
@@ -72,12 +91,31 @@ func (s *Server) pendingTriageGroups(ctx context.Context, force bool) []triageGr
 				messages = messages[:triageBatchSize]
 			}
 			ready = append(ready, triageGroup{
-				User: group.User, Source: group.Source, Account: group.Account,
-				Conversation: group.Conversation, Name: group.Name, Messages: messages,
+				User: str(groupRow, "user_id"), Source: str(groupRow, "source"), Account: str(groupRow, "account_id"),
+				Conversation: str(groupRow, "conversation_id"), Name: str(messages[0], "conversation_name"), Messages: messages,
 			})
+		}
+		if len(ready) >= triageGroupsPass {
+			break
 		}
 	}
 	return ready
+}
+
+func (s *Server) deferTriageGroup(ctx context.Context, group triageGroup, retryAt time.Time, reason string) {
+	s.transaction(ctx, func(db store.SQL) any {
+		rows := query(ctx, db, `SELECT id,payload FROM messages
+			WHERE user_id=? AND json_extract(payload,'$.triage_state')='pending'`, group.User)
+		for _, row := range rows {
+			current := store.Payload(row)
+			current["triage_next_at"] = retryAt.UTC().Format(time.RFC3339Nano)
+			current["triage_error"] = reason
+			id := str(current, "id")
+			exec(ctx, db, "UPDATE messages SET payload=? WHERE id=? AND user_id=?", store.JSON(current), id, group.User)
+			event(ctx, db, group.User, "message.upsert", id)
+		}
+		return nil
+	})
 }
 
 func (s *Server) applyTriage(ctx context.Context, group triageGroup, verdicts map[string]Object) {
@@ -91,10 +129,17 @@ func (s *Server) applyTriage(ctx context.Context, group triageGroup, verdicts ma
 			current := store.Payload(row)
 			verdict := verdicts[id]
 			if verdict == nil {
-				// 模型漏判：保守当作闲聊，不再占用后续额度。
-				verdict = Object{"verdict": "chatting", "confidence": 0.0, "reason": "分诊未返回", "layer": "batch"}
+				// Keep a missing model verdict pending. Guessing "chatting" here
+				// permanently discards potentially actionable notifications.
+				current["triage_next_at"] = time.Now().Add(triageRetryDelay).UTC().Format(time.RFC3339Nano)
+				current["triage_error"] = "分诊结果缺失，稍后重试"
+				exec(ctx, db, "UPDATE messages SET payload=? WHERE id=? AND user_id=?", store.JSON(current), id, group.User)
+				event(ctx, db, group.User, "message.upsert", id)
+				continue
 			}
 			current["triage_state"] = "done"
+			delete(current, "triage_next_at")
+			delete(current, "triage_error")
 			current["triage_batch"] = verdict
 			label := str(verdict, "verdict")
 			if label == "actionable" && num(verdict, "confidence") >= 0.5 {
@@ -103,9 +148,19 @@ func (s *Server) applyTriage(ctx context.Context, group triageGroup, verdicts ma
 				current["analysis_pending"] = true
 				current["analysis_state"] = "queued"
 			} else {
-				// 入库时已先入队；批量分诊判定为非待办就要撤回队列，
-				// 否则深度分析仍会为每条闲聊各调用一次模型。
+				// Older pending messages may already have both queues. Retire
+				// them together so trigger history cannot show a ghost task.
 				exec(ctx, db, "UPDATE analysis_jobs SET state='skipped' WHERE message_id=? AND user_id=? AND state='queued'", id, group.User)
+				runID := "notification-" + id
+				if run := first(query(ctx, db, "SELECT payload,session_id FROM agent_runs WHERE id=? AND user_id=? AND state IN ('queued','running')", runID, group.User)); run != nil {
+					payload := store.Payload(run)
+					payload["state"] = "skipped"
+					payload["stage"] = "skipped"
+					payload["text"] = "消息已被批量分诊跳过，未调用深度分析。"
+					payload["error"] = ""
+					exec(ctx, db, "UPDATE agent_runs SET state='skipped',payload=?,updated_at=? WHERE id=? AND user_id=?", store.JSON(payload), store.Now(), runID, group.User)
+					event(ctx, db, group.User, "agent.run.upsert", str(run, "session_id"))
+				}
 				delete(current, "analysis_pending")
 				delete(current, "analysis_state")
 			}
@@ -135,8 +190,10 @@ func (s *Server) triageWorker(ctx context.Context) {
 					callCtx, stop := context.WithTimeout(ctx, 90*time.Second)
 					verdicts := s.triageBatch(callCtx, group.User, group.Messages, nil)
 					stop()
-					if verdicts == nil {
-						// 模型不可用：消息保持 pending，下一轮再试。
+					if len(verdicts) == 0 {
+						// Model unavailable or malformed: move this user's
+						// pending work behind other users before retrying.
+						s.deferTriageGroup(ctx, group, time.Now().Add(triageRetryDelay), "批量分诊暂不可用，稍后重试")
 						continue
 					}
 					s.applyTriage(ctx, group, verdicts)
