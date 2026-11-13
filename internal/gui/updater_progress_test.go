@@ -18,21 +18,35 @@ import (
 func TestUpdateDownloadProgressSurvivesViewReload(t *testing.T) {
 	for _, known := range []bool{true, false} {
 		t.Run(strconv.FormatBool(known), func(t *testing.T) {
+			allowFinish := make(chan struct{})
+			var finishOnce sync.Once
+			finish := func() {
+				finishOnce.Do(func() {
+					close(allowFinish)
+				})
+			}
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if known {
 					w.Header().Set("Content-Length", strconv.Itoa(10*4096))
 				}
 				w.WriteHeader(200)
 				w.(http.Flusher).Flush()
-				for i := 0; i < 10; i++ {
+				for i := 0; i < 9; i++ {
 					if _, err := w.Write(make([]byte, 4096)); err != nil {
 						return
 					}
 					w.(http.Flusher).Flush()
-					time.Sleep(80 * time.Millisecond)
 				}
+				select {
+				case <-allowFinish:
+				case <-r.Context().Done():
+					return
+				}
+				_, _ = w.Write(make([]byte, 4096))
+				w.(http.Flusher).Flush()
 			}))
 			defer server.Close()
+			defer finish()
 			root := t.TempDir()
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
@@ -61,6 +75,7 @@ func TestUpdateDownloadProgressSurvivesViewReload(t *testing.T) {
 					if !known && store.Number(state, "total") >= 0 {
 						t.Fatal("invented total for chunked response")
 					}
+					finish()
 				}
 				if getString(state, "status") == "downloaded" {
 					if !observed {

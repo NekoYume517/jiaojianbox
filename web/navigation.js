@@ -34,7 +34,12 @@
   let signature='', currentBox, queued=false, selectionAnimation;
   const sidebarQuery=matchMedia('(max-width:820px)');
   const sidebarKey='jjb-sidebar-mode';
-  const readSidebarMode=()=>['icons','labels'].includes(localStorage.getItem(sidebarKey))?localStorage.getItem(sidebarKey):sidebarQuery.matches?'icons':'labels';
+  const readSidebarMode=()=>{
+    const current=document.documentElement.dataset.sidebar;
+    if(['icons','labels'].includes(current))return current;
+    const stored=localStorage.getItem(sidebarKey);
+    return ['icons','labels'].includes(stored)?stored:sidebarQuery.matches?'icons':'labels';
+  };
   const sidebarButton=document.getElementById('sidebar-toggle');
   function applySidebarMode(mode,animate=true){
     const previous=document.documentElement.dataset.sidebar;
