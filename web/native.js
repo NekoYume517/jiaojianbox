@@ -22,26 +22,38 @@
     ready.then(runtime => { unsubscribe = runtime.Events.On(name, event => callback(event.data)); if (cancelled) unsubscribe?.(); });
     return () => { cancelled = true; unsubscribe?.(); };
   };
-  window.desktop = Object.fromEntries(['pluginExec','pluginList','pluginGet','pluginImport','pluginImportArchive','pluginSet','pluginDelete','pluginDataGet','pluginDataSet','pluginRecord','pluginRuns','offlineStart', 'quickGet', 'quickSet', 'reminderGet', 'reminderSet', 'reminderTest', 'launcherGet', 'launcherSet', 'updateGet', 'updateSet', 'updateCheck', 'updateDownload', 'updateInstall', 'updateCancel', 'get', 'set', 'remove', 'platform', 'getAppearance', 'setAppearance', 'tintTitlebar', 'discoverQQ', 'connectQQ', 'sourceDiagnostics', 'debugQQ', 'selectRuntime', 'external', 'listConversations', 'startCollector', 'stopCollector', 'collectorState', 'download', 'quickState', 'quickChoose', 'quickNote', 'quickHide', 'window'].map(name => [name, (...args) => invoke(name, ...args)]));
+  window.desktop = Object.fromEntries(['pluginExec','pluginList','pluginGet','pluginImport','pluginImportArchive','pluginSet','pluginDelete','pluginDataGet','pluginDataSet','pluginRecord','pluginRuns','offlineStart', 'quickGet', 'quickSet', 'reminderGet', 'reminderSet', 'reminderTest', 'launcherGet', 'launcherSet', 'updateGet', 'updateSet', 'updateCheck', 'updateDownload', 'updateInstall', 'updateCancel', 'get', 'set', 'remove', 'platform', 'getAppearance', 'setAppearance', 'tintTitlebar', 'qqConnectorGet', 'qqConnectorSet', 'discoverQQ', 'connectQQ', 'sourceConsent', 'acceptSourceConsent', 'sourceDiagnostics', 'debugQQ', 'selectRuntime', 'external', 'listConversations', 'startCollector', 'stopCollector', 'collectorState', 'download', 'quickState', 'quickChoose', 'quickNote', 'quickHide', 'window'].map(name => [name, (...args) => invoke(name, ...args)]));
   Object.assign(window.desktop, { nativeFileDrop: true, onAppearance: callback => on('appearance-updated', callback), onCollector: callback => on('collector-state', callback), on });
-  const discover = desktop.discoverQQ;
-  desktop.discoverQQ = async (preferred,quiet=false) => {
-    try { return await discover(preferred); }
+  const discover = desktop.discoverQQ, connect = desktop.connectQQ;
+  const requestConsent = async (preferred,connector) => {
+    const info = await invoke('sourceConsent', preferred, connector);
+    const dialog = document.createElement('dialog'); dialog.className = 'component-consent';
+    const form = document.createElement('form'); form.method = 'dialog';
+    const title = document.createElement('h2'); title.textContent = connector === 'snowcat' ? '启用 SnowCat 连接器' : '启用 QQ 采集组件';
+    const note = document.createElement('p'); note.textContent = connector === 'snowcat' ? 'SnowCat 需要在本机 QQ 进程中运行。继续后会部署连接器文件，重启 QQ 后生效。' : '请阅读采集组件的用户协议与隐私政策。';
+    const content = document.createElement('pre'); content.textContent = info.eula + '\n\n' + info.privacy;
+    const actions = document.createElement('div'); actions.className = 'dialog-footer';
+    for (const [value, label, className] of [['cancel', '取消', 'secondary'], ['accept', '同意并继续', 'primary']]) { const button = document.createElement('button'); Object.assign(button, { value, textContent: label, className }); actions.append(button); }
+    form.append(title, note, content, actions); dialog.append(form); document.body.append(dialog);
+    const accepted = await new Promise(resolve => { dialog.addEventListener('close', () => resolve(dialog.returnValue === 'accept'), { once: true }); dialog.showModal(); }); dialog.remove();
+    if (!accepted) throw Error('尚未同意组件协议，QQ 采集未启用');
+    await invoke('acceptSourceConsent', preferred, connector);
+  };
+  desktop.discoverQQ = async (preferred,quiet=false,connector='snowluma') => {
+    try { return await discover(preferred,quiet,connector); }
     catch (error) {
       if (!String(error.message).includes('CONSENT_REQUIRED')) throw error;
       if(quiet)return {instances:[],needs_consent:true};
-      const info = await invoke('sourceConsent', preferred);
-      const dialog = document.createElement('dialog'); dialog.className = 'component-consent';
-      const form = document.createElement('form'); form.method = 'dialog';
-      const title = document.createElement('h2'); title.textContent = '启用 QQ 采集组件';
-      const note = document.createElement('p'); note.textContent = '请阅读采集组件的用户协议与隐私政策。';
-      const content = document.createElement('pre'); content.textContent = info.eula + '\n\n' + info.privacy;
-      const actions = document.createElement('div'); actions.className = 'dialog-footer';
-      for (const [value, label, className] of [['cancel', '取消', 'secondary'], ['accept', '同意并继续', 'primary']]) { const button = document.createElement('button'); Object.assign(button, { value, textContent: label, className }); actions.append(button); }
-      form.append(title, note, content, actions); dialog.append(form); document.body.append(dialog);
-      const accepted = await new Promise(resolve => { dialog.addEventListener('close', () => resolve(dialog.returnValue === 'accept'), { once: true }); dialog.showModal(); }); dialog.remove();
-      if (!accepted) throw Error('尚未同意组件协议，QQ 采集未启用');
-      await invoke('acceptSourceConsent', preferred); return discover(preferred);
+      await requestConsent(preferred,connector); return discover(preferred,quiet,connector);
+    }
+  };
+  desktop.connectQQ = async (value={}) => {
+    try { return await connect(value); }
+    catch (error) {
+      if (!String(error.message).includes('CONSENT_REQUIRED')) throw error;
+      const connector=value.qq_connector||'snowluma';
+      await requestConsent(connector==='snowcat'?value.snowcat_home:value.snowluma_home,connector);
+      return connect(value);
     }
   };
   function markTargets() {

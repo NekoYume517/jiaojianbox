@@ -83,7 +83,11 @@ func scanEvents(reader io.Reader, onEvent func(Object)) error {
 }
 func (d *Desktop) listConversations(source string, config Object) (any, error) {
 	if source == "qq" {
-		return d.qq.contacts(getString(config, "qq_account"))
+		manager, _, err := d.activeQQConnector(getString(config, "qq_connector"))
+		if err != nil {
+			return nil, err
+		}
+		return manager.contacts(getString(config, "qq_account"))
 	}
 	if source != "wechat" {
 		return nil, errors.New("消息来源无效")
@@ -122,8 +126,13 @@ func (d *Desktop) startCollector(config Object) (any, error) {
 	qqChats, _ := config["qq_chats"].([]any)
 	wechatChats, _ := config["wechat_chats"].([]any)
 	if len(qqChats) > 0 {
+		manager, _, managerErr := d.activeQQConnector(getString(config, "qq_connector"))
 		var err error
-		prepared, err = d.qq.prepare(config)
+		if managerErr != nil {
+			err = managerErr
+		} else {
+			prepared, err = manager.prepare(config)
+		}
 		if err != nil {
 			if len(wechatChats) == 0 {
 				return nil, err
@@ -192,9 +201,29 @@ func (d *Desktop) stopCollector() {
 }
 func (d *Desktop) diagnostics() Object {
 	d.mu.Lock()
+	connector := d.qqConnector
+	d.mu.Unlock()
+	return d.diagnosticsFor(connector)
+}
+
+func (d *Desktop) diagnosticsFor(requested string) Object {
+	d.mu.Lock()
 	state := getObjectCopy(d.state)
 	d.mu.Unlock()
-	out := d.qq.diagnostics()
+	out := Object{}
+	if manager, name, err := d.activeQQConnector(requested); err == nil {
+		out = manager.diagnostics()
+		out["active_connector"] = name
+	} else {
+		out["active_connector"] = normalizeQQConnector(requested)
+		out["error"] = err.Error()
+	}
+	if d.qq != nil {
+		out["snowluma"] = d.qq.diagnostics()
+	}
+	if d.snowcat != nil {
+		out["snowcat"] = d.snowcat.diagnostics()
+	}
 	out["collector"] = state
 	out["collector_log_path"] = d.collectorLogPath()
 	d.collectorLogMu.Lock()

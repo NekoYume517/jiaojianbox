@@ -297,7 +297,8 @@ async function enter(session) {
   state.profile = [...new Uint8Array(hash)].map(x => x.toString(16).padStart(2, '0')).join('').slice(0, 24);
   const saved = await storeGet('cache-' + state.profile);
   state.pending = saved?.pending || []; state.snapshot = saved?.snapshot || { tasks: [], messages: [], cursor: 0 };
-  state.sources = await storeGet('sources-' + state.profile) || { python_path: '', qq_http_url: 'http://127.0.0.1:3000', qq_ws_url: 'ws://127.0.0.1:3001', qq_token: '', qq_chats: [], wechat_chats: [], conversations: [] };
+  state.sources = await storeGet('sources-' + state.profile) || { qq_connector: 'snowluma', python_path: '', qq_http_url: 'http://127.0.0.1:3000', qq_ws_url: 'ws://127.0.0.1:3001', qq_token: '', qq_chats: [], wechat_chats: [], conversations: [] };
+  if(!state.sources.qq_connector)state.sources.qq_connector='snowluma';
   $('#auth').hidden = true; $('#workspace').hidden = false;
   $('#account-name').textContent = session.nickname || (session.mode==='offline'?'本机工作区':session.username); $('#avatar').textContent = session.username.slice(0, 1).toUpperCase();
   $('#account-server').textContent = session.mode==='offline'?'离线使用 · 仅本机':new URL(session.server).host;

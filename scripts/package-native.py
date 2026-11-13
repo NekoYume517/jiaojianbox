@@ -28,7 +28,8 @@ csc=Path(os.environ.get('WINDIR',r'C:\Windows'))/'Microsoft.NET/Framework64/v4.0
 if not csc.is_file():raise SystemExit('Missing C# compiler for drag-watch')
 run([csc,'/nologo','/target:exe','/reference:System.Windows.Forms.dll',f'/out:{ROOT/"desktop/drag-watch.exe"}',ROOT/'desktop/drag-watch.cs'])
 snow=ROOT/'runtime-vendor/snowluma'
-for component in [snow/'node.exe',snow/'native/snowluma-win32-x64.node',ROOT/'desktop/drag-watch.exe']:
+snowcat=ROOT/'runtime-vendor/snowcat'
+for component in [snow/'node.exe',snow/'native/snowluma-win32-x64.node',snowcat/'napcat.mjs',snowcat/'snowcat-boot.js',snowcat/'winmm-v8.dll',snowcat/'LICENSE',ROOT/'desktop/drag-watch.exe']:
  if not component.is_file():raise SystemExit(f'Missing required runtime: {component.name}')
 deps=ROOT/'work/installer-deps';deps.mkdir(parents=True,exist_ok=True)
 # WebView2 ships as an evergreen bootstrapper downloaded on demand during
@@ -57,6 +58,7 @@ finally:
  for file in resources:file.unlink(missing_ok=True)
 shutil.copytree(helper,stage/'runtime/collector-agent',dirs_exist_ok=True,ignore=shutil.ignore_patterns('__pycache__'))
 shutil.copytree(snow,stage/'runtime/snowluma',dirs_exist_ok=True,ignore=shutil.ignore_patterns('__pycache__','client'))
+shutil.copytree(snowcat,stage/'runtime/snowcat',dirs_exist_ok=True)
 wcdb=ROOT/'runtime-vendor/wcdb'
 if not (wcdb/'wcdb_api.dll').is_file():raise SystemExit('Missing runtime-vendor/wcdb/wcdb_api.dll')
 shutil.copytree(wcdb,stage/'runtime/wcdb',dirs_exist_ok=True)

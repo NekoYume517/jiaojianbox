@@ -57,6 +57,8 @@ type Desktop struct {
 	offline                            Object
 	collector, drag                    *exec.Cmd
 	qq                                 *snowManager
+	snowcat                            *snowcatManager
+	qqConnector                        string
 	notifier                           *desktopNotifier
 	reminderMu                         sync.Mutex
 	reminderEnabled                    bool
@@ -143,7 +145,7 @@ func Run(version string) error {
 		logf("job object failed: %v", err)
 		return fmt.Errorf("无法建立采集进程生命周期保护: %w", err)
 	}
-	d := &Desktop{root: root, resources: resourceRoot(), version: version, vault: &vault{root: filepath.Join(root, "vault-go")}, appearance: Object{"theme": "system", "density": "compact", "textSize": "normal", "palette": "magpie"}, prefs: Object{"enabled": true, "drop": true, "note": true, "files": true}, state: Object{"state": "stopped", "message": "采集未启动"}}
+	d := &Desktop{root: root, resources: resourceRoot(), version: version, vault: &vault{root: filepath.Join(root, "vault-go")}, appearance: Object{"theme": "system", "density": "compact", "textSize": "normal", "palette": "magpie"}, prefs: Object{"enabled": true, "drop": true, "note": true, "files": true}, state: Object{"state": "stopped", "message": "采集未启动"}, qqConnector: "snowluma"}
 	d.ctx, d.cancel = context.WithCancel(context.Background())
 	go d.updateLoop()
 	defer d.cancel()
@@ -155,6 +157,11 @@ func Run(version string) error {
 	if value, e := d.vault.get("quick-collection"); e == nil {
 		for k, v := range getObject(value) {
 			d.prefs[k] = v
+		}
+	}
+	if value, e := d.vault.get("qq-connector"); e == nil {
+		if connector := normalizeQQConnector(getString(getObject(value), "name")); connector != "" {
+			d.qqConnector = connector
 		}
 	}
 	d.setupReminders()
@@ -251,6 +258,7 @@ func Run(version string) error {
 		}
 	}()
 	d.qq = newSnowManager(d)
+	d.snowcat = newSnowCatManager(d)
 	tray := d.app.SystemTray.New()
 	tray.SetIcon(icon)
 	tray.SetTooltip("交件箱")
@@ -268,6 +276,11 @@ func Run(version string) error {
 	d.app.GlobalShortcut.Register("Ctrl+Shift+Space", d.showQuick)
 	appendStartupLog(root, "application run beginning")
 	runErr := d.app.Run()
+	if d.snowcat != nil {
+		if err := d.snowcat.shutdown(); err != nil {
+			appendStartupLog(root, "snowcat restore after application exit failed: %v", err)
+		}
+	}
 	appendStartupLog(root, "application exited: %v", runErr)
 	return runErr
 }
@@ -295,6 +308,12 @@ func (d *Desktop) shutdown() {
 	}
 	if d.qq != nil {
 		d.qq.close()
+	}
+	if d.snowcat != nil {
+		if err := d.snowcat.shutdown(); err != nil {
+			appendStartupLog(d.root, "snowcat restore on shutdown failed: %v", err)
+		}
+		d.snowcat.close()
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
@@ -550,18 +569,25 @@ func (d *Desktop) Invoke(method string, args []any) (any, error) {
 		return nil, d.app.Browser.OpenURL(u.String())
 	case "selectRuntime":
 		return d.app.Dialog.OpenFile().CanChooseDirectories(true).CanChooseFiles(false).SetTitle("选择 QQ 采集组件目录").PromptForSingleSelection()
+	case "qqConnectorGet":
+		d.mu.Lock()
+		name := d.qqConnector
+		d.mu.Unlock()
+		return d.qqConnectorState(name), nil
+	case "qqConnectorSet":
+		return d.setQQConnector(getObject(arg(args, 0)))
 	case "discoverQQ":
-		return d.qq.discover(stringArg(args, 0))
+		return d.discoverQQ(stringArg(args, 0), stringArg(args, 2))
 	case "connectQQ":
-		return d.qq.connect(getObject(arg(args, 0)))
+		return d.connectQQ(getObject(arg(args, 0)))
 	case "debugQQ":
-		return d.qq.debug(getObject(arg(args, 0)))
+		return d.debugQQ(getObject(arg(args, 0)))
 	case "sourceConsent":
-		return d.qq.consentInfo(stringArg(args, 0))
+		return d.qqConsent(stringArg(args, 0), stringArg(args, 1))
 	case "acceptSourceConsent":
-		return d.qq.acceptConsent(stringArg(args, 0))
+		return d.acceptQQConsent(stringArg(args, 0), stringArg(args, 1))
 	case "sourceDiagnostics":
-		return d.diagnostics(), nil
+		return d.diagnosticsFor(stringArg(args, 0)), nil
 	case "listConversations":
 		return d.listConversations(stringArg(args, 0), getObject(arg(args, 1)))
 	case "startCollector":

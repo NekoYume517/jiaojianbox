@@ -19,6 +19,8 @@ assert (target/'交件箱.exe').exists() and (target/'Uninstall.exe').exists()
 with (target/'.jiaojianbox-install.json').open(encoding='utf-8') as f:manifest=json.load(f)
 assert any(p.startswith('runtime/collector-agent/') for p in manifest['files'])
 assert 'runtime/snowluma/node.exe' in manifest['files']
+for required in ['runtime/snowcat/napcat.mjs','runtime/snowcat/snowcat-boot.js','runtime/snowcat/winmm-v8.dll','runtime/snowcat/LICENSE','runtime/snowcat/version.txt']:
+ assert required in manifest['files'],required
 for name,expected in manifest['files'].items():
  with (target/name).open('rb') as f:assert hashlib.file_digest(f,'sha256').hexdigest()==expected,name
 subprocess.run([str(target/'runtime/collector-agent/collector-agent.exe'),'self-test'],check=True,timeout=20)

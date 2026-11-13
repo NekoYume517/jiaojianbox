@@ -1,6 +1,18 @@
 'use strict';
 (() => {
-  let instances=[],detecting=null,authorizationGeneration=0,authorizeUrl='',lastSessionGeneration=-1,sourceDraft=null,sourceDraftProfile='';
+  let instances=[],connectorState={},detecting=null,authorizationGeneration=0,authorizeUrl='',lastSessionGeneration=-1,sourceDraft=null,sourceDraftProfile='';
+  function qqConnector(){return state.sources?.qq_connector==='snowcat'?'snowcat':'snowluma';}
+  function qqConnectorLabel(){return qqConnector()==='snowcat'?'SnowCat':'SnowLuma';}
+  function qqConnectorStatus(){
+    const value=connectorState||{};
+    if(qqConnector()==='snowcat'){
+      if(value.state==='restart_required')return 'SnowCat 已部署 · 重启 QQ 后生效';
+      if(value.state==='needs_deploy')return 'SnowCat 已内置 · 启用时需要重启 QQ';
+      if(value.ready)return `SnowCat 已连接 · QQ ${esc(value.qq_version||'')}`;
+      if(value.qq_home)return `SnowCat · QQ ${esc(value.qq_version||'')}`;
+    }
+    return state.sources.qq_account?`SnowLuma · ${esc(state.sources.qq_account)}`:'SnowLuma · 应用内免配置接入';
+  }
   function resetSourceDraft(){
     const c=state.sources||{};
     sourceDraftProfile=state.profile||'';
@@ -116,7 +128,7 @@
     const adapters=window.pluginUI?.triggerAdapters?.()||[];
     return `<div class="panel-head"><h3>触发器适配器</h3><small>${adapters.length?`${adapters.length} 个插件触发器正在运行`:'QQ、微信与通知事件已内置'}</small></div>
       <div class="trigger-adapter-list">
-        <div class="trigger-adapter-row"><span class="trigger-adapter-mark">Q</span><div><strong>QQ 消息</strong><small>SnowLuma · 收到新消息时触发</small></div><span class="tag green">内置</span></div>
+        <div class="trigger-adapter-row"><span class="trigger-adapter-mark">Q</span><div><strong>QQ 消息</strong><small>${qqConnectorLabel()} · 收到新消息时触发</small></div><span class="tag green">内置</span></div>
         <div class="trigger-adapter-row"><span class="trigger-adapter-mark">微</span><div><strong>微信消息</strong><small>本地数据库 · 收到新消息时触发</small></div><span class="tag green">内置</span></div>
         <div class="trigger-adapter-row"><span class="trigger-adapter-mark">+</span><div><strong>项目事件</strong><small>待办创建、修改、删除和 AI 操作完成</small></div><span class="tag green">内置</span></div>
         ${adapters.map(adapter=>`<div class="trigger-adapter-row" data-trigger-adapter="${esc(adapter.id)}"><span class="trigger-adapter-mark">${esc((adapter.title||'触').slice(0,1))}</span><div><strong>${esc(adapter.title)}</strong><small>${esc(adapter.pluginName)} · ${esc(adapter.description||adapter.event)}</small>${adapter.lastError?`<small class="error">${esc(adapter.lastError)}</small>`:''}</div><span class="tag ${adapter.state==='error'?'red':'blue'}">${adapter.state==='error'?'异常':adapter.state==='starting'?'启动中':'插件'}</span><button type="button" class="plain-button" data-test-plugin-trigger="${esc(adapter.id)}">测试</button></div>`).join('')}
@@ -144,7 +156,7 @@
     return `<section class="panel source-overview">
       <div class="source-overview-head"><div><span class="eyebrow">触发器概览</span><h2>消息统一进入工作台</h2><p>QQ、微信和插件事件在电脑上运行，通知与待办同步到所有设备。</p></div><span id="collector-status" class="collector-status" role="status">正在准备连接</span></div>
       <div class="source-overview-list">
-        ${sourceRow('qq','Q','QQ 消息','SnowLuma · 选择实例后读取群聊与联系人',c.qq_account)}
+        ${sourceRow('qq','Q','QQ 消息',`${qqConnectorLabel()} · 选择实例后读取群聊与联系人`,c.qq_account)}
         ${sourceRow('wechat','微','微信消息','本地数据库 · 自动识别当前登录账号',c.wechat_account)}
         <article class="source-overview-row" data-source-summary="plugins"><span class="source-mark">+</span><div class="source-overview-copy"><strong>插件事件</strong><small>待办、通知与第三方服务可通过插件接入</small><span>${adapters.length?`${adapters.length} 个插件触发器`:'等待安装插件触发器'}</span></div><div class="source-overview-metrics"><strong>${adapters.length}</strong><small>个插件触发器</small></div><span class="tag ${adapters.some(x=>x.state==='error')?'red':'blue'}">${adapters.some(x=>x.state==='error')?'需检查':adapters.length?'运行中':'按需启用'}</span><button type="button" class="plain-button" data-open-source="adapters">查看</button></article>
       </div>
@@ -153,12 +165,29 @@
   }
   function sourcesView(){
     if(!window.desktop)return heading('触发器','电脑运行触发器，网页和手机可以继续处理触发会话。')+`<div class="trigger-history-slot">${window.agentUI?.historyPanel?.()||''}</div>`;
-    const c=state.sources,draft=ensureSourceDraft();
+    const c=state.sources,draft=ensureSourceDraft(),connector=qqConnector();
     requestAnimationFrame(updateSourceDraftUI);
+    const qqItems=instances.length?instances.map(p=>{
+      const status=p.status==='restart_required'?'需要重启 QQ':p.status==='running'?'运行中':p.status||'已检测';
+      return `<div class="instance-row"><span class="instance-avatar">Q</span><div><strong>${esc(p.nickname||p.uin||(p.accounts?.[0]?.nickname)||'QQ 客户端')}</strong><small>${esc(p.uin||(p.pid?'进程 '+p.pid:status))} · ${esc(status)}</small></div><button type="button" class="${c.qq_pid===p.pid?'plain-button':'secondary'}" data-connect-qq="${p.pid||0}">${c.qq_pid===p.pid?'刷新聊天':connector==='snowcat'&&connectorState.state==='restart_required'?'重新检测':'连接'}</button></div>`;
+    }).join(''):`<p class="helper">${connector==='snowcat'?'正在检测 QQ 安装目录和运行状态。':'正在检测本机 QQ，保持 QQ 登录即可。'}</p>`;
+    const qqCard=`<section class="panel source-card" data-source-card="qq">
+      <div class="source-title"><span class="source-mark qq">QQ</span><div><h3>QQ 消息</h3><small>选择连接器，再勾选需要关注的聊天。</small></div><label class="source-enable"><input id="qq-enabled" aria-label="启用 QQ 读取" type="checkbox" ${draft.qq_enabled?'checked':''}><span>${draft.qq_enabled?'启用':'停用'}</span></label></div>
+      <div class="qq-connector-toolbar">
+        <div class="chart-mode segment-choice" data-select-for="qq-connector" role="tablist" aria-label="QQ 连接器">
+          <button type="button" role="tab" class="${connector==='snowluma'?'active':''}" aria-selected="${connector==='snowluma'}" data-qq-connector="snowluma">SnowLuma</button>
+          <button type="button" role="tab" class="${connector==='snowcat'?'active':''}" aria-selected="${connector==='snowcat'}" data-qq-connector="snowcat">SnowCat</button>
+        </div>
+        <span class="helper qq-connector-status">${qqConnectorStatus()}</span>
+      </div>
+      ${connector==='snowcat'?`<div class="connector-note"><strong>QQ ${esc(connectorState.qq_version||'版本检测中')}</strong><span>${esc(connectorState.message||'SnowCat 首次启用会部署到 QQ，重启 QQ 后生效。')}</span></div>`:''}
+      <div id="qq-instances" class="instance-list">${qqItems}</div>
+      ${chatList('qq')}
+    </section>`;
     return heading('触发器','QQ、微信和插件事件统一进入同一套触发器。勾选会话后保存，离开时不会丢失草稿。',`<button class="secondary" data-experience="detect">重新检测</button>`)+
     sourceSaveBar()+sourceOverview()+`<div class="trigger-history-slot">${window.agentUI?.historyPanel?.()||''}</div>`+triggerAdaptersPanel()+
-    `<div class="source-grid"><section class="panel source-card" data-source-card="qq"><div class="source-title"><span class="source-mark qq">QQ</span><div><h3>QQ 消息</h3><small>选择已登录实例，勾选要关注的聊天。</small></div><label class="source-enable"><input id="qq-enabled" aria-label="启用 QQ 读取" type="checkbox" ${draft.qq_enabled?'checked':''}><span>${draft.qq_enabled?'启用':'停用'}</span></label></div><div id="qq-instances" class="instance-list">${instances.length?instances.map(p=>`<div class="instance-row"><span class="instance-avatar">Q</span><div><strong>${esc(p.nickname||p.uin||(p.accounts?.[0]?.nickname)||'QQ 客户端')}</strong><small>${esc(p.uin||'实例 '+p.pid)} · ${c.qq_pid===p.pid?'已选择':'已检测'}</small></div><button type="button" class="${c.qq_pid===p.pid?'plain-button':'secondary'}" data-connect-qq="${p.pid}">${c.qq_pid===p.pid?'刷新聊天':'连接'}</button></div>`).join(''):'<p class="helper">正在检测本机 QQ，保持 QQ 登录即可。</p>'}</div>${chatList('qq')}</section><section class="panel source-card" data-source-card="wechat"><div class="source-title"><span class="source-mark">微</span><div><h3>微信消息</h3><small>自动识别已登录微信，勾选要关注的聊天。</small></div><label class="source-enable"><input id="wechat-enabled" aria-label="启用微信读取" type="checkbox" ${draft.wechat_enabled?'checked':''}><span>${draft.wechat_enabled?'启用':'停用'}</span></label></div><div class="source-card-toolbar"><span class="helper">${c.wechat_account?`当前账号 · ${esc(c.wechat_account)}`:'等待自动识别微信账号'}</span><button type="button" class="plain-button" data-experience="refresh-wechat">刷新聊天</button></div>${chatList('wechat')}</section></div>`+
-    `<details class="panel advanced-source"><summary>高级与调试 <span class="helper">连接详情、读取检查、运行记录</span></summary><div class="advanced-body"><div class="form-grid"><label>SnowLuma 安装目录<input id="snowluma-home" value="${esc(c.snowluma_home||'')}" placeholder="自动检测"><button type="button" class="link" data-experience="select-runtime">选择目录</button></label><label>Python 解释器<input id="python-path" value="${esc(c.python_path||'')}" placeholder="留空使用内置采集程序"></label></div><div class="form-grid"><label>仅采集含关键词的消息<input id="capture-keywords" value="${esc(c.capture_keywords||'')}" placeholder="留空处理勾选聊天的全部消息"></label><label>QQ 连接方式<select id="qq-transport"><option value="managed">应用内免配置接入</option><option value="external">外部 OneBot（兼容调试）</option></select></label></div><details><summary class="helper">兼容连接参数</summary><div class="form-grid"><label>HTTP 地址<input id="qq-http" value="${esc(c.qq_http_url||'http://127.0.0.1:3000')}"></label><label>WebSocket 地址<input id="qq-ws" value="${esc(c.qq_ws_url||'ws://127.0.0.1:3001')}"></label></div><label>Access Token<input id="qq-token" type="password" value="${esc(c.qq_token||'')}" autocomplete="new-password"></label><div class="form-grid"><label>微信账号目录<input id="wechat-account" value="${esc(c.wechat_account||'')}" placeholder="自动检测"></label><label>微信数据库目录<input id="wechat-db-dir" value="${esc(c.wechat_db_dir||'')}" placeholder="自动检测"></label></div></details><div class="source-actions"><button class="secondary" data-experience="diagnostics">检查读取状态</button><button class="plain-button" data-experience="stop">暂停本次读取</button></div><div class="form-grid debug-controls"><label>读取动作<select id="debug-action"><option value="get_login_info">账号状态</option><option value="get_group_list">群聊列表</option><option value="get_friend_list">联系人列表</option><option value="get_status">运行状态</option><option value="get_group_msg_history">群消息历史</option></select></label><label>参数<textarea id="debug-params" rows="2" placeholder='例如：{"group_id":123}'>{}</textarea></label></div><button class="secondary" data-experience="debug">执行读取检查</button><pre id="source-debug" class="debug-output" hidden></pre></div></details>`;
+    `<div class="source-grid">${qqCard}<section class="panel source-card" data-source-card="wechat"><div class="source-title"><span class="source-mark">微</span><div><h3>微信消息</h3><small>自动识别已登录微信，勾选要关注的聊天。</small></div><label class="source-enable"><input id="wechat-enabled" aria-label="启用微信读取" type="checkbox" ${draft.wechat_enabled?'checked':''}><span>${draft.wechat_enabled?'启用':'停用'}</span></label></div><div class="source-card-toolbar"><span class="helper">${c.wechat_account?`当前账号 · ${esc(c.wechat_account)}`:'等待自动识别微信账号'}</span><button type="button" class="plain-button" data-experience="refresh-wechat">刷新聊天</button></div>${chatList('wechat')}</section></div>`+
+    `<details class="panel advanced-source"><summary>高级与调试 <span class="helper">连接详情、读取检查、运行记录</span></summary><div class="advanced-body"><div class="form-grid"><label>SnowLuma 安装目录<input id="snowluma-home" value="${esc(c.snowluma_home||'')}" placeholder="自动检测"><button type="button" class="link" data-experience="select-runtime">选择目录</button></label><label>SnowCat QQ 安装目录<input id="snowcat-qq-home" value="${esc(c.snowcat_qq_home||'')}" placeholder="留空自动检测"><button type="button" class="link" data-experience="select-snowcat-home">选择目录</button></label></div><div class="form-grid"><label>Python 解释器<input id="python-path" value="${esc(c.python_path||'')}" placeholder="留空使用内置采集程序"></label><label>仅采集含关键词的消息<input id="capture-keywords" value="${esc(c.capture_keywords||'')}" placeholder="留空处理勾选聊天的全部消息"></label></div><details><summary class="helper">兼容连接参数</summary><div class="form-grid"><label>HTTP 地址<input id="qq-http" value="${esc(c.qq_http_url||'http://127.0.0.1:3000')}"></label><label>WebSocket 地址<input id="qq-ws" value="${esc(c.qq_ws_url||'ws://127.0.0.1:3001')}"></label></div><label>Access Token<input id="qq-token" type="password" value="${esc(c.qq_token||'')}" autocomplete="new-password"></label><div class="form-grid"><label>微信账号目录<input id="wechat-account" value="${esc(c.wechat_account||'')}" placeholder="自动检测"></label><label>微信数据库目录<input id="wechat-db-dir" value="${esc(c.wechat_db_dir||'')}" placeholder="自动检测"></label></div></details><div class="source-actions"><button class="secondary" data-experience="diagnostics">检查读取状态</button><button class="plain-button" data-experience="stop">暂停本次读取</button></div><div class="form-grid debug-controls"><label>读取动作<select id="debug-action"><option value="get_login_info">账号状态</option><option value="get_group_list">群聊列表</option><option value="get_friend_list">联系人列表</option><option value="get_status">运行状态</option><option value="get_group_msg_history">群消息历史</option></select></label><label>参数<textarea id="debug-params" rows="2" placeholder='例如：{"group_id":123}'>{}</textarea></label></div><button class="secondary" data-experience="debug">执行读取检查</button><pre id="source-debug" class="debug-output" hidden></pre></div></details>`;
   }
   function configFromForm(){
     const c=readSourcesForm();
@@ -166,7 +195,7 @@
       const draft=ensureSourceDraft();
       c.auto_start=draft.auto_start;c.qq_enabled=draft.qq_enabled;c.wechat_enabled=draft.wechat_enabled;
       c.qq_chats=[...draft.qq];c.wechat_chats=[...draft.wechat];
-      c.snowluma_home=$('#snowluma-home').value.trim();c.qq_transport=$('#qq-transport').value;
+      c.snowluma_home=$('#snowluma-home').value.trim();c.snowcat_qq_home=$('#snowcat-qq-home').value.trim();c.qq_connector=qqConnector();c.qq_transport='managed';
     }
     return c;
   }
@@ -207,7 +236,8 @@
     if(!window.desktop||!state.session)return;
     if(detecting)return detecting;
     detecting=(async()=>{
-      try{const result=await desktop.discoverQQ(state.sources.snowluma_home,startup);instances=result.instances;if(state.page==='sources'){render();$('#qq-transport').value=state.sources.qq_transport||'managed';}}
+      const connector=qqConnector(),preferred=connector==='snowcat'?state.sources.snowcat_qq_home:state.sources.snowluma_home;
+      try{const result=await desktop.discoverQQ(preferred,startup,connector);instances=result.instances||[];connectorState=result||{};if(state.page==='sources')render();}
       catch(error){if(state.page==='sources')showCollectorState({state:'error',message:error.message});}
       if(!(state.sources.conversations||[]).some(x=>x.source==='wechat'))try{await wechatContacts();}catch(error){if(state.page==='sources')showCollectorState({state:'error',message:error.message});}
       if(startup)await resume();
@@ -249,7 +279,13 @@
   async function onSession(){
     if(lastSessionGeneration===state.generation)return;lastSessionGeneration=state.generation;
     $('#shelf-handle').hidden=false;
-    if(window.desktop)detect(true);
+    if(window.desktop){
+      try{
+        const preference=await desktop.qqConnectorGet();
+        if(preference?.name&&preference.name!==state.sources.qq_connector){state.sources.qq_connector=preference.name;await persist();}
+      }catch{}
+      detect(true);
+    }
   }
   document.addEventListener('click',async event=>{
     const triggerTest=event.target.closest('[data-test-plugin-trigger]');
@@ -264,12 +300,31 @@
     }
     const sourceShortcut=event.target.closest('[data-open-source]');
     if(sourceShortcut){window.pageNavigation?.select(sourceShortcut.dataset.openSource);return;}
+    const connectorButton=event.target.closest('[data-qq-connector]');
+    if(connectorButton){
+      const next=connectorButton.dataset.qqConnector;
+      if(next===qqConnector())return;
+      connectorButton.disabled=true;
+      try{
+        const result=await desktop.qqConnectorSet({name:next});
+        state.sources.qq_connector=next;
+        state.sources.qq_pid=0;state.sources.qq_account='';instances=[];connectorState=result.state||{};
+        await persist();
+        render();
+        await detect(false);
+        if(result.restartRequired)toast(result.message);else toast(`已切换到 ${next==='snowcat'?'SnowCat':'SnowLuma'}，下次打开会继续使用`);
+      }catch(error){toast(error.message);}
+      finally{if(connectorButton.isConnected)connectorButton.disabled=false;}
+      return;
+    }
     const connect=event.target.closest('[data-connect-qq]');const action=event.target.closest('[data-experience]');
     if(!connect&&!action)return;
     try{
       if(connect){
-        connect.disabled=true;const c=readSourcesForm();const result=await desktop.connectQQ({pid:Number(connect.dataset.connectQq),home:c.snowluma_home});
+        connect.disabled=true;const c=readSourcesForm();const connector=qqConnector();const result=await desktop.connectQQ({pid:Number(connect.dataset.connectQq),home:c.snowluma_home,snowcat_home:'',snowcat_qq_home:c.snowcat_qq_home||'',qq_connector:connector});
+        if(result.restart_required){connectorState={...connectorState,state:'restart_required',message:result.message,pid:result.pid};await persist();render();toast(result.message);return;}
         state.sources.qq_account=result.account||result.uin;state.sources.qq_pid=Number(connect.dataset.connectQq);state.sources.qq_transport='managed';
+        for(const key of ['qq_http_url','qq_ws_url','qq_token','qq_pid'])if(result[key]!==undefined)state.sources[key]=result[key];
         state.sources.conversations=[...(state.sources.conversations||[]).filter(x=>x.source!=='qq'),...result.conversations];
         await persist();render();await resume();toast('已连接 QQ，保存聊天选择后开始读取');return;
       }
@@ -279,8 +334,9 @@
         case 'save':action.disabled=true;await saveSourceDraft();toast('会话选择已保存');break;
         case 'stop':await desktop.stopCollector();break;
         case 'select-runtime':{const home=await desktop.selectRuntime();if(home){$('#snowluma-home').value=home;state.sources.snowluma_home=home;await persist();await detect(false);}break;}
-        case 'diagnostics':{$('#source-debug').hidden=false;$('#source-debug').textContent=JSON.stringify(await desktop.sourceDiagnostics(),null,2);break;}
-        case 'debug':{let params;try{params=JSON.parse($('#debug-params').value);}catch{throw new Error('参数需要是有效 JSON');}const result=await desktop.debugQQ({uin:state.sources.qq_account,action:$('#debug-action').value,params});$('#source-debug').hidden=false;$('#source-debug').textContent=JSON.stringify(result,null,2);break;}
+        case 'select-snowcat-home':{const home=await desktop.selectRuntime();if(home){$('#snowcat-qq-home').value=home;state.sources.snowcat_qq_home=home;await persist();await detect(false);}break;}
+        case 'diagnostics':{$('#source-debug').hidden=false;$('#source-debug').textContent=JSON.stringify(await desktop.sourceDiagnostics(qqConnector()),null,2);break;}
+        case 'debug':{let params;try{params=JSON.parse($('#debug-params').value);}catch{throw new Error('参数需要是有效 JSON');}const result=await desktop.debugQQ({uin:state.sources.qq_account,action:$('#debug-action').value,params,qq_connector:qqConnector()});$('#source-debug').hidden=false;$('#source-debug').textContent=JSON.stringify(result,null,2);break;}
         case 'reopen-auth':if(authorizeUrl)await desktop.external(authorizeUrl);break;
         case 'cancel-auth':authorizationGeneration++;$('#auth-submit').disabled=false;$('#device-status').hidden=true;break;
       }
