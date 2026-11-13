@@ -576,6 +576,16 @@ func (d *Desktop) Invoke(method string, args []any) (any, error) {
 		return d.qqConnectorState(name), nil
 	case "qqConnectorSet":
 		return d.setQQConnector(getObject(arg(args, 0)))
+	case "qqConnectorRepair":
+		if d.snowcat == nil {
+			return nil, errors.New("SnowCat 连接器尚未初始化")
+		}
+		result, err := d.snowcat.repair(stringArg(args, 0), stringArg(args, 1))
+		if err != nil {
+			return nil, err
+		}
+		result["state"] = d.qqConnectorState("snowcat")
+		return result, nil
 	case "discoverQQ":
 		return d.discoverQQ(stringArg(args, 0), stringArg(args, 2))
 	case "connectQQ":

@@ -23,6 +23,8 @@ import (
 	"github.com/NekoYume517/jiaojianbox/internal/store"
 )
 
+const supportedSnowcatQQVersion = "9.9.37-54395"
+
 // qqConnector keeps both QQ access implementations behind the same small
 // surface so the collector and the UI never have to know which one is active.
 type qqConnector interface {
@@ -101,19 +103,36 @@ func (s *snowcatManager) locateRuntime(preferred string) (string, error) {
 		if root == "" {
 			continue
 		}
-		if _, err := os.Stat(filepath.Join(root, "napcat.mjs")); err == nil {
-			if _, err = os.Stat(filepath.Join(root, "winmm-v8.dll")); err == nil {
-				if _, err = os.Stat(filepath.Join(root, "snowcat-boot.js")); err == nil {
-					s.mu.Lock()
-					s.runtime = root
-					s.version = snowcatRuntimeVersion(root)
-					s.mu.Unlock()
-					return root, nil
-				}
-			}
+		if err := snowcatRuntimeIssue(root); err == nil {
+			s.mu.Lock()
+			s.runtime = root
+			s.version = snowcatRuntimeVersion(root)
+			s.mu.Unlock()
+			return root, nil
 		}
 	}
 	return "", errors.New("未找到内置 SnowCat 运行时，可重新安装完整版本")
+}
+
+func snowcatRuntimeIssue(root string) error {
+	required := []string{
+		"napcat.mjs",
+		"winmm-v8.dll",
+		"LICENSE",
+		"package.json",
+		filepath.Join("node_modules", "express", "package.json"),
+		filepath.Join("node_modules", "ws", "package.json"),
+	}
+	for _, name := range required {
+		info, err := os.Stat(filepath.Join(root, name))
+		if err != nil || info.IsDir() {
+			if err == nil {
+				err = errors.New("不是文件")
+			}
+			return fmt.Errorf("SnowCat 运行时缺少 %s：%w", filepath.ToSlash(name), err)
+		}
+	}
+	return nil
 }
 
 func snowcatRuntimeVersion(root string) string {
@@ -170,6 +189,10 @@ func snowcatQQVersion(home string) (string, error) {
 		return "", errors.New("QQ 安装目录中缺少 QQ.exe")
 	}
 	return names[0], nil
+}
+
+func snowcatQQVersionSupported(version string) bool {
+	return version == supportedSnowcatQQVersion
 }
 
 func compareQQVersion(a, b string) int {
@@ -291,25 +314,132 @@ func (s *snowcatManager) backupFile(record *snowcatRecord, target, source string
 		return err
 	}
 	record.Files[key] = existing
-	return nil
+	// Persist each backup before touching QQ files. If setup is interrupted,
+	// the next launch can still identify and restore every modified path.
+	return s.saveRecord(record)
 }
 
 func (s *snowcatManager) deployFile(record *snowcatRecord, source, target string) error {
-	if err := s.backupFile(record, target, source); err != nil {
-		return err
-	}
-	if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
-		return err
-	}
 	data, err := os.ReadFile(source)
 	if err != nil {
+		return err
+	}
+	if existing := record.Files[filepath.ToSlash(target)]; existing.Hash != "" && fileEquals(target, data) {
+		return nil
+	}
+	if err = s.backupFile(record, target, source); err != nil {
+		return err
+	}
+	if err = os.MkdirAll(filepath.Dir(target), 0755); err != nil {
 		return err
 	}
 	temp := target + ".jjb-tmp"
 	if err = os.WriteFile(temp, data, 0644); err != nil {
 		return err
 	}
-	return os.Rename(temp, target)
+	if err = os.Rename(temp, target); err != nil {
+		_ = os.Remove(temp)
+		if errors.Is(err, os.ErrPermission) {
+			return fmt.Errorf("QQ 文件 %s 正被占用，请完全退出 QQ 后重试：%w", target, err)
+		}
+		return err
+	}
+	return nil
+}
+
+func (s *snowcatManager) deployBytes(record *snowcatRecord, data []byte, source, target string) error {
+	if existing := record.Files[filepath.ToSlash(target)]; existing.Hash != "" && fileEquals(target, data) {
+		return nil
+	}
+	if err := s.backupFile(record, target, source); err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
+		return err
+	}
+	temp := target + ".jjb-tmp"
+	if err := os.WriteFile(temp, data, 0644); err != nil {
+		return err
+	}
+	if err := os.Rename(temp, target); err != nil {
+		_ = os.Remove(temp)
+		if errors.Is(err, os.ErrPermission) {
+			return fmt.Errorf("QQ 文件 %s 正被占用，请完全退出 QQ 后重试：%w", target, err)
+		}
+		return err
+	}
+	return nil
+}
+
+func fileEquals(path string, want []byte) bool {
+	got, err := os.ReadFile(path)
+	return err == nil && bytes.Equal(got, want)
+}
+
+func (s *snowcatManager) deploymentCurrent(record *snowcatRecord, root, home, version string, boot []byte) bool {
+	if record == nil ||
+		!strings.EqualFold(filepath.Clean(record.Home), filepath.Clean(home)) ||
+		record.QQVersion != version {
+		return false
+	}
+	winmm := filepath.Join(root, "winmm-v8.dll")
+	if !fileMatches(filepath.Join(home, "winmm.dll"), winmm) {
+		return false
+	}
+	if !fileEquals(filepath.Join(home, "snowcat-boot.js"), boot) {
+		return false
+	}
+	configs, err := snowcatConfigFiles(record)
+	if err != nil {
+		return false
+	}
+	for name, want := range configs {
+		if !fileEquals(filepath.Join(home, "config", name), want) {
+			return false
+		}
+	}
+	app := s.appDir(home, record.QQVersion)
+	for _, name := range []string{"dbghelp.dll", "dbgeng.dll"} {
+		if _, err := os.Stat(filepath.Join(app, name)); err == nil {
+			return false
+		}
+	}
+	return true
+}
+
+func snowcatBootScript(runtimeRoot string) ([]byte, error) {
+	target := filepath.Join(runtimeRoot, "napcat.mjs")
+	encoded, err := json.Marshal(target)
+	if err != nil {
+		return nil, err
+	}
+	source := `/*
+ * 交件箱 SnowCat 引导文件（JJB_SNOWCAT_BOOT_V2）
+ * QQ 根目录只放这个轻量引导；运行时代码和 Node 依赖始终从交件箱安装目录加载。
+ */
+;(() => {
+  const fs = require('fs');
+  const path = require('path');
+  const url = require('url');
+  const marker = 'JJB_SNOWCAT_BOOT_V2';
+  const target = ` + string(encoded) + `;
+  const logFile = path.join(__dirname, 'nc-boot.log');
+  const log = (message) => {
+    try { fs.appendFileSync(logFile, new Date().toISOString() + ' [pid ' + process.pid + '] ' + message + '\n'); } catch (_) {}
+  };
+  try {
+    if (!fs.existsSync(target)) throw new Error('SnowCat runtime missing: ' + target);
+    log(marker + '; injected; electron=' + (process.versions.electron || '?') + ' node=' + process.versions.node);
+    log('napcat=' + target);
+    import(url.pathToFileURL(target).href)
+      .then(() => log('napcat imported ok'))
+      .catch((error) => log('import failed: ' + ((error && error.stack) || error)));
+  } catch (error) {
+    log('outer error: ' + ((error && error.stack) || error));
+  }
+})();
+`
+	return []byte(source), nil
 }
 
 func (s *snowcatManager) appDir(home, version string) string {
@@ -325,12 +455,47 @@ func (s *snowcatManager) deploy(preferred string) (*snowcatRecord, error) {
 	if err != nil {
 		return nil, err
 	}
+	if !snowcatQQVersionSupported(version) {
+		return nil, fmt.Errorf("当前 SnowCat 仅支持 QQ %s，本机检测到 QQ %s。请更新 QQ 后重新检测", supportedSnowcatQQVersion, version)
+	}
 	if !s.consentAccepted() {
 		return nil, errors.New("CONSENT_REQUIRED：启用 SnowCat 前，请阅读并同意其许可协议")
 	}
 	s.startMu.Lock()
 	defer s.startMu.Unlock()
 	record := s.loadRecord()
+	boot, err := snowcatBootScript(root)
+	if err != nil {
+		return nil, err
+	}
+	if s.deploymentCurrent(record, root, home, version, boot) {
+		s.mu.Lock()
+		s.deployment = record
+		s.started = true
+		s.mu.Unlock()
+		return record, nil
+	}
+	pids, running, err := s.qqRunningForHome(home)
+	if err != nil {
+		return nil, err
+	}
+	if running {
+		requestGracefulQQClose(pids)
+		deadline := time.Now().Add(12 * time.Second)
+		for running && time.Now().Before(deadline) {
+			time.Sleep(200 * time.Millisecond)
+			pids, running, err = s.qqRunningForHome(home)
+			if err != nil {
+				return nil, err
+			}
+			if running && len(pids) > 0 {
+				requestGracefulQQClose(pids)
+			}
+		}
+		if running {
+			return nil, errors.New("QQ 未能正常退出，无法更新 SnowCat 文件。请完全退出 QQ 后再连接")
+		}
+	}
 	if record == nil || record.Home != home {
 		record = &snowcatRecord{Home: home, QQVersion: version, Files: map[string]snowcatFileState{}}
 	}
@@ -338,14 +503,15 @@ func (s *snowcatManager) deploy(preferred string) (*snowcatRecord, error) {
 	record.QQVersion = version
 	record.DeployedAt = time.Now().Format(time.RFC3339Nano)
 	targets := []struct{ source, name string }{
-		{filepath.Join(root, "napcat.mjs"), "napcat.mjs"},
-		{filepath.Join(root, "snowcat-boot.js"), "snowcat-boot.js"},
 		{filepath.Join(root, "winmm-v8.dll"), "winmm.dll"},
 	}
 	for _, item := range targets {
 		if err = s.deployFile(record, item.source, filepath.Join(home, item.name)); err != nil {
 			return nil, err
 		}
+	}
+	if err = s.deployBytes(record, boot, filepath.Join(root, "snowcat-boot.js"), filepath.Join(home, "snowcat-boot.js")); err != nil {
+		return nil, err
 	}
 	// SnowCat's own launcher disables two broken debug DLLs in the app folder;
 	// keep the same fix but always preserve the original files for restore.
@@ -404,6 +570,19 @@ func (s *snowcatManager) writeConfig(record *snowcatRecord) error {
 	if err := os.MkdirAll(record.ConfigDir, 0755); err != nil {
 		return err
 	}
+	files, err := snowcatConfigFiles(record)
+	if err != nil {
+		return err
+	}
+	for name, data := range files {
+		if err = os.WriteFile(filepath.Join(record.ConfigDir, name), data, 0644); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func snowcatConfigFiles(record *snowcatRecord) (map[string][]byte, error) {
 	onebot := Object{
 		"network": Object{
 			"httpServers":      []Object{{"name": "jjb-http", "protocol": "v11", "enable": true, "host": "127.0.0.1", "port": float64(record.HTTPPort), "enableCors": false, "enableWebsocket": false, "messagePostFormat": "array", "token": record.Token, "debug": false}},
@@ -421,16 +600,15 @@ func (s *snowcatManager) writeConfig(record *snowcatRecord) error {
 		"timeout":             Object{"baseTimeout": 10000, "uploadSpeedKBps": 256, "downloadSpeedKBps": 256, "maxTimeout": 1800000},
 	}
 	webui := Object{"host": "127.0.0.1", "port": 0, "token": record.Token, "loginRate": 10, "disableWebUI": true, "accessControlMode": "none", "ipWhitelist": []any{}, "ipBlacklist": []any{}, "enableXForwardedFor": false, "allowOrigins": []any{}, "enable2FA": false, "totpSecret": ""}
+	files := map[string][]byte{}
 	for name, value := range map[string]Object{"onebot11.json": onebot, "webui.json": webui} {
 		data, err := json.MarshalIndent(value, "", "  ")
 		if err != nil {
-			return err
+			return nil, err
 		}
-		if err = os.WriteFile(filepath.Join(record.ConfigDir, name), data, 0644); err != nil {
-			return err
-		}
+		files[name] = data
 	}
-	return nil
+	return files, nil
 }
 
 func (s *snowcatManager) lastConfig() Object {
@@ -577,6 +755,7 @@ func (s *snowcatManager) discover(preferred string) (any, error) {
 		return nil, err
 	}
 	s.saveLastConfig(Object{"snowcat_qq_home": home})
+	supported := snowcatQQVersionSupported(version)
 	pids, running, err := s.qqRunningForHome(home)
 	if err != nil {
 		return nil, err
@@ -585,13 +764,18 @@ func (s *snowcatManager) discover(preferred string) (any, error) {
 	deployed := record != nil && record.Home == home
 	online := s.ready()
 	instance := Object{"pid": 0, "uin": "", "nickname": "QQ（SnowCat）", "status": "detected", "path": filepath.Join(home, "QQ.exe")}
-	if running {
+	if !supported {
+		instance["status"] = "unsupported"
+	} else if running {
 		instance["pid"] = pids[0]
 		instance["status"] = "running"
 	}
 	state := "ready"
 	message := "SnowCat 已就绪"
-	if !running {
+	if !supported {
+		state = "unsupported_qq_version"
+		message = fmt.Sprintf("当前 QQ %s 与 SnowCat 不兼容，需要 QQ %s", version, supportedSnowcatQQVersion)
+	} else if !running {
 		state = "stopped"
 		message = "QQ 未运行，启用后会自动启动"
 	} else if deployed && !online {
@@ -602,17 +786,19 @@ func (s *snowcatManager) discover(preferred string) (any, error) {
 		message = "需要启用 SnowCat 并重启 QQ"
 	}
 	return Object{
-		"connector":  "snowcat",
-		"version":    s.version,
-		"runtime":    Object{"root": root, "version": s.version},
-		"qq_home":    home,
-		"qq_version": version,
-		"state":      state,
-		"message":    message,
-		"deployed":   deployed,
-		"running":    running,
-		"ready":      online,
-		"instances":  []Object{instance},
+		"connector":            "snowcat",
+		"version":              s.version,
+		"runtime":              Object{"root": root, "version": s.version},
+		"qq_home":              home,
+		"qq_version":           version,
+		"supported_qq_version": supportedSnowcatQQVersion,
+		"qq_version_supported": supported,
+		"state":                state,
+		"message":              message,
+		"deployed":             deployed,
+		"running":              running,
+		"ready":                online,
+		"instances":            []Object{instance},
 	}, nil
 }
 
@@ -787,10 +973,17 @@ func (s *snowcatManager) restoreRecord(record *snowcatRecord) error {
 			if err = os.MkdirAll(filepath.Dir(target), 0755); err != nil {
 				return err
 			}
-			if err = os.WriteFile(target, data, 0644); err != nil {
+			temp := target + ".jjb-restore"
+			if err = os.WriteFile(temp, data, 0644); err != nil {
+				return fmt.Errorf("准备恢复 QQ 文件 %s 失败：%w", target, err)
+			}
+			if err = os.Rename(temp, target); err != nil {
+				_ = os.Remove(temp)
 				return fmt.Errorf("写回 QQ 文件 %s 失败：%w", target, err)
 			}
-		} else if !state.Existed {
+		} else if state.Existed {
+			return fmt.Errorf("恢复 %s 失败：部署记录缺少原文件备份", target)
+		} else {
 			if err := os.Remove(target); err != nil && !errors.Is(err, os.ErrNotExist) {
 				return fmt.Errorf("删除 SnowCat 文件 %s 失败：%w", target, err)
 			}
@@ -814,6 +1007,117 @@ func (s *snowcatManager) restoreRecord(record *snowcatRecord) error {
 	s.mu.Unlock()
 	s.record("stopped", "已恢复 QQ 原有文件，可正常使用 SnowLuma")
 	return nil
+}
+
+func fileMatches(path, expected string) bool {
+	got, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	want, err := os.ReadFile(expected)
+	if err != nil {
+		return false
+	}
+	return bytes.Equal(got, want)
+}
+
+func (s *snowcatManager) cleanupOrphanFiles(home, runtimeRoot string) []string {
+	removed := []string{}
+	if home == "" {
+		return removed
+	}
+	boot := filepath.Join(home, "snowcat-boot.js")
+	if data, err := os.ReadFile(boot); err == nil && strings.Contains(string(data), "JJB_SNOWCAT_BOOT_V") {
+		if os.Remove(boot) == nil {
+			removed = append(removed, boot)
+		}
+	}
+	for _, item := range []struct{ target, source string }{
+		{filepath.Join(home, "napcat.mjs"), filepath.Join(runtimeRoot, "napcat.mjs")},
+		{filepath.Join(home, "winmm.dll"), filepath.Join(runtimeRoot, "winmm-v8.dll")},
+	} {
+		if fileMatches(item.target, item.source) {
+			if os.Remove(item.target) == nil {
+				removed = append(removed, item.target)
+			}
+		}
+	}
+	return removed
+}
+
+func (s *snowcatManager) repair(preferred, preferredHome string) (Object, error) {
+	if preferredHome != "" {
+		s.saveLastConfig(Object{"snowcat_qq_home": preferredHome})
+	}
+	result := Object{
+		"ok":                   false,
+		"runtime_verified":     false,
+		"restored":             false,
+		"needs_reconnect":      true,
+		"removed_orphan_files": []string{},
+		"issues":               []string{},
+	}
+	issues := []string{}
+	root, err := s.locateRuntime(preferred)
+	if err != nil {
+		issues = append(issues, err.Error())
+		result["issues"] = issues
+		result["message"] = "SnowCat 运行时或 Node 依赖不完整，请重新安装这一版交件箱。"
+		return result, nil
+	}
+	result["runtime_verified"] = true
+	result["runtime"] = Object{"root": root, "version": snowcatRuntimeVersion(root)}
+
+	s.startMu.Lock()
+	defer s.startMu.Unlock()
+	record := s.loadRecord()
+	home := preferredHome
+	if record != nil {
+		home = record.Home
+		pids, running, runningErr := s.qqRunningForHome(record.Home)
+		if runningErr != nil {
+			return nil, runningErr
+		}
+		if running {
+			requestGracefulQQClose(pids)
+			deadline := time.Now().Add(12 * time.Second)
+			for running && time.Now().Before(deadline) {
+				time.Sleep(200 * time.Millisecond)
+				pids, running, runningErr = s.qqRunningForHome(record.Home)
+				if runningErr != nil {
+					return nil, runningErr
+				}
+				if running && len(pids) > 0 {
+					requestGracefulQQClose(pids)
+				}
+			}
+		}
+		if running {
+			result["qq_running"] = true
+			result["message"] = "QQ 未能正常退出。请先手动退出 QQ，再点一次检查并修复。"
+			return result, nil
+		}
+		if err := s.restoreRecord(record); err != nil {
+			issues = append(issues, err.Error())
+			result["issues"] = issues
+			result["message"] = "QQ 文件恢复未完成：" + err.Error()
+			return result, nil
+		}
+		result["restored"] = true
+	}
+	if home == "" {
+		home = getString(s.lastConfig(), "snowcat_qq_home")
+	}
+	if home == "" {
+		if detected, _, detectErr := s.locateQQ(""); detectErr == nil {
+			home = detected
+		}
+	}
+	removed := s.cleanupOrphanFiles(home, root)
+	result["removed_orphan_files"] = removed
+	result["ok"] = true
+	result["message"] = "SnowCat 运行时依赖完整，QQ 原生文件已恢复。重新选择 SnowCat 并连接即可重新部署。"
+	return result, nil
 }
 
 func normalizeQQConnector(value string) string {
@@ -876,12 +1180,45 @@ func (d *Desktop) qqConnectorState(name string) Object {
 			runtimeRoot, runtimeVersion = root, d.snowcat.version
 		}
 		record := d.snowcat.loadRecord()
+		qqHome := ""
+		qqVersion := ""
+		qqVersionSupported := false
+		if home, version, err := d.snowcat.locateQQ(getString(d.snowcat.lastConfig(), "snowcat_qq_home")); err == nil {
+			qqHome = home
+			qqVersion = version
+			qqVersionSupported = snowcatQQVersionSupported(version)
+		}
 		out["runtime"] = Object{"root": runtimeRoot, "version": runtimeVersion}
+		out["runtime_ready"] = runtimeRoot != ""
 		out["deployed"] = record != nil
 		out["ready"] = d.snowcat.ready()
+		out["qq_home"] = qqHome
+		out["qq_version"] = qqVersion
+		out["supported_qq_version"] = supportedSnowcatQQVersion
+		out["qq_version_supported"] = qqVersionSupported
+		if qqVersion != "" && !qqVersionSupported {
+			out["state"] = "unsupported_qq_version"
+			out["message"] = fmt.Sprintf("当前 QQ %s 与 SnowCat 不兼容，需要 QQ %s", qqVersion, supportedSnowcatQQVersion)
+			return out
+		}
 		if record != nil {
-			out["qq_home"] = record.Home
-			out["qq_version"] = record.QQVersion
+			if out["qq_home"] == "" {
+				out["qq_home"] = record.Home
+				out["qq_version"] = record.QQVersion
+			}
+			if d.snowcat.ready() {
+				out["state"] = "connected"
+				out["message"] = "SnowCat 已连接"
+			} else {
+				out["state"] = "restart_required"
+				out["message"] = "SnowCat 已部署，重启 QQ 后生效"
+			}
+		} else if runtimeRoot == "" {
+			out["state"] = "runtime_missing"
+			out["message"] = "SnowCat 运行时或 Node 依赖不完整，请重新安装完整版本"
+		} else {
+			out["state"] = "needs_deploy"
+			out["message"] = "SnowCat 运行时已就绪，重新连接后会部署并重启 QQ"
 		}
 	} else {
 		if d.qq == nil {

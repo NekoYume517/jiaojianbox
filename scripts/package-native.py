@@ -29,7 +29,11 @@ if not csc.is_file():raise SystemExit('Missing C# compiler for drag-watch')
 run([csc,'/nologo','/target:exe','/reference:System.Windows.Forms.dll',f'/out:{ROOT/"desktop/drag-watch.exe"}',ROOT/'desktop/drag-watch.cs'])
 snow=ROOT/'runtime-vendor/snowluma'
 snowcat=ROOT/'runtime-vendor/snowcat'
-for component in [snow/'node.exe',snow/'native/snowluma-win32-x64.node',snowcat/'napcat.mjs',snowcat/'snowcat-boot.js',snowcat/'winmm-v8.dll',snowcat/'LICENSE',ROOT/'desktop/drag-watch.exe']:
+if not (snowcat/'node_modules/express/package.json').is_file() or not (snowcat/'node_modules/ws/package.json').is_file():
+ npm=os.environ.get('NPM') or shutil.which('npm')
+ if not npm:raise SystemExit('Missing npm for SnowCat runtime dependencies')
+ subprocess.run([npm,'ci','--omit=dev','--no-audit','--no-fund'],cwd=snowcat,env=env,check=True)
+for component in [snow/'node.exe',snow/'native/snowluma-win32-x64.node',snowcat/'napcat.mjs',snowcat/'snowcat-boot.js',snowcat/'winmm-v8.dll',snowcat/'LICENSE',snowcat/'package.json',snowcat/'package-lock.json',snowcat/'node_modules/express/package.json',snowcat/'node_modules/ws/package.json',ROOT/'desktop/drag-watch.exe']:
  if not component.is_file():raise SystemExit(f'Missing required runtime: {component.name}')
 deps=ROOT/'work/installer-deps';deps.mkdir(parents=True,exist_ok=True)
 # WebView2 ships as an evergreen bootstrapper downloaded on demand during

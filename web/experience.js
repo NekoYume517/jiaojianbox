@@ -3,15 +3,31 @@
   let instances=[],connectorState={},detecting=null,authorizationGeneration=0,authorizeUrl='',lastSessionGeneration=-1,sourceDraft=null,sourceDraftProfile='';
   function qqConnector(){return state.sources?.qq_connector==='snowcat'?'snowcat':'snowluma';}
   function qqConnectorLabel(){return qqConnector()==='snowcat'?'SnowCat':'SnowLuma';}
+  function qqConnectorState(){return connectorState?.state||'';}
   function qqConnectorStatus(){
     const value=connectorState||{};
     if(qqConnector()==='snowcat'){
-      if(value.state==='restart_required')return 'SnowCat 已部署 · 重启 QQ 后生效';
-      if(value.state==='needs_deploy')return 'SnowCat 已内置 · 启用时需要重启 QQ';
-      if(value.ready)return `SnowCat 已连接 · QQ ${esc(value.qq_version||'')}`;
-      if(value.qq_home)return `SnowCat · QQ ${esc(value.qq_version||'')}`;
+      if(value.state==='connected'||value.ready)return '已连接';
+      if(value.state==='unsupported_qq_version')return 'QQ 版本不兼容';
+      if(value.state==='restart_required')return '需要重启 QQ';
+      if(value.state==='needs_deploy')return '尚未部署';
+      if(value.state==='stopped')return 'QQ 未运行';
+      if(value.state==='runtime_missing')return '运行组件缺失';
+      return '正在检测';
     }
-    return state.sources.qq_account?`SnowLuma · ${esc(state.sources.qq_account)}`:'SnowLuma · 应用内免配置接入';
+    return state.sources.qq_account?'已连接':'等待连接';
+  }
+  function qqStatusLabel(status){
+    return {
+      connected:'已连接',
+      ready:'已连接',
+      running:'已连接，等待选择',
+      restart_required:'需要重启 QQ',
+      needs_deploy:'尚未部署',
+      stopped:'QQ 未运行',
+      unsupported:'QQ 版本不兼容',
+      detected:'已检测，未连接',
+    }[status]||'状态待确认';
   }
   function resetSourceDraft(){
     const c=state.sources||{};
@@ -168,9 +184,15 @@
     const c=state.sources,draft=ensureSourceDraft(),connector=qqConnector();
     requestAnimationFrame(updateSourceDraftUI);
     const qqItems=instances.length?instances.map(p=>{
-      const status=p.status==='restart_required'?'需要重启 QQ':p.status==='running'?'运行中':p.status||'已检测';
-      return `<div class="instance-row"><span class="instance-avatar">Q</span><div><strong>${esc(p.nickname||p.uin||(p.accounts?.[0]?.nickname)||'QQ 客户端')}</strong><small>${esc(p.uin||(p.pid?'进程 '+p.pid:status))} · ${esc(status)}</small></div><button type="button" class="${c.qq_pid===p.pid?'plain-button':'secondary'}" data-connect-qq="${p.pid||0}">${c.qq_pid===p.pid?'刷新聊天':connector==='snowcat'&&connectorState.state==='restart_required'?'重新检测':'连接'}</button></div>`;
+      const status=qqStatusLabel(p.status);
+      const meta=p.uin||(p.pid?`进程 ${p.pid}`:'未建立消息连接');
+      const incompatible=connector==='snowcat'&&connectorState.state==='unsupported_qq_version';
+      return `<div class="instance-row ${incompatible?'is-warning':''}"><span class="instance-avatar">Q</span><div><strong>${esc(p.nickname||p.uin||(p.accounts?.[0]?.nickname)||'QQ 客户端')}</strong><small>${esc(meta)} <span>·</span> ${esc(status)}</small></div><button type="button" class="${c.qq_pid===p.pid?'plain-button':'secondary'}" ${incompatible?'data-experience="open-qq-download"':'data-connect-qq="'+(p.pid||0)+'"'}>${incompatible?'获取最新 QQ':c.qq_pid===p.pid?'刷新聊天':connector==='snowcat'&&connectorState.state==='restart_required'?'重新检测':'连接'}</button></div>`;
     }).join(''):`<p class="helper">${connector==='snowcat'?'正在检测 QQ 安装目录和运行状态。':'正在检测本机 QQ，保持 QQ 登录即可。'}</p>`;
+    const incompatibleQQ=connector==='snowcat'&&connectorState.state==='unsupported_qq_version';
+    const statusTone=connectorState.ready?'is-connected':incompatibleQQ?'is-warning':connectorState.state==='restart_required'?'is-warning':'is-muted';
+    const connectorTitle=connectorState.ready?`SnowCat 已连接`:`${connectorLabelForNote()} · QQ ${esc(connectorState.qq_version||'版本检测中')}`;
+    const connectorHint=connectorState.message||'SnowCat 首次启用会部署到 QQ，重启 QQ 后生效。';
     const qqCard=`<section class="panel source-card" data-source-card="qq">
       <div class="source-title"><span class="source-mark qq">QQ</span><div><h3>QQ 消息</h3><small>选择连接器，再勾选需要关注的聊天。</small></div><label class="source-enable"><input id="qq-enabled" aria-label="启用 QQ 读取" type="checkbox" ${draft.qq_enabled?'checked':''}><span>${draft.qq_enabled?'启用':'停用'}</span></label></div>
       <div class="qq-connector-toolbar">
@@ -178,9 +200,9 @@
           <button type="button" role="tab" class="${connector==='snowluma'?'active':''}" aria-selected="${connector==='snowluma'}" data-qq-connector="snowluma">SnowLuma</button>
           <button type="button" role="tab" class="${connector==='snowcat'?'active':''}" aria-selected="${connector==='snowcat'}" data-qq-connector="snowcat">SnowCat</button>
         </div>
-        <span class="helper qq-connector-status">${qqConnectorStatus()}</span>
+        <span class="qq-connector-status ${statusTone}" data-state="${esc(qqConnectorState())}"><span>${qqConnectorStatus()}</span></span>
       </div>
-      ${connector==='snowcat'?`<div class="connector-note"><strong>QQ ${esc(connectorState.qq_version||'版本检测中')}</strong><span>${esc(connectorState.message||'SnowCat 首次启用会部署到 QQ，重启 QQ 后生效。')}</span></div>`:''}
+      ${connector==='snowcat'?`<div class="connector-note ${incompatibleQQ?'is-warning':connectorState.ready?'is-connected':''}"><div class="connector-note-copy"><strong>${connectorTitle}</strong><span>${esc(connectorHint)}</span></div><div class="connector-note-actions">${incompatibleQQ?'<button type="button" class="secondary" data-experience="open-qq-download">获取最新 QQ</button>':''}<button type="button" class="plain-button" data-experience="repair-snowcat" title="会先正常退出 QQ，再恢复 deploy.json 记录中的所有原生文件">检查并修复</button></div></div>`:''}
       <div id="qq-instances" class="instance-list">${qqItems}</div>
       ${chatList('qq')}
     </section>`;
@@ -199,6 +221,7 @@
     }
     return c;
   }
+  function connectorLabelForNote(){return qqConnector()==='snowcat'?'SnowCat':'SnowLuma';}
   async function persist(){await storeSet('sources-'+state.profile,state.sources);}
   async function saveSourceDraft(){
     const c=configFromForm();
@@ -335,6 +358,8 @@
         case 'stop':await desktop.stopCollector();break;
         case 'select-runtime':{const home=await desktop.selectRuntime();if(home){$('#snowluma-home').value=home;state.sources.snowluma_home=home;await persist();await detect(false);}break;}
         case 'select-snowcat-home':{const home=await desktop.selectRuntime();if(home){$('#snowcat-qq-home').value=home;state.sources.snowcat_qq_home=home;await persist();await detect(false);}break;}
+        case 'repair-snowcat':{action.disabled=true;action.textContent='正在修复';const result=await desktop.qqConnectorRepair('',state.sources.snowcat_qq_home||'');connectorState={...connectorState,...(result.state||{}),message:result.message||connectorState.message};await persist();render();toast(result.ok?'SnowCat 检查完成，QQ 原生文件已恢复，可重新连接':(result.message||'SnowCat 检查未通过'));break;}
+        case 'open-qq-download':await desktop.external('https://im.qq.com/pcqq/index.shtml');break;
         case 'diagnostics':{$('#source-debug').hidden=false;$('#source-debug').textContent=JSON.stringify(await desktop.sourceDiagnostics(qqConnector()),null,2);break;}
         case 'debug':{let params;try{params=JSON.parse($('#debug-params').value);}catch{throw new Error('参数需要是有效 JSON');}const result=await desktop.debugQQ({uin:state.sources.qq_account,action:$('#debug-action').value,params,qq_connector:qqConnector()});$('#source-debug').hidden=false;$('#source-debug').textContent=JSON.stringify(result,null,2);break;}
         case 'reopen-auth':if(authorizeUrl)await desktop.external(authorizeUrl);break;
