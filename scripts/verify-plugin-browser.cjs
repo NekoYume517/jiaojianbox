@@ -135,6 +135,8 @@ const assert = require('node:assert/strict');
     await page.locator('[data-nav=plugins]').click();
     await page.locator('#plugin-import').click();
     const code = `export function activate(host){
+      window.__pluginPlainFetch = fetch('/api/snapshot').then(async response => ({status:response.status,ok:response.ok,body:await response.json()}));
+      window.__pluginAllApi = host.apiAll('/api/snapshot','GET');
       host.registerPage({key:'page',title:'扩展入口',children:[
         {id:'one',title:'概览',mount({container}){window.__pageOneMounts=(window.__pageOneMounts||0)+1;container.textContent='插件概览已挂载'}},
         {id:'two',title:'工具',mount({container}){container.textContent='插件工具已挂载'}}
@@ -158,6 +160,11 @@ const assert = require('node:assert/strict');
     await row.waitFor();
     await row.locator('[data-plugin-enable]').check();
     await page.locator('[data-plugin-tab=demo]').first().waitFor();
+    await page.waitForFunction(async () => {
+      const plain = await window.__pluginPlainFetch;
+      const all = await window.__pluginAllApi;
+      return plain.status === 200 && plain.ok && !!plain.body && !!all;
+    });
     await page.locator('[data-plugin-tab=demo]').first().click();
     await page.locator('.nav-sub').getByRole('tab', { name: '工具' }).click();
     await page.getByText('插件工具已挂载', { exact: true }).waitFor();
@@ -182,6 +189,7 @@ const assert = require('node:assert/strict');
       return runs.some(run => run.event === 'task.created' && run.result?.summary === '处理完成：交给本机插件的任务');
     }, task.id);
     await page.locator('[data-nav=sources]').click();
+    await page.locator('#page-subnav [data-subnav="adapters"]').click();
     const adapter = page.locator('[data-trigger-adapter="plugin:demo:calendar"]');
     await adapter.waitFor();
     await adapter.getByRole('button', { name: '测试' }).click();

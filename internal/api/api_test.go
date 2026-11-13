@@ -336,6 +336,9 @@ func TestAnalysisAppendsFollowupToExistingTask(t *testing.T) {
 			break
 		}
 	}
+	if len(objects(analysis["tools"])) != 1 || str(objects(analysis["tools"])[0], "state") != "done" {
+		t.Fatal("notification tool trace missing", analysis)
+	}
 	if str(analyzed, "auto_task_id") != str(task, "id") || str(object(analyzed["analysis"]), "auto_task_action") != "appended" {
 		t.Fatal(analyzed)
 	}

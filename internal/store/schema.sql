@@ -80,17 +80,51 @@ CREATE INDEX IF NOT EXISTS ix_task_templates_owner ON task_templates(user_id,upd
 CREATE TABLE IF NOT EXISTS agent_messages(
     id TEXT PRIMARY KEY,
     user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    session_id TEXT NOT NULL DEFAULT '',
     payload TEXT NOT NULL,
     summarized INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS ix_agent_messages_owner ON agent_messages(user_id,created_at);
 CREATE INDEX IF NOT EXISTS ix_agent_messages_context ON agent_messages(user_id,summarized);
 
+CREATE TABLE IF NOT EXISTS agent_sessions(
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    title TEXT NOT NULL,
+    kind TEXT NOT NULL DEFAULT 'manual',
+    trigger_source TEXT NOT NULL DEFAULT '',
+    trigger_account TEXT NOT NULL DEFAULT '',
+    trigger_conversation TEXT NOT NULL DEFAULT '',
+    trigger_sender TEXT NOT NULL DEFAULT '',
+    trigger_chat_id TEXT NOT NULL DEFAULT '',
+    source_message_id TEXT,
+    preview TEXT NOT NULL DEFAULT '',
+    summary TEXT NOT NULL DEFAULT '',
+    permission TEXT NOT NULL DEFAULT 'full',
+    context_limit INTEGER NOT NULL DEFAULT 262144,
+    last_prompt_tokens INTEGER NOT NULL DEFAULT 0,
+    last_total_tokens INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE(user_id,source_message_id));
+CREATE INDEX IF NOT EXISTS ix_agent_sessions_owner ON agent_sessions(user_id,updated_at DESC);
+CREATE INDEX IF NOT EXISTS ix_agent_sessions_origin ON agent_sessions(user_id,trigger_source,trigger_conversation,trigger_sender);
+
 CREATE TABLE IF NOT EXISTS agent_state(
     user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
     summary TEXT NOT NULL DEFAULT '',
-    permission TEXT NOT NULL DEFAULT 'restricted',
+    permission TEXT NOT NULL DEFAULT 'full',
     context_limit INTEGER NOT NULL DEFAULT 1000000,
     last_prompt_tokens INTEGER NOT NULL DEFAULT 0,
     last_total_tokens INTEGER NOT NULL DEFAULT 0,
     updated_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS agent_runs(
+ id TEXT PRIMARY KEY,
+ user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+ session_id TEXT NOT NULL,
+ source_message_id TEXT NOT NULL DEFAULT '',
+ state TEXT NOT NULL DEFAULT 'queued',
+ payload TEXT NOT NULL DEFAULT '{}',
+ created_at TEXT NOT NULL,
+ updated_at TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS ix_agent_runs_session ON agent_runs(user_id,session_id,state,created_at);

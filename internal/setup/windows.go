@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 	"unsafe"
@@ -227,6 +228,8 @@ type closeWindowRequest struct {
 	posted int
 }
 
+var pendingCloseRequest atomic.Pointer[closeWindowRequest]
+
 func requestGracefulClose(pids []uint32) int {
 	if len(pids) == 0 {
 		return 0
@@ -235,9 +238,14 @@ func requestGracefulClose(pids []uint32) int {
 	for _, pid := range pids {
 		request.pids[pid] = true
 	}
+	pendingCloseRequest.Store(&request)
+	defer pendingCloseRequest.Store(nil)
 	postMessage := windows.NewLazySystemDLL("user32.dll").NewProc("PostMessageW")
-	callback := syscall.NewCallback(func(hwnd uintptr, param uintptr) uintptr {
-		req := (*closeWindowRequest)(unsafe.Pointer(param))
+	callback := syscall.NewCallback(func(hwnd uintptr, _ uintptr) uintptr {
+		req := pendingCloseRequest.Load()
+		if req == nil {
+			return 1
+		}
 		var pid uint32
 		if _, err := windows.GetWindowThreadProcessId(windows.HWND(hwnd), &pid); err != nil || !req.pids[pid] {
 			return 1
@@ -248,7 +256,7 @@ func requestGracefulClose(pids []uint32) int {
 		}
 		return 1
 	})
-	windows.EnumWindows(callback, unsafe.Pointer(&request))
+	windows.EnumWindows(callback, nil)
 	return request.posted
 }
 

@@ -20,6 +20,10 @@ const path=require('node:path'),fs=require('node:fs/promises'),net=require('node
     await require('./verify-motion.cjs')(page,scratch);await require('./verify-auth-browser.cjs')(browser,base,scratch);
     await require('./verify-shares.cjs')(page,browser,base,scratch);
     await require('./verify-collection-studio.cjs')(page,browser,scratch);
+    await require('./verify-trigger-history.cjs')(page,base);
+    await require('./verify-agent-rendering.cjs')(page,base);
+    await require('./verify-desktop-permission.cjs')(page,base);
+    await require('./verify-trigger-live.cjs')(page,base);
     assert.deepEqual(errors,[]);
     console.log(JSON.stringify({browserExperience:true,serverIsolated:true,pageErrors:errors.length,evidence:scratch}));
   }finally{await browser?.close();server.kill();}

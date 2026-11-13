@@ -38,3 +38,7 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+## Local Markdown and diagram rendering
+
+The locally bundled renderer uses marked (MIT), marked-footnote (MIT), DOMPurify (Apache-2.0 OR MPL-2.0), highlight.js (BSD-3-Clause), KaTeX (MIT), and Mermaid (MIT). Exact versions are pinned in package-lock.json. License texts accompany the bundles in web/vendor. Rebuild with `node scripts/build-markdown.mjs`; clients never download these engines at runtime.

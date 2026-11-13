@@ -12,8 +12,8 @@
       ['admin','站点管理','#admin-panel'],
     ],
     sources: [
-      ['overview','概览','*'],['qq','QQ 触发器','.source-card:first-child'],
-      ['wechat','微信触发器','.source-card:last-child'],['adapters','插件触发器','.trigger-adapters'],
+      ['overview','概览','.source-overview'],['history','触发历史','.trigger-history-panel'],['qq','QQ 触发器','[data-source-card="qq"]'],
+      ['wechat','微信触发器','[data-source-card="wechat"]'],['adapters','插件触发器','.trigger-adapters'],
       ['advanced','高级与调试','.advanced-source'],
     ],
     stats: [
@@ -23,6 +23,14 @@
   };
   const chosen = new Map();
   const descriptions={general:'选择适合当前设备的颜色、文字和信息密度。',quick:'设置快捷收集的启用方式和窗口内容。',reminders:'设置本机 Windows 通知与测试提醒。',startup:'管理开机启动与客户端更新。',model:'选择服务器提供的 AI，或连接自己的模型接口。',account:'管理个人资料与工作区数据。',admin:'管理站点注册、邀请码、邮件与账号。'};
+  const sourceDescriptions={
+    overview:'查看 QQ、微信与插件触发器的连接状态。',
+    history:'按来源查看每次触发，并在同一会话里继续处理。',
+    qq:'选择 QQ 实例和需要采集的聊天。',
+    wechat:'选择需要采集的微信聊天，并检查数据库连接。',
+    adapters:'查看插件注册的触发器与运行状态。',
+    advanced:'连接详情、读取检查与运行记录。',
+  };
   let signature='', currentBox, queued=false, selectionAnimation;
   const sidebarQuery=matchMedia('(max-width:820px)');
   const sidebarKey='jjb-sidebar-mode';
@@ -77,14 +85,16 @@
       show(node('#appearance-panel-marker'),['general','quick','reminders','startup'].includes(key));
     }
     if(page==='sources'){
-      show(node('.auto-source-panel'),key==='overview');
-      show(node('.trigger-adapters'),['overview','adapters'].includes(key));
-      show(node('.source-grid'),['overview','qq','wechat'].includes(key));
-      show(node('.source-card:first-child'),['overview','qq'].includes(key));
-      show(node('.source-card:last-child'),['overview','wechat'].includes(key));
-      show(node('.advanced-source'),['overview','advanced'].includes(key));
+      show(node('.source-save-bar'),!['history','adapters'].includes(key));
+      show(node('.source-overview'),key==='overview');
+      show(node('.trigger-history-panel'),key==='history');
+      show(node('.trigger-adapters'),key==='adapters');
+      show(node('.source-grid'),['qq','wechat'].includes(key));
+      show(node('[data-source-card="qq"]'),key==='qq');
+      show(node('[data-source-card="wechat"]'),key==='wechat');
+      show(node('.advanced-source'),key==='advanced');
       const advanced=node('.advanced-source');if(advanced&&key==='advanced')advanced.open=true;
-      node('.source-grid')?.classList.toggle('single-source',key!=='overview');
+      node('.source-grid')?.classList.toggle('single-source',true);
     }
     if(page==='stats'){
       for(const chart of ['chart-tokens','chart-latency','chart-status']){
@@ -123,8 +133,14 @@
       if(breadcrumbLabel.textContent!==selected.textContent)breadcrumbLabel.textContent=selected.textContent;breadcrumb.hidden=false;
       document.getElementById('breadcrumb').removeAttribute('aria-current');
       view.setAttribute('role','tabpanel');view.setAttribute('aria-label',selected.textContent);
+      const title=node('.page-heading h1');
       const description=node('.page-heading p');
       if(page==='settings'&&description&&description.textContent!==descriptions[key])description.textContent=descriptions[key]||'';
+      if(page==='sources'){
+        if(title)title.textContent=key==='history'?'触发历史':'触发器';
+        if(description&&description.textContent!==sourceDescriptions[key])description.textContent=sourceDescriptions[key]||'';
+        const actions=node('.page-heading .actions');if(actions)actions.hidden=key==='history';
+      }
       uiMotion.syncSegments();
     };
     if(animate)uiMotion.swapPage(view,apply,{subsection:true});
@@ -134,8 +150,8 @@
   function sync() {
     const page=state.page;
     const items=pageItems(page).filter(([, , selector])=>page.startsWith('plugin:')||selector==='*'||node(selector));
-    // Sources are managed from the desktop; the web page retains its explanation.
-    if(page==='sources'&&!window.desktop)items.length=0;
+    // Message ingestion is desktop-only; trigger conversations remain available everywhere.
+    if(page==='sources'&&!window.desktop){const index=items.findIndex(item=>item[0]==='history');items.splice(0,items.length);if(index>=0)items.push(['history','触发历史','.trigger-history-panel']);}
     const next=page+':'+items.map(item=>item[0]).join(',');
     const fresh=next!==signature;
     if(fresh){

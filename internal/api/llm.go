@@ -17,13 +17,15 @@ import (
 
 type progress func(Object)
 
+const defaultModelContextWindow = 262144
+
 func endpoint(base, action string) string {
 	base = serverURL(base)
 	base = strings.TrimSuffix(base, "/chat/completions")
 	return base + "/" + action
 }
 func defaultLLM() Object {
-	return Object{"service_mode": "", "base_url": "", "model": "", "context_count": 12, "auto_analyze": false, "auto_task": false, "vision_enabled": false, "include_keywords": "", "exclude_keywords": "", "instruction": ""}
+	return Object{"service_mode": "", "base_url": "", "model": "", "context_count": 12, "context_window_tokens": defaultModelContextWindow, "auto_analyze": false, "vision_enabled": false, "include_keywords": "", "exclude_keywords": "", "instruction": ""}
 }
 func (s *Server) llmConfig(ctx context.Context, user string) (Object, string) {
 	config := defaultLLM()
@@ -34,6 +36,7 @@ func (s *Server) llmConfig(ctx context.Context, user string) (Object, string) {
 	for k, v := range store.Payload(row) {
 		config[k] = v
 	}
+	delete(config, "auto_task")
 	key, err := s.Store.Decrypt(str(row, "secret"))
 	check(err)
 	return config, key
@@ -53,7 +56,7 @@ func llmInput(body Object) Object {
 			fail(422, "AI 配置类型无效："+key)
 		}
 	}
-	for _, key := range []string{"auto_analyze", "auto_task", "vision_enabled"} {
+	for _, key := range []string{"auto_analyze", "vision_enabled"} {
 		if _, ok := out[key].(bool); !ok {
 			fail(422, "AI 开关类型无效："+key)
 		}
@@ -66,6 +69,9 @@ func llmInput(body Object) Object {
 	}
 	if num(out, "context_count") < 0 || num(out, "context_count") > 50 {
 		fail(422, "上下文条数应为 0 至 50")
+	}
+	if n := num(out, "context_window_tokens"); n != float64(int(n)) || n < 8192 || n > 2_000_000 {
+		fail(422, "模型上下文窗口应为 8,192 至 2,000,000 tokens")
 	}
 	for k, max := range map[string]int{"base_url": 2000, "model": 150, "include_keywords": 1000, "exclude_keywords": 1000, "instruction": 4000} {
 		if len([]rune(str(out, k))) > max {
@@ -571,8 +577,27 @@ func (s *Server) recordLLM(ctx context.Context, user, kind string, config Object
 }
 
 func (s *Server) stream(r request, work func(context.Context, progress) any) any {
-	ctx, cancel := context.WithTimeout(r.Context(), 180*time.Second)
-	defer cancel()
+	return s.streamWithTimeout(r, 3*time.Minute, work)
+}
+
+func (s *Server) streamWithTimeout(r request, timeout time.Duration, work func(context.Context, progress) any) any {
+	return s.streamRequest(r, timeout, false, work)
+}
+
+// streamDetachedWithTimeout keeps server work alive after the browser closes
+// the event stream. Agent runs use this so navigating away only detaches the
+// view; an explicit stop request remains the way to cancel the run.
+func (s *Server) streamDetachedWithTimeout(r request, timeout time.Duration, work func(context.Context, progress) any) any {
+	return s.streamRequest(r, timeout, true, work)
+}
+
+func (s *Server) streamRequest(r request, timeout time.Duration, detach bool, work func(context.Context, progress) any) any {
+	clientDone := r.Context().Done()
+	base := r.Context()
+	if detach {
+		base = context.WithoutCancel(base)
+	}
+	ctx, cancel := context.WithTimeout(base, timeout)
 	r.Request = r.WithContext(ctx)
 	r.W.Header().Set("Content-Type", "text/event-stream")
 	r.W.Header().Set("X-Accel-Buffering", "no")
@@ -585,6 +610,9 @@ func (s *Server) stream(r request, work func(context.Context, progress) any) any
 		http.NewResponseController(r.W).SetWriteDeadline(time.Now().Add(10 * time.Second))
 		_, err := fmt.Fprintf(r.W, "event: %s\ndata: %s\n\n", kind, store.JSON(value))
 		if err != nil {
+			if !detach {
+				cancel()
+			}
 			return false
 		}
 		flusher.Flush()
@@ -601,12 +629,13 @@ func (s *Server) stream(r request, work func(context.Context, progress) any) any
 	updates := make(chan Object, 16)
 	done := make(chan outcome, 1)
 	go func() {
+		defer cancel()
 		result, err := attempt(func() any {
 			return work(ctx, func(value Object) {
 				select {
 				case updates <- value:
-				case <-ctx.Done():
-					check(ctx.Err())
+				case <-clientDone:
+				default:
 				}
 			})
 		})
@@ -619,6 +648,11 @@ func (s *Server) stream(r request, work func(context.Context, progress) any) any
 loop:
 	for {
 		select {
+		case <-clientDone:
+			if !detach {
+				cancel()
+			}
+			return nil
 		case <-ctx.Done():
 			return nil
 		case value := <-updates:

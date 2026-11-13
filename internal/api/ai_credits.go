@@ -16,13 +16,14 @@ type aiServiceConfig struct {
 	TokensPerCredit float64
 	CheckinEnabled  bool
 	CheckinCredits  float64
+	ContextWindow   int
 	UpstreamURL     string
 	UpstreamModel   string
 	UpstreamKey     string
 }
 
 func defaultAIService() aiServiceConfig {
-	return aiServiceConfig{DefaultCredits: 10, TokensPerCredit: 1000000, CheckinCredits: 1}
+	return aiServiceConfig{DefaultCredits: 10, TokensPerCredit: 1000000, CheckinCredits: 1, ContextWindow: defaultModelContextWindow}
 }
 
 func (s *Server) aiService(ctx context.Context) aiServiceConfig {
@@ -38,6 +39,10 @@ func (s *Server) aiService(ctx context.Context) aiServiceConfig {
 	out.DefaultCredits = positiveOr(v, "default_credits", out.DefaultCredits)
 	out.TokensPerCredit = positiveOr(v, "tokens_per_credit", out.TokensPerCredit)
 	out.CheckinCredits = positiveOr(v, "checkin_credits", out.CheckinCredits)
+	out.ContextWindow = int(positiveOr(v, "context_window_tokens", float64(out.ContextWindow)))
+	if out.ContextWindow < 8192 || out.ContextWindow > 2_000_000 {
+		out.ContextWindow = defaultModelContextWindow
+	}
 	out.UpstreamURL = strings.TrimSpace(str(v, "upstream_url"))
 	out.UpstreamModel = strings.TrimSpace(str(v, "upstream_model"))
 	if secret := str(v, "upstream_key_encrypted"); secret != "" {
@@ -101,6 +106,7 @@ func (s *Server) resolveLLM(ctx context.Context, user string) (Object, string) {
 	managed["model"] = svc.UpstreamModel
 	managed["managed"] = true
 	managed["vision_enabled"] = svc.VisionEnabled
+	managed["context_window_tokens"] = svc.ContextWindow
 	return managed, svc.UpstreamKey
 }
 
@@ -109,7 +115,7 @@ func (s *Server) aiCreditRoutes() {
 		balance, svc := s.aiBalance(r.Context(), r.User)
 		day := time.Now().In(zone).Format(time.DateOnly)
 		checked := first(query(r.Context(), s.Store.DB, "SELECT 1 AS ok FROM ai_checkins WHERE user_id=? AND day=?", r.User, day)) != nil
-		return Object{"enabled": svc.Enabled, "vision_enabled": svc.VisionEnabled, "balance": balance, "tokens_per_credit": svc.TokensPerCredit, "checked_today": checked, "checkin_enabled": svc.CheckinEnabled, "checkin_credits": svc.CheckinCredits}
+		return Object{"enabled": svc.Enabled, "vision_enabled": svc.VisionEnabled, "balance": balance, "tokens_per_credit": svc.TokensPerCredit, "context_window_tokens": svc.ContextWindow, "checked_today": checked, "checkin_enabled": svc.CheckinEnabled, "checkin_credits": svc.CheckinCredits}
 	})
 	s.route("POST /api/ai/credit/checkin", "owner", func(r request) any {
 		balance, svc := s.aiBalance(r.Context(), r.User)
@@ -129,7 +135,7 @@ func (s *Server) aiCreditRoutes() {
 	})
 	s.route("GET /api/admin/ai-service", "admin", func(r request) any {
 		svc := s.aiService(r.Context())
-		return Object{"enabled": svc.Enabled, "vision_enabled": svc.VisionEnabled, "default_credits": svc.DefaultCredits, "tokens_per_credit": svc.TokensPerCredit, "checkin_enabled": svc.CheckinEnabled, "checkin_credits": svc.CheckinCredits, "upstream_url": svc.UpstreamURL, "upstream_model": svc.UpstreamModel, "has_key": svc.UpstreamKey != ""}
+		return Object{"enabled": svc.Enabled, "vision_enabled": svc.VisionEnabled, "default_credits": svc.DefaultCredits, "tokens_per_credit": svc.TokensPerCredit, "context_window_tokens": svc.ContextWindow, "checkin_enabled": svc.CheckinEnabled, "checkin_credits": svc.CheckinCredits, "upstream_url": svc.UpstreamURL, "upstream_model": svc.UpstreamModel, "has_key": svc.UpstreamKey != ""}
 	})
 	s.route("PUT /api/admin/ai-service", "admin", func(r request) any {
 		b := r.body()
@@ -184,6 +190,13 @@ func (s *Server) aiCreditRoutes() {
 				svc.UpstreamModel = value
 			}
 		}
+		if b["context_window_tokens"] != nil {
+			value := num(b, "context_window_tokens")
+			if value != float64(int(value)) || value < 8192 || value > 2_000_000 {
+				fail(422, "模型上下文窗口应为 8,192 至 2,000,000 tokens")
+			}
+			svc.ContextWindow = int(value)
+		}
 		if b["upstream_key"] != nil {
 			key := strings.TrimSpace(str(b, "upstream_key"))
 			if len(key) > 2000 {
@@ -191,13 +204,13 @@ func (s *Server) aiCreditRoutes() {
 			}
 			svc.UpstreamKey = key
 		}
-		payload := Object{"enabled": svc.Enabled, "vision_enabled": svc.VisionEnabled, "default_credits": svc.DefaultCredits, "tokens_per_credit": svc.TokensPerCredit, "checkin_enabled": svc.CheckinEnabled, "checkin_credits": svc.CheckinCredits, "upstream_url": svc.UpstreamURL, "upstream_model": svc.UpstreamModel}
+		payload := Object{"enabled": svc.Enabled, "vision_enabled": svc.VisionEnabled, "default_credits": svc.DefaultCredits, "tokens_per_credit": svc.TokensPerCredit, "context_window_tokens": svc.ContextWindow, "checkin_enabled": svc.CheckinEnabled, "checkin_credits": svc.CheckinCredits, "upstream_url": svc.UpstreamURL, "upstream_model": svc.UpstreamModel}
 		if svc.UpstreamKey != "" {
 			encrypted, err := s.Store.Encrypt(svc.UpstreamKey)
 			check(err)
 			payload["upstream_key_encrypted"] = encrypted
 		}
 		exec(r.Context(), s.Store.DB, "INSERT OR REPLACE INTO site_settings VALUES('ai_service',?)", store.JSON(payload))
-		return Object{"enabled": svc.Enabled, "vision_enabled": svc.VisionEnabled, "default_credits": svc.DefaultCredits, "tokens_per_credit": svc.TokensPerCredit, "checkin_enabled": svc.CheckinEnabled, "checkin_credits": svc.CheckinCredits, "upstream_url": svc.UpstreamURL, "upstream_model": svc.UpstreamModel, "has_key": svc.UpstreamKey != ""}
+		return Object{"enabled": svc.Enabled, "vision_enabled": svc.VisionEnabled, "default_credits": svc.DefaultCredits, "tokens_per_credit": svc.TokensPerCredit, "context_window_tokens": svc.ContextWindow, "checkin_enabled": svc.CheckinEnabled, "checkin_credits": svc.CheckinCredits, "upstream_url": svc.UpstreamURL, "upstream_model": svc.UpstreamModel, "has_key": svc.UpstreamKey != ""}
 	})
 }

@@ -76,8 +76,8 @@ func TestServiceSelectionPreservesCustomSettings(t *testing.T) {
 	s := testServer(t)
 	token, user := login(t, s, "service-selector")
 	exec(context.Background(), s.Store.DB, "INSERT OR REPLACE INTO user_roles VALUES(?,'superadmin')", user)
-	call(t, s, "PUT", "/api/admin/ai-service", token, Object{"enabled": true, "upstream_url": "https://managed.example/v1", "upstream_model": "server-model", "upstream_key": "server-key"})
-	config := Object{"service_mode": "custom", "base_url": "https://custom.example/v1", "model": "my-model", "api_key": "my-key"}
+	call(t, s, "PUT", "/api/admin/ai-service", token, Object{"enabled": true, "upstream_url": "https://managed.example/v1", "upstream_model": "server-model", "upstream_key": "server-key", "context_window_tokens": 65536})
+	config := Object{"service_mode": "custom", "base_url": "https://custom.example/v1", "model": "my-model", "api_key": "my-key", "context_window_tokens": 32768}
 	code, _ := call(t, s, "PUT", "/api/settings/llm", token, config)
 	if code != 200 {
 		t.Fatal(code)
@@ -89,13 +89,13 @@ func TestServiceSelectionPreservesCustomSettings(t *testing.T) {
 		t.Fatal(code)
 	}
 	resolved, key := s.resolveLLM(context.Background(), user)
-	if str(resolved, "model") != "server-model" || key != "server-key" {
+	if str(resolved, "model") != "server-model" || key != "server-key" || num(resolved, "context_window_tokens") != 65536 {
 		t.Fatal(resolved)
 	}
 	config["service_mode"] = "custom"
 	call(t, s, "PUT", "/api/settings/llm", token, config)
 	resolved, key = s.resolveLLM(context.Background(), user)
-	if str(resolved, "model") != "my-model" || key != "my-key" {
+	if str(resolved, "model") != "my-model" || key != "my-key" || num(resolved, "context_window_tokens") != 32768 {
 		t.Fatal("custom configuration lost", resolved)
 	}
 	// An explicit custom selection must never silently spend server credits.

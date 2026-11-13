@@ -1,6 +1,47 @@
 'use strict';
 (() => {
-  let instances=[],detecting=null,resumeTimer,authorizationGeneration=0,authorizeUrl='',lastSessionGeneration=-1;
+  let instances=[],detecting=null,authorizationGeneration=0,authorizeUrl='',lastSessionGeneration=-1,sourceDraft=null,sourceDraftProfile='';
+  function resetSourceDraft(){
+    const c=state.sources||{};
+    sourceDraftProfile=state.profile||'';
+    sourceDraft={
+      profile:sourceDraftProfile,
+      qq:new Set(Array.isArray(c.qq_chats)?c.qq_chats:[]),
+      wechat:new Set(Array.isArray(c.wechat_chats)?c.wechat_chats:[]),
+      auto_start:c.auto_start!==false,
+      qq_enabled:c.qq_enabled!==false,
+      wechat_enabled:c.wechat_enabled!==false,
+    };
+    return sourceDraft;
+  }
+  function ensureSourceDraft(){
+    if(!sourceDraft||sourceDraft.profile!==(state.profile||''))return resetSourceDraft();
+    return sourceDraft;
+  }
+  function sameSet(left,right){
+    const items=Array.isArray(right)?right:[];
+    return left.size===items.length&&items.every(item=>left.has(item));
+  }
+  function sourceDraftDirty(){
+    const draft=ensureSourceDraft(),c=state.sources||{};
+    return !sameSet(draft.qq,c.qq_chats)||!sameSet(draft.wechat,c.wechat_chats)||
+      draft.auto_start!==(c.auto_start!==false)||draft.qq_enabled!==(c.qq_enabled!==false)||
+      draft.wechat_enabled!==(c.wechat_enabled!==false);
+  }
+  function updateSourceDraftUI(){
+    if(state.page!=='sources')return;
+    const draft=ensureSourceDraft(),dirty=sourceDraftDirty();
+    const button=document.querySelector('[data-source-save]');
+    if(button)button.disabled=!dirty;
+    const title=document.querySelector('[data-source-save-title]');
+    if(title)title.textContent=dirty?'有未保存的会话变更':'采集设置已保存';
+    const copy=document.querySelector('[data-source-save-copy]');
+    if(copy)copy.textContent=`QQ ${draft.qq.size} 个 · 微信 ${draft.wechat.size} 个${dirty?' · 保存后按新选择恢复读取':' · 已勾选会话显示在最前'}`;
+    for(const type of ['qq','wechat']){
+      const count=document.querySelector(`[data-chat-count="${type}"]`);
+      if(count)count.textContent=`本次选择 ${draft[type].size} 个`;
+    }
+  }
   const appearancePanel=()=>`<section id="settings-appearance" class="panel appearance-panel"><div class="appearance-heading"><div><h3>外观</h3><p class="helper">选择适合当前设备的颜色、文字和信息密度。</p></div><div data-theme-picker></div></div><div class="theme-options">${[['light','浅色'],['dark','深色'],['system','跟随系统']].map(([mode,label])=>`<button type="button" class="theme-option" data-theme-mode="${mode}"><div class="theme-preview ${mode}"></div><span>${appearance.icon(mode)}${label}</span></button>`).join('')}</div><div class="appearance-fields"><label>配色主题<select id="appearance-palette"><option value="magpie">默认</option><option value="tokyo-night">Tokyo Night</option><option value="nord">Nord</option><option value="graphite">Graphite</option></select></label><label>信息密度<select id="appearance-density"><option value="comfortable">舒适</option><option value="compact">紧凑</option></select></label><label>文字大小<select id="appearance-text-size"><option value="normal">标准</option><option value="large">较大</option></select></label></div></section>`;
   function reminderPanel(){
     const section=document.createElement('section');
@@ -67,8 +108,9 @@
     if(state.session)$('#shelf-handle').hidden=false;
   }
   function chatList(type){
-    const list=(state.sources.conversations||[]).filter(c=>c.source===type);
-    return `<div class="chat-toolbar"><input data-chat-search="${type}" placeholder="搜索联系人或群聊" aria-label="搜索${type==='qq'?'QQ':'微信'}会话"><span class="helper" data-chat-count="${type}" aria-live="polite">已选 ${(state.sources[type+'_chats']||[]).length} 个</span></div><div class="conversation-list">${list.length?list.map(c=>`<label class="conversation-row" data-chat-label="${type}" data-search="${esc(c.name+' '+c.id)}"><input type="checkbox" data-subscribe="${type}" value="${esc(c.id)}" ${(state.sources[type+'_chats']||[]).includes(c.id)?'checked':''}><span><strong>${esc(c.name)}</strong><small>${c.id.startsWith('group:')||c.id.endsWith('@chatroom')?'群聊':'联系人'}</small></span></label>`).join(''):`<div class="empty"><strong>${type==='qq'?'选择一个 QQ 实例':'正在等待微信登录'}</strong><div>连接后，在这里勾选需要关注的聊天。</div></div>`}</div>`;
+    const draft=ensureSourceDraft(),saved=new Set(state.sources[type+'_chats']||[]);
+    const list=(state.sources.conversations||[]).filter(c=>c.source===type).sort((left,right)=>Number(saved.has(right.id))-Number(saved.has(left.id)));
+    return `<div class="chat-toolbar"><input data-chat-search="${type}" placeholder="搜索联系人或群聊" aria-label="搜索${type==='qq'?'QQ':'微信'}会话"><span class="helper" data-chat-count="${type}" aria-live="polite">本次选择 ${draft[type].size} 个</span></div><div class="conversation-list">${list.length?list.map(c=>`<label class="conversation-row${saved.has(c.id)?' is-saved':''}" data-chat-label="${type}" data-search="${esc(c.name+' '+c.id)}"><input type="checkbox" data-subscribe="${type}" value="${esc(c.id)}" ${draft[type].has(c.id)?'checked':''}><span><strong>${esc(c.name)}</strong><small>${c.id.startsWith('group:')||c.id.endsWith('@chatroom')?'群聊':'联系人'}${saved.has(c.id)?' · 已保存':''}</small></span></label>`).join(''):`<div class="empty"><strong>${type==='qq'?'选择一个 QQ 实例':'正在等待微信登录'}</strong><div>连接后，在这里勾选需要关注的聊天。</div></div>`}</div>`;
   }
   function triggerAdaptersContent(){
     const adapters=window.pluginUI?.triggerAdapters?.()||[];
@@ -83,24 +125,68 @@
   function triggerAdaptersPanel(){
     return `<section class="panel trigger-adapters">${triggerAdaptersContent()}</section>`;
   }
+  function sourceSaveBar(){
+    const dirty=sourceDraftDirty();
+    return `<section class="panel source-save-bar" aria-live="polite"><div><strong data-source-save-title>${dirty?'有未保存的会话变更':'采集设置已保存'}</strong><small data-source-save-copy></small></div><button type="button" class="primary" data-source-save data-experience="save" ${dirty?'':'disabled'}>保存变更</button></section>`;
+  }
+  function sourceOverview(){
+    const c=state.sources,adapters=window.pluginUI?.triggerAdapters?.()||[];
+    const sourceRow=(type,mark,title,subtitle,account)=>{
+      const enabled=c[type+'_enabled']!==false,count=(c[type+'_chats']||[]).length;
+      return `<article class="source-overview-row" data-source-summary="${type}">
+        <span class="source-mark ${type==='qq'?'qq':''}">${mark}</span>
+        <div class="source-overview-copy"><strong>${title}</strong><small>${esc(subtitle)}</small><span>${esc(account||'等待连接')}</span></div>
+        <div class="source-overview-metrics"><strong>${count}</strong><small>个已保存会话</small></div>
+        <span class="tag ${enabled?'green':''}">${enabled?'已启用':'已停用'}</span>
+        <button type="button" class="plain-button" data-open-source="${type}">管理</button>
+      </article>`;
+    };
+    return `<section class="panel source-overview">
+      <div class="source-overview-head"><div><span class="eyebrow">触发器概览</span><h2>消息统一进入工作台</h2><p>QQ、微信和插件事件在电脑上运行，通知与待办同步到所有设备。</p></div><span id="collector-status" class="collector-status" role="status">正在准备连接</span></div>
+      <div class="source-overview-list">
+        ${sourceRow('qq','Q','QQ 消息','SnowLuma · 选择实例后读取群聊与联系人',c.qq_account)}
+        ${sourceRow('wechat','微','微信消息','本地数据库 · 自动识别当前登录账号',c.wechat_account)}
+        <article class="source-overview-row" data-source-summary="plugins"><span class="source-mark">+</span><div class="source-overview-copy"><strong>插件事件</strong><small>待办、通知与第三方服务可通过插件接入</small><span>${adapters.length?`${adapters.length} 个插件触发器`:'等待安装插件触发器'}</span></div><div class="source-overview-metrics"><strong>${adapters.length}</strong><small>个插件触发器</small></div><span class="tag ${adapters.some(x=>x.state==='error')?'red':'blue'}">${adapters.some(x=>x.state==='error')?'需检查':adapters.length?'运行中':'按需启用'}</span><button type="button" class="plain-button" data-open-source="adapters">查看</button></article>
+      </div>
+      <div class="source-overview-footer"><label class="switch-line"><input id="sources-auto" type="checkbox" ${ensureSourceDraft().auto_start?'checked':''}><span><strong>打开应用后自动恢复读取</strong><small>使用最后一次保存的 QQ／微信会话，不读取未保存的勾选。</small></span></label><button type="button" class="secondary" data-experience="detect">重新检测</button></div>
+    </section>`;
+  }
   function sourcesView(){
-    if(!window.desktop)return heading('触发器','电脑运行触发器，网页管理自己的内容。')+`<section class="panel">${empty('在桌面客户端选择触发器','连接后，通知、待办和材料会同步到这里。')}</section>`;
-    const c=state.sources;
-    return heading('触发器','QQ、微信和插件事件统一进入同一套触发器。第一次选好聊天，以后打开就会自动读取。',`<button class="secondary" data-experience="detect">重新检测</button>`)+
-    `<section class="panel auto-source-panel"><label class="switch-line"><input id="sources-auto" type="checkbox" ${c.auto_start!==false?'checked':''}><span><strong>打开应用后自动读取</strong><small>自动恢复上次选择的 QQ／微信和聊天，不需要再次启动。</small></span></label><span id="collector-status" class="collector-status" role="status">正在准备连接</span></section>`+
-    triggerAdaptersPanel()+
-    `<div class="source-grid"><section class="panel source-card"><div class="source-title"><span class="source-mark qq">QQ</span><div><h3>QQ 消息</h3><small>选择已登录实例，再勾选聊天。</small></div><input id="qq-enabled" aria-label="启用 QQ 读取" type="checkbox" ${c.qq_enabled!==false?'checked':''}></div><div id="qq-instances" class="instance-list">${instances.length?instances.map(p=>`<div class="instance-row"><span class="instance-avatar">Q</span><div><strong>${esc(p.nickname||p.uin||(p.accounts?.[0]?.nickname)||'QQ 客户端')}</strong><small>${esc(p.uin||'实例 '+p.pid)} · ${c.qq_pid===p.pid?'已选择':'已检测'}</small></div><button class="${c.qq_pid===p.pid?'plain-button':'secondary'}" data-connect-qq="${p.pid}">${c.qq_pid===p.pid?'刷新聊天':'连接'}</button></div>`).join(''):'<p class="helper">正在检测本机 QQ，保持 QQ 登录即可。</p>'}</div>${chatList('qq')}</section><section class="panel source-card"><div class="source-title"><span class="source-mark">微</span><div><h3>微信消息</h3><small>自动识别已登录微信，勾选后即可读取。</small></div><input id="wechat-enabled" aria-label="启用微信读取" type="checkbox" ${c.wechat_enabled!==false?'checked':''}></div><button class="plain-button" data-experience="refresh-wechat">刷新微信聊天</button>${chatList('wechat')}</section></div>`+
-    `<details class="panel advanced-source"><summary>高级与调试 <span class="helper">连接详情、读取检查、运行记录</span></summary><div class="advanced-body"><div class="form-grid"><label>SnowLuma 安装目录<input id="snowluma-home" value="${esc(c.snowluma_home||'')}" placeholder="自动检测"><button type="button" class="link" data-experience="select-runtime">选择目录</button></label><label>Python 解释器<input id="python-path" value="${esc(c.python_path||'')}" placeholder="留空使用内置采集程序"></label></div><div class="form-grid"><label>仅采集含关键词的消息<input id="capture-keywords" value="${esc(c.capture_keywords||'')}" placeholder="留空处理勾选聊天的全部消息"></label><label>QQ 连接方式<select id="qq-transport"><option value="managed">应用内免配置接入</option><option value="external">外部 OneBot（兼容调试）</option></select></label></div><details><summary class="helper">兼容连接参数</summary><div class="form-grid"><label>HTTP 地址<input id="qq-http" value="${esc(c.qq_http_url||'http://127.0.0.1:3000')}"></label><label>WebSocket 地址<input id="qq-ws" value="${esc(c.qq_ws_url||'ws://127.0.0.1:3001')}"></label></div><label>Access Token<input id="qq-token" type="password" value="${esc(c.qq_token||'')}" autocomplete="new-password"></label><div class="form-grid"><label>微信账号目录<input id="wechat-account" value="${esc(c.wechat_account||'')}" placeholder="自动检测"></label><label>微信数据库目录<input id="wechat-db-dir" value="${esc(c.wechat_db_dir||'')}" placeholder="自动检测"></label></div></details><div class="source-actions"><button class="secondary" data-experience="save">保存并恢复连接</button><button class="secondary" data-experience="diagnostics">检查读取状态</button><button class="plain-button" data-experience="stop">暂停本次读取</button></div><div class="form-grid debug-controls"><label>读取动作<select id="debug-action"><option value="get_login_info">账号状态</option><option value="get_group_list">群聊列表</option><option value="get_friend_list">联系人列表</option><option value="get_status">运行状态</option><option value="get_group_msg_history">群消息历史</option></select></label><label>参数<textarea id="debug-params" rows="2" placeholder='例如：{"group_id":123}'>{}</textarea></label></div><button class="secondary" data-experience="debug">执行读取检查</button><pre id="source-debug" class="debug-output" hidden></pre></div></details>`;
+    if(!window.desktop)return heading('触发器','电脑运行触发器，网页和手机可以继续处理触发会话。')+`<div class="trigger-history-slot">${window.agentUI?.historyPanel?.()||''}</div>`;
+    const c=state.sources,draft=ensureSourceDraft();
+    requestAnimationFrame(updateSourceDraftUI);
+    return heading('触发器','QQ、微信和插件事件统一进入同一套触发器。勾选会话后保存，离开时不会丢失草稿。',`<button class="secondary" data-experience="detect">重新检测</button>`)+
+    sourceSaveBar()+sourceOverview()+`<div class="trigger-history-slot">${window.agentUI?.historyPanel?.()||''}</div>`+triggerAdaptersPanel()+
+    `<div class="source-grid"><section class="panel source-card" data-source-card="qq"><div class="source-title"><span class="source-mark qq">QQ</span><div><h3>QQ 消息</h3><small>选择已登录实例，勾选要关注的聊天。</small></div><label class="source-enable"><input id="qq-enabled" aria-label="启用 QQ 读取" type="checkbox" ${draft.qq_enabled?'checked':''}><span>${draft.qq_enabled?'启用':'停用'}</span></label></div><div id="qq-instances" class="instance-list">${instances.length?instances.map(p=>`<div class="instance-row"><span class="instance-avatar">Q</span><div><strong>${esc(p.nickname||p.uin||(p.accounts?.[0]?.nickname)||'QQ 客户端')}</strong><small>${esc(p.uin||'实例 '+p.pid)} · ${c.qq_pid===p.pid?'已选择':'已检测'}</small></div><button type="button" class="${c.qq_pid===p.pid?'plain-button':'secondary'}" data-connect-qq="${p.pid}">${c.qq_pid===p.pid?'刷新聊天':'连接'}</button></div>`).join(''):'<p class="helper">正在检测本机 QQ，保持 QQ 登录即可。</p>'}</div>${chatList('qq')}</section><section class="panel source-card" data-source-card="wechat"><div class="source-title"><span class="source-mark">微</span><div><h3>微信消息</h3><small>自动识别已登录微信，勾选要关注的聊天。</small></div><label class="source-enable"><input id="wechat-enabled" aria-label="启用微信读取" type="checkbox" ${draft.wechat_enabled?'checked':''}><span>${draft.wechat_enabled?'启用':'停用'}</span></label></div><div class="source-card-toolbar"><span class="helper">${c.wechat_account?`当前账号 · ${esc(c.wechat_account)}`:'等待自动识别微信账号'}</span><button type="button" class="plain-button" data-experience="refresh-wechat">刷新聊天</button></div>${chatList('wechat')}</section></div>`+
+    `<details class="panel advanced-source"><summary>高级与调试 <span class="helper">连接详情、读取检查、运行记录</span></summary><div class="advanced-body"><div class="form-grid"><label>SnowLuma 安装目录<input id="snowluma-home" value="${esc(c.snowluma_home||'')}" placeholder="自动检测"><button type="button" class="link" data-experience="select-runtime">选择目录</button></label><label>Python 解释器<input id="python-path" value="${esc(c.python_path||'')}" placeholder="留空使用内置采集程序"></label></div><div class="form-grid"><label>仅采集含关键词的消息<input id="capture-keywords" value="${esc(c.capture_keywords||'')}" placeholder="留空处理勾选聊天的全部消息"></label><label>QQ 连接方式<select id="qq-transport"><option value="managed">应用内免配置接入</option><option value="external">外部 OneBot（兼容调试）</option></select></label></div><details><summary class="helper">兼容连接参数</summary><div class="form-grid"><label>HTTP 地址<input id="qq-http" value="${esc(c.qq_http_url||'http://127.0.0.1:3000')}"></label><label>WebSocket 地址<input id="qq-ws" value="${esc(c.qq_ws_url||'ws://127.0.0.1:3001')}"></label></div><label>Access Token<input id="qq-token" type="password" value="${esc(c.qq_token||'')}" autocomplete="new-password"></label><div class="form-grid"><label>微信账号目录<input id="wechat-account" value="${esc(c.wechat_account||'')}" placeholder="自动检测"></label><label>微信数据库目录<input id="wechat-db-dir" value="${esc(c.wechat_db_dir||'')}" placeholder="自动检测"></label></div></details><div class="source-actions"><button class="secondary" data-experience="diagnostics">检查读取状态</button><button class="plain-button" data-experience="stop">暂停本次读取</button></div><div class="form-grid debug-controls"><label>读取动作<select id="debug-action"><option value="get_login_info">账号状态</option><option value="get_group_list">群聊列表</option><option value="get_friend_list">联系人列表</option><option value="get_status">运行状态</option><option value="get_group_msg_history">群消息历史</option></select></label><label>参数<textarea id="debug-params" rows="2" placeholder='例如：{"group_id":123}'>{}</textarea></label></div><button class="secondary" data-experience="debug">执行读取检查</button><pre id="source-debug" class="debug-output" hidden></pre></div></details>`;
   }
   function configFromForm(){
     const c=readSourcesForm();
     if($('#sources-auto')){
-      c.auto_start=$('#sources-auto').checked;c.qq_enabled=$('#qq-enabled').checked;c.wechat_enabled=$('#wechat-enabled').checked;
+      const draft=ensureSourceDraft();
+      c.auto_start=draft.auto_start;c.qq_enabled=draft.qq_enabled;c.wechat_enabled=draft.wechat_enabled;
+      c.qq_chats=[...draft.qq];c.wechat_chats=[...draft.wechat];
       c.snowluma_home=$('#snowluma-home').value.trim();c.qq_transport=$('#qq-transport').value;
     }
     return c;
   }
   async function persist(){await storeSet('sources-'+state.profile,state.sources);}
+  async function saveSourceDraft(){
+    const c=configFromForm();
+    Object.assign(state.sources,c);
+    await persist();
+    resetSourceDraft();
+    if(state.page==='sources')render();
+    const selected=(c.qq_enabled!==false?c.qq_chats.length:0)+(c.wechat_enabled!==false?c.wechat_chats.length:0);
+    if(c.auto_start===false||selected===0)await desktop.stopCollector();
+    else await resume();
+  }
+  function confirmLeaveSources(){
+    if(state.page!=='sources'||!sourceDraftDirty())return true;
+    if(!window.confirm('QQ／微信会话选择还没有保存，确定离开并放弃本次修改吗？'))return false;
+    resetSourceDraft();
+    return true;
+  }
   async function resume(){
     if(!window.desktop||!state.session)return;
     const c=state.sources;
@@ -176,18 +262,21 @@
       finally{triggerTest.disabled=false;}
       return;
     }
+    const sourceShortcut=event.target.closest('[data-open-source]');
+    if(sourceShortcut){window.pageNavigation?.select(sourceShortcut.dataset.openSource);return;}
     const connect=event.target.closest('[data-connect-qq]');const action=event.target.closest('[data-experience]');
     if(!connect&&!action)return;
     try{
       if(connect){
-        connect.disabled=true;const c=configFromForm();const result=await desktop.connectQQ({pid:Number(connect.dataset.connectQq),home:c.snowluma_home});
-        c.qq_account=result.account||result.uin;c.qq_pid=Number(connect.dataset.connectQq);c.qq_transport='managed';c.conversations=[...(c.conversations||[]).filter(x=>x.source!=='qq'),...result.conversations];
-        await persist();render();await resume();toast('已连接 QQ，勾选聊天后自动读取');return;
+        connect.disabled=true;const c=readSourcesForm();const result=await desktop.connectQQ({pid:Number(connect.dataset.connectQq),home:c.snowluma_home});
+        state.sources.qq_account=result.account||result.uin;state.sources.qq_pid=Number(connect.dataset.connectQq);state.sources.qq_transport='managed';
+        state.sources.conversations=[...(state.sources.conversations||[]).filter(x=>x.source!=='qq'),...result.conversations];
+        await persist();render();await resume();toast('已连接 QQ，保存聊天选择后开始读取');return;
       }
       switch(action.dataset.experience){
         case 'detect':await detect(false);break;
         case 'refresh-wechat':action.disabled=true;await wechatContacts();break;
-        case 'save':configFromForm();await persist();await resume();toast('已保存，后续自动恢复读取');break;
+        case 'save':action.disabled=true;await saveSourceDraft();toast('会话选择已保存');break;
         case 'stop':await desktop.stopCollector();break;
         case 'select-runtime':{const home=await desktop.selectRuntime();if(home){$('#snowluma-home').value=home;state.sources.snowluma_home=home;await persist();await detect(false);}break;}
         case 'diagnostics':{$('#source-debug').hidden=false;$('#source-debug').textContent=JSON.stringify(await desktop.sourceDiagnostics(),null,2);break;}
@@ -199,8 +288,21 @@
   });
   document.addEventListener('change',event=>{
     if(event.target.matches('[data-subscribe],#sources-auto,#qq-enabled,#wechat-enabled')){
-      configFromForm();for(const type of ['qq','wechat']){const count=document.querySelector('[data-chat-count="'+type+'"]');if(count)count.textContent='已选 '+(state.sources[type+'_chats']||[]).length+' 个';}clearTimeout(resumeTimer);resumeTimer=setTimeout(async()=>{try{await persist();if(state.sources.auto_start===false)await desktop.stopCollector();else await resume();}catch(error){toast(error.message);}},800);
+      const draft=ensureSourceDraft();
+      if(event.target.dataset.subscribe){
+        const type=event.target.dataset.subscribe;
+        if(event.target.checked)draft[type].add(event.target.value);else draft[type].delete(event.target.value);
+      }
+      if(event.target.id==='sources-auto')draft.auto_start=event.target.checked;
+      if(event.target.id==='qq-enabled'){draft.qq_enabled=event.target.checked;event.target.closest('.source-enable')?.querySelector('span')?.replaceChildren(event.target.checked?'启用':'停用');}
+      if(event.target.id==='wechat-enabled'){draft.wechat_enabled=event.target.checked;event.target.closest('.source-enable')?.querySelector('span')?.replaceChildren(event.target.checked?'启用':'停用');}
+      updateSourceDraftUI();
     }
+  });
+  window.addEventListener('beforeunload',event=>{
+    if(state.page!=='sources'||!sourceDraftDirty())return;
+    event.preventDefault();
+    event.returnValue='';
   });
   document.addEventListener('input',event=>{if(event.target.dataset.chatSearch){const type=event.target.dataset.chatSearch;const query=event.target.value.toLowerCase();$$(`[data-chat-label="${type}"]`).forEach(row=>{row.hidden=!row.dataset.search.toLowerCase().includes(query);});}});
   let updateValue = null;
@@ -463,7 +565,7 @@
   window.updateUI = renderUpdate;
 
   window.addEventListener('appearance-error',()=>toast('外观已应用，但本机偏好未能保存'));
-  window.experience={sourcesView,decorate,detect,onSession,prepareLogin,browserLogin};
+  window.experience={sourcesView,decorate,detect,onSession,prepareLogin,browserLogin,confirmLeaveSources};
   window.addEventListener('plugin-triggers-changed',()=>{
     const panel=document.querySelector('.trigger-adapters');
     if(panel&&state.page==='sources')panel.innerHTML=triggerAdaptersContent();

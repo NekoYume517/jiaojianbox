@@ -112,6 +112,54 @@ func TestMissingLegacyEncryptionKeyStopsWithoutChangingDatabase(t *testing.T) {
 	}
 }
 
+func TestAgentSessionColumnMigratesExistingDatabase(t *testing.T) {
+	t.Setenv("JJB_MASTER_KEY", base64.URLEncoding.EncodeToString(make([]byte, 32)))
+	root := t.TempDir()
+	db, err := sql.Open("sqlite", filepath.ToSlash(filepath.Join(root, "jiaojianbox.sqlite3")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.Exec(`CREATE TABLE users(id TEXT PRIMARY KEY, username TEXT UNIQUE COLLATE NOCASE, salt TEXT, password TEXT)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.Exec(`CREATE TABLE agent_messages(
+		id TEXT PRIMARY KEY,
+		user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+		payload TEXT NOT NULL,
+		summarized INTEGER NOT NULL DEFAULT 0,
+		created_at TEXT NOT NULL)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.Exec("CREATE TABLE attachments(id TEXT PRIMARY KEY,user_id TEXT,task_id TEXT,size INTEGER,sha256 TEXT)"); err != nil {
+		t.Fatal(err)
+	}
+	if err = db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	s, err := Open(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	found := false
+	columns, err := Query(context.Background(), s.DB, "PRAGMA table_info(agent_messages)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, row := range columns {
+		if Str(row, "name") == "session_id" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("agent_messages.session_id was not migrated")
+	}
+	index, err := Query(context.Background(), s.DB, "SELECT name FROM sqlite_master WHERE type='index' AND name='ix_agent_messages_session'")
+	if err != nil || len(index) == 0 {
+		t.Fatal("agent message session index was not created")
+	}
+}
+
 func TestBackupVersionRepairsInterruptedZeroByteBackup(t *testing.T) {
 	t.Setenv("JJB_MASTER_KEY", base64.URLEncoding.EncodeToString(make([]byte, 32)))
 	root := t.TempDir()

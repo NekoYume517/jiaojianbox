@@ -119,15 +119,17 @@ func choice(value string, allowed ...string) bool {
 }
 
 type Server struct {
-	Store     *store.Store
-	Mux       *http.ServeMux
-	Assets    fs.FS
-	cancel    context.CancelFunc
-	workers   sync.WaitGroup
-	limits    sync.Map
-	analysis  sync.Map
-	MaxUpload int64
-	Version   string
+	Store        *store.Store
+	Mux          *http.ServeMux
+	Assets       fs.FS
+	cancel       context.CancelFunc
+	workers      sync.WaitGroup
+	limits       sync.Map
+	analysis     sync.Map
+	sessionTurns sync.Map
+	runCancels   sync.Map
+	MaxUpload    int64
+	Version      string
 }
 type request struct {
 	*http.Request
@@ -233,6 +235,17 @@ func New(database *store.Store, assets fs.FS, version string) (*Server, error) {
 		})
 		s.Mux.Handle("GET /", http.FileServerFS(s.Assets))
 		exec(context.Background(), s.Store.DB, "UPDATE analysis_jobs SET state='queued' WHERE state='running'")
+		s.transaction(context.Background(), func(db store.SQL) any {
+			ctx := context.Background()
+			if first(query(ctx, db, "SELECT key FROM site_settings WHERE key='migration.agent-full-default-v1'")) == nil {
+				exec(ctx, db, "UPDATE agent_sessions SET permission='full'")
+				exec(ctx, db, "UPDATE agent_state SET permission='full'")
+				exec(ctx, db, "INSERT INTO site_settings(key,value) VALUES('migration.agent-full-default-v1','done')")
+			}
+			return nil
+		})
+		exec(context.Background(), s.Store.DB, "UPDATE agent_runs SET state='interrupted' WHERE state IN ('queued','running')")
+		exec(context.Background(), s.Store.DB, "UPDATE agent_runs SET state='queued' WHERE source_message_id IN (SELECT message_id FROM analysis_jobs WHERE state='queued') AND state IN ('interrupted','cancelled')")
 		s.purgeExpiredRecycle(context.Background(), s.Store.DB, "")
 		return nil
 	})
@@ -296,7 +309,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Access-Control-Allow-Origin", "*")
-	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
 	w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type")
 	if r.Method == "OPTIONS" {
 		w.WriteHeader(204)

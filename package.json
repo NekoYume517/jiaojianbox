@@ -1,7 +1,7 @@
 {
   "name": "jiaojianbox",
   "productName": "交件箱",
-  "version": "0.6.18",
+  "version": "0.6.19",
   "description": "通知、待办与文件，一处整理",
   "author": "zzy",
   "private": true,
@@ -14,7 +14,14 @@
     "verify:signing": "python -X utf8 scripts/verify-android-signing.py"
   },
   "devDependencies": {
+    "dompurify": "3.4.17",
     "echarts": "^6.1.0",
+    "esbuild": "0.28.2",
+    "highlight.js": "11.12.0",
+    "katex": "0.19.1",
+    "marked": "18.2.0",
+    "marked-footnote": "1.4.0",
+    "mermaid": "12.3.0",
     "playwright": "^1.65.0"
   }
 }

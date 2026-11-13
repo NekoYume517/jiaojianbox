@@ -191,7 +191,7 @@ async function refresh({ renderPage = true } = {}) {
     state.snapshot.messages.push(...previousMessages.filter(m => !latestIds.has(m.id)));
     for (const m of state.snapshot.messages) if (!knownIds.has(m.id) && state.firstRenderDone) m.isNew = true;
     online(true); cacheSoon();
-    if (renderPage && contentChanged && !uploading && !['settings', 'sources','agent','stats','plugins','shares'].includes(state.page) && !state.page.startsWith('plugin:')) render();
+    if (renderPage && contentChanged && !uploading && !['settings', 'sources','stats','plugins','shares'].includes(state.page) && !state.page.startsWith('plugin:')) render();
     window.dispatchEvent(new CustomEvent('snapshot-updated', { detail: state.snapshot }));
     window.agentUI?.synced?.();
     window.pluginUI?.sync();
@@ -261,7 +261,7 @@ async function enter(session) {
   $('#account-server').textContent = session.mode==='offline'?'离线使用 · 仅本机':new URL(session.server).host;
   state.page = 'inbox'; state.firstRenderDone = false; render(); await refresh(); syncSocket();
   applyHashRoute() || render();
-  const settingsGeneration=state.generation;state.contextCount=undefined;api('/api/settings/llm').then(config=>{if(settingsGeneration!==state.generation)return;llmSettings=config;if(state.contextCount===undefined){state.contextCount=config.context_count;const input=$('#context-count');if(input&&document.activeElement!==input)input.value=config.context_count;}}).catch(()=>{});
+  const settingsGeneration=state.generation;api('/api/settings/llm').then(config=>{if(settingsGeneration===state.generation)llmSettings=config;}).catch(()=>{});
   maybeOnboard();
   window.experience?.onSession();
   await window.accountUI?.afterLogin();
@@ -339,7 +339,7 @@ function inboxView() {
   const selected = state.snapshot.messages.find(m => m.id === state.selected);
   return heading('通知', '从聊天中找到重要通知，自动分析并提取待办。', `<button class="secondary" data-action="paste">粘贴通知</button><button class="primary" data-action="new-task">${icon('plus')}新建待办</button>`) +
     `<div class="toolbar"><div class="search"><span>${icon('search')}</span><input id="inbox-search" placeholder="搜索通知、群聊或联系人" value="${esc(state.search)}" aria-label="搜索消息"></div><select id="source-filter" aria-label="来源"><option value="all">全部来源</option><option value="qq">QQ</option><option value="wechat">微信</option><option value="manual">手动添加</option></select><select id="category-filter" aria-label="分类"><option value="all">全部分类</option><option value="actionable">待办通知</option><option value="unprocessed">待分析</option><option value="chatting">普通聊天</option><option value="irrelevant">其他信息</option><option value="ignored">已忽略</option></select><span class="result-count">${messages.length} 条消息</span></div>` +
-    `<div class="inbox-grid ${selected ? 'has-selection' : ''}"><section class="panel messages-panel"><div class="panel-head"><h3>最近通知</h3><small>${state.contexts.size ? '已选 ' + state.contexts.size + ' 条上下文' : '勾选消息可作为上下文'}</small></div><div class="message-list ${state.firstRenderDone ? '' : 'stagger'}">${messages.length ? messages.map(m => `<article class="message-row ${state.firstRenderDone ? '' : 'stagger-item'} ${state.selected === m.id ? 'selected' : ''} ${m.isNew ? 'flash' : ''}" data-message="${esc(m.id)}" tabindex="0" role="button" aria-label="查看 ${esc(m.conversation_name)} 的消息"><input class="select-context" type="checkbox" data-context="${esc(m.id)}" ${state.contexts.has(m.id) ? 'checked' : ''} aria-label="选择为上下文"><div class="message-body"><div class="message-meta">${sourceTag(m.source)}<strong>${esc(m.conversation_name || '手动通知')}</strong><time>${formatDate(m.sent_at)}</time></div><div class="message-excerpt">${esc(pretty(m.text))}</div><div class="message-bottom">${tag(...messageClass(m))}${m.analysis ? confidenceChip(m.analysis.confidence) : ''}<span class="sender">${esc(m.sender_name || '我')}</span></div></div><div class="row-actions"><button data-row-action="message-task" data-id="${esc(m.id)}">建待办</button><button data-row-action="ignore-message" data-id="${esc(m.id)}" class="danger-hover">忽略</button><button data-row-action="delete-message" data-id="${esc(m.id)}" class="danger-hover">移入回收站</button></div></article>`).join('') : empty('暂无通知', state.search ? '换个关键词或筛选条件试试。' : '连接 QQ / 微信，或先粘贴一条通知。', '<button class="primary" data-action="paste">添加第一条通知</button>')}</div><div class="load-more"><button class="plain-button" data-action="more-messages">加载更早的消息</button></div></section><section class="panel detail">${selected ? messageDetail(selected) : empty('先选一条消息', '通知原文、上下文和分析结果会显示在这里。')}</section></div>`;
+    `<div class="inbox-grid ${selected ? 'has-selection' : ''}"><section class="panel messages-panel"><div class="panel-head"><h3>最近通知</h3><small>按聊天持续管理上下文</small></div><div class="message-list ${state.firstRenderDone ? '' : 'stagger'}">${messages.length ? messages.map(m => `<article class="message-row ${state.firstRenderDone ? '' : 'stagger-item'} ${state.selected === m.id ? 'selected' : ''} ${m.isNew ? 'flash' : ''}" data-message="${esc(m.id)}" tabindex="0" role="button" aria-label="查看 ${esc(m.conversation_name)} 的消息"><div class="message-body"><div class="message-meta">${sourceTag(m.source)}<strong>${esc(m.conversation_name || '手动通知')}</strong><time>${formatDate(m.sent_at)}</time></div><div class="message-excerpt">${esc(pretty(m.text))}</div><div class="message-bottom">${tag(...messageClass(m))}${m.analysis ? confidenceChip(m.analysis.confidence) : ''}<span class="sender">${esc(m.sender_name || '我')}</span></div></div><div class="row-actions"><button data-row-action="message-task" data-id="${esc(m.id)}">建待办</button><button data-row-action="ignore-message" data-id="${esc(m.id)}" class="danger-hover">忽略</button><button data-row-action="delete-message" data-id="${esc(m.id)}" class="danger-hover">移入回收站</button></div></article>`).join('') : empty('暂无通知', state.search ? '换个关键词或筛选条件试试。' : '连接 QQ / 微信，或先粘贴一条通知。', '<button class="primary" data-action="paste">添加第一条通知</button>')}</div><div class="load-more"><button class="plain-button" data-action="more-messages">加载更早的消息</button></div></section><section class="panel detail">${selected ? messageDetail(selected) : empty('先选一条消息', '通知原文、上下文和分析结果会显示在这里。')}</section></div>`;
 }
 function evidenceQuote(m) {
   const result = m.analysis; if (!result) return '';
@@ -364,7 +364,7 @@ function messageDetail(m) {
   const pending = !result && m.triage !== 'ignored' && !!m.analysis_pending;
   const working = busy || pending;
   const title = result?.title || pretty((m.text.split('\n').find(l=>l.trim()&&!l.trim().endsWith('：')&&!l.trim().endsWith(':')) || m.text.split('\n')[0] || '消息详情')).slice(0, 90);
-  return `<div class="panel-head"><h3>通知详情</h3><span class="helper">原文保留</span></div><div class="detail-content"><button class="link mobile-back" data-action="back-inbox">← 返回消息列表</button><div class="detail-meta">${sourceTag(m.source)}<span class="helper">${formatDate(m.sent_at)}</span></div><h2 class="detail-title">${esc(title)}</h2><div class="detail-byline">${esc(m.conversation_name)} · ${esc(m.sender_name || '我')}</div><div class="message-original">${esc(pretty(m.text))}${m.metadata?.quote ? '\n\n引用 ' + esc(m.metadata.quote.sender) + '：\n' + esc(m.metadata.quote.text) : ''}</div><div class="analysis-box"><div class="analysis-top"><h3>通知分析</h3>${working ? tag(pending && m.analysis_state === 'retrying' ? '等待重试' : '分析中', 'orange') : result ? `<small>${esc(result.model)}</small>` : m.analysis_error ? tag('分析失败', 'red') : tag('待分析', 'orange')}</div>${busy ? window.liveAnalysis?.markup('message:'+m.id)||'<p class="helper">正在结合上下文分析…</p>' : pending ? '<p class="helper" role="status">' + (m.analysis_state === 'running' ? '正在结合上下文自动分析，完成后会自动显示结果。' : m.analysis_state === 'retrying' ? '本次分析未完成，已加入自动重试队列。' : '正在自动分析，已加入队列，轮到这条消息后会立即处理。') + '</p>' : result ? `<div class="pill-row">${tag(...classifications[result.classification])}${confidenceChip(result.confidence)}${m.auto_task_id&&state.snapshot.tasks.some(t=>t.id===m.auto_task_id)?tag(result.auto_task_action==='appended'?'已追加到待办':result.auto_task_action==='matched'?'已关联待办':'已自动建待办','blue'):''}</div><p>${esc(result.summary)}</p>${result.due_at ? `<p>截止：${formatDate(result.due_at)}</p>` : ''}${result.requirements.length ? `<p>材料：${result.requirements.map(r => esc(r.label)).join('、')}</p>` : ''}<div class="analysis-reason">${esc(result.reason)}${result.notes?.length ? '<br>' + result.notes.map(esc).join('<br>') : ''}<br>本次使用 ${result.context_ids.length} 条上下文</div>${evidenceQuote(m)}${window.liveAnalysis?.performance(result)||''}` : m.analysis_error ? `<p class="error">${esc(m.analysis_error)}</p><p class="helper">请检查模型连接和配置，然后重试分析。</p>` : `<p>使用你在设置里配置的 AI，区分通知与闲聊，并提取可确认的待办草稿。</p>`}</div><div class="context-options"><span>自动上下文</span><input id="context-count" type="number" min="0" max="50" value="${state.contextCount ?? 12}" aria-label="上下文条数"><span>条</span>${state.contexts.size ? `<button class="link" data-action="clear-context">清除已选 ${state.contexts.size} 条</button>` : ''}</div><p class="helper">${state.contexts.size ? `分析时将发送当前消息与手动勾选的 ${state.contexts.size} 条上下文。` : '分析时将发送当前消息与同一会话的最近消息。'}</p><div class="detail-actions"><button class="primary" data-action="analyze" ${working ? 'disabled' : ''}>${working ? '正在分析…' : m.analysis_error ? '重试分析' : result ? '重新分析' : '使用 AI 分析'}</button>${busy?'<button class="secondary" data-action="cancel-analysis">停止分析</button>':''}<button class="secondary" data-action="message-task">生成待办草稿</button><button class="plain-button" data-action="ignore-message">${m.triage === 'ignored' ? '恢复消息' : '忽略这条'}</button><button class="plain-button danger-button" data-action="delete-message">移入回收站</button></div>${related.length ? `<details class="context-list"><summary>查看同会话的最近上下文（${related.length}）</summary>${related.map(x => `<div class="context-message"><small>${esc(x.sender_name)} · ${formatDate(x.sent_at)}</small><p>${esc(x.text)}</p></div>`).join('')}</details>` : ''}</div>`;
+  return `<div class="panel-head"><h3>通知详情</h3><span class="helper">原文保留</span></div><div class="detail-content"><button class="link mobile-back" data-action="back-inbox">← 返回消息列表</button><div class="detail-meta">${sourceTag(m.source)}<span class="helper">${formatDate(m.sent_at)}</span></div><h2 class="detail-title">${esc(title)}</h2><div class="detail-byline">${esc(m.conversation_name)} · ${esc(m.sender_name || '我')}</div><div class="message-original">${esc(pretty(m.text))}${m.metadata?.quote ? '\n\n引用 ' + esc(m.metadata.quote.sender) + '：\n' + esc(m.metadata.quote.text) : ''}</div><div class="analysis-box"><div class="analysis-top"><h3>通知分析</h3>${working ? tag(pending && m.analysis_state === 'retrying' ? '等待重试' : '分析中', 'orange') : result ? `<small>${esc(result.model)}</small>` : m.analysis_error ? tag('分析失败', 'red') : tag('待分析', 'orange')}</div>${busy ? window.liveAnalysis?.markup('message:'+m.id)||'<p class="helper">正在结合上下文分析…</p>' : pending ? '<p class="helper" role="status">' + (m.analysis_state === 'running' ? '正在结合上下文自动分析，完成后会自动显示结果。' : m.analysis_state === 'retrying' ? '本次分析未完成，已加入自动重试队列。' : '正在自动分析，已加入队列，轮到这条消息后会立即处理。') + '</p>' : result ? `<div class="pill-row">${tag(...classifications[result.classification])}${confidenceChip(result.confidence)}${m.auto_task_id&&state.snapshot.tasks.some(t=>t.id===m.auto_task_id)?tag(result.auto_task_action==='appended'?'已追加到待办':result.auto_task_action==='matched'?'已关联待办':'已自动建待办','blue'):''}</div><p>${esc(result.summary)}</p>${result.due_at ? `<p>截止：${formatDate(result.due_at)}</p>` : ''}${result.requirements.length ? `<p>材料：${result.requirements.map(r => esc(r.label)).join('、')}</p>` : ''}<div class="analysis-reason">${esc(result.reason)}${result.notes?.length ? '<br>' + result.notes.map(esc).join('<br>') : ''}<br>使用当前聊天的会话上下文</div>${evidenceQuote(m)}${window.liveAnalysis?.performance(result)||''}` : m.analysis_error ? `<p class="error">${esc(m.analysis_error)}</p><p class="helper">请检查模型连接和配置，然后重试分析。</p>` : `<p>使用你在设置里配置的 AI，区分通知与闲聊，并提取可确认的待办草稿。</p>`}</div><div class="detail-actions"><button class="primary" data-action="analyze" ${working ? 'disabled' : ''}>${working ? '正在分析…' : m.analysis_error ? '重试分析' : result ? '重新分析' : '使用 AI 分析'}</button>${busy?'<button class="secondary" data-action="cancel-analysis">停止分析</button>':''}<button class="secondary" data-action="message-task">生成待办草稿</button><button class="plain-button" data-action="ignore-message">${m.triage === 'ignored' ? '恢复消息' : '忽略这条'}</button><button class="plain-button danger-button" data-action="delete-message">移入回收站</button></div>${related.length ? `<details class="context-list"><summary>查看同会话的最近上下文（${related.length}）</summary>${related.map(x => `<div class="context-message"><small>${esc(x.sender_name)} · ${formatDate(x.sent_at)}</small><p>${esc(x.text)}</p></div>`).join('')}</details>` : ''}</div>`;
 }
 const startOfDay = value => { const d = new Date(value); return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime(); };
 function dueBadge(value) {
@@ -436,7 +436,7 @@ function taskDetail(t) {
     `<div class="task-detail-grid"><section class="panel"><div class="panel-head"><h3>待办内容</h3></div><div class="task-main-content">${statusSwitch}<div class="task-description">${esc(t.description || '暂无说明')}</div>${t.conflict ? '<button class="secondary" data-action="discard-conflict">放弃本机草稿，使用云端版本</button>' : ''}<div class="section-heading"><h3>待办材料</h3><small class="helper">${t.attachments.filter(f => f.kind === 'material').length} 个文件</small></div>${t.attachments.filter(f => f.kind === 'material').map(f => fileRow(f, t)).join('')}<label class="drop-zone">点击或拖入文件添加材料<input id="material-upload" type="file" multiple ${t.pending ? 'disabled' : ''} aria-label="上传待办材料"></label><div class="section-heading"><h3>提交回执</h3><small class="helper">成功截图、确认邮件或回执文件</small></div>${t.attachments.filter(f => f.kind === 'receipt').map(f => fileRow(f, t)).join('')}<label class="drop-zone">添加提交凭证<input id="receipt-upload" type="file" multiple ${t.pending ? 'disabled' : ''} aria-label="上传提交回执"></label>${sourceHistory}${window.shares?.taskActions(t)||""}<div class="section-heading"><h3>待办管理</h3></div><div class="small-actions"><button class="plain-button" data-action="${t.status==='archived'?'restore-task':'archive-task'}" ${t.pending ? 'disabled' : ''}>${t.status==='archived'?'恢复待办':'归档待办'}</button><button class="plain-button danger-button" data-action="delete-task" ${t.pending ? 'disabled' : ''}>删除待办</button></div></div></section><aside><section class="panel task-side"><div class="info-label">紧急度</div><div class="urgency-switch" role="group" aria-label="紧急度">${urgencySwitch(t)}</div><div class="info-label">截止时间</div><div class="info-value">${formatDate(t.due_at)}</div><div class="info-label">提醒</div><div class="info-value reminders-block">${reminderList || '<p class="helper">暂无提醒</p>'}${reminderAdd}</div><div class="info-label">文件命名</div><div class="info-value">${esc(t.naming_hint || t.filename_pattern || '未设置命名要求')}</div><div class="info-label">提交入口</div><div class="info-value">${t.submit_url ? `<button class="link" data-external="${esc(t.submit_url)}">打开提交页面 ↗</button>` : '未填写'}</div><div class="section-heading"><h3>材料核对</h3><button class="link" data-action="check-task">重新核对</button></div><div id="task-check">${t.requirements.length ? t.requirements.map(r => `<div class="check-row"><span class="check-symbol manual">○</span><div><strong>${esc(r.label)}</strong><small>${esc(r.extensions.join(' / ') || '任意格式')} · 至少 ${r.min_count} 份</small></div></div>`).join('') : '<p class="helper">未设置材料清单，可在编辑待办中添加。</p>'}</div></section></aside></div>`;
 }
 function settingsView() {
-  return heading('设置', '选择服务器提供的 AI，或连接自己的模型接口。') + `<div id="model-settings"><div class="service-toolbar"><div class="chart-mode" id="llm-mode" hidden role="tablist" aria-label="模型使用方式"><button type="button" role="tab" data-llm-mode="managed">默认</button><button type="button" role="tab" data-llm-mode="custom">自定义</button></div><span id="llm-mode-status" class="helper" role="status"></span></div><div id="llm-managed-panel" hidden><div class="managed-overview"><section class="panel credit-panel"><span class="helper">可用积分</span><strong id="llm-credit-balance">—</strong><p id="llm-credit-note" class="helper"></p><p id="llm-managed-vision" class="helper"></p><span class="service-badge">服务器提供 · 免配置</span></section><section class="panel checkin-panel" id="llm-checkin-card" hidden><div><h3>每日签到</h3><p id="llm-checkin-note" class="helper"></p></div><strong id="llm-checkin-state">—</strong><button type="button" class="secondary" data-credit-checkin hidden>立即签到</button></section></div></div><div class="settings-grid" id="llm-custom-panel" data-motion-key="model-preferences"><form id="llm-form" class="panel settings-panel"><div id="llm-provider-fields"><h3>自定义接口</h3><p class="helper">支持兼容 Chat Completions 的接口。配置按账号保存，电脑和手机共用。</p><p id="llm-managed-note" class="helper" hidden></p><label>API 地址<input id="llm-url" type="url" placeholder="https://api.example.com/v1" required></label><label>API Key<input id="llm-key" type="password" autocomplete="new-password" placeholder="留空保留已保存的 Key"><span id="llm-key-note" class="helper"></span></label><div class="form-grid"><label>模型<input id="llm-model" list="model-options" required placeholder="填写模型名称"><datalist id="model-options"></datalist></label></div></div><h3>分析偏好</h3><label>默认上下文条数<input id="llm-context" type="number" min="0" max="50" value="12" required></label><label id="llm-vision-setting" class="switch-line"><input id="llm-vision" type="checkbox"><span><strong>模型支持图片分析</strong><small>启用后，图片会发送实际图像给模型，判断截图内容和提交状态；纯文本模型请关闭。</small></span></label><label class="switch-line"><input id="llm-auto" type="checkbox"><span><strong>自动分析新消息</strong><small>仅处理桌面端所选会话同步的新消息。关闭后，可在通知页手动分析。</small></span></label><label class="switch-line" id="auto-task-line" hidden><input id="llm-auto-task" type="checkbox"><span><strong>自动新建与追加待办</strong><small>新建待办后，同会话的后续通知可自动补充提交链接、截止时间或材料；仍可编辑或删除。</small></span></label><div class="form-grid"><label>只自动分析含这些词的消息<input id="llm-include" placeholder="提交,报名,截止（留空处理全部）"></label><label>跳过含这些词的消息<input id="llm-exclude" placeholder="签到成功,红包（英文逗号分隔）"></label></div><label>分类偏好<textarea id="llm-instruction" rows="3" placeholder="例如：重点关注课程作业与比赛报名，日常约饭视为普通聊天。"></textarea></label><div class="detail-actions"><button type="submit" class="primary">保存设置</button><button type="button" class="secondary" data-custom-action data-action="test-llm">保存并读取模型</button><button type="button" class="plain-button" data-custom-action data-action="clear-llm-key">清除 Key</button></div><div id="llm-status" class="settings-status" role="status"></div><div id="models-output" class="models-output" hidden></div></form><aside class="settings-side"><h3>分析如何进行</h3><ol><li>采集端同步你选择的联系人和群聊。</li><li>模型结合上下文，区分待办通知、普通聊天和其他信息。</li><li>你可以查看理由、调整上下文，再确认待办草稿。</li></ol><div class="divider"></div><p>只有目标消息和所选上下文会发送给你配置的模型服务。</p><p>API Key 加密保存在服务端。留空保存会沿用已有 Key。</p></aside></div></div>`;
+  return heading('设置', '选择服务器提供的 AI，或连接自己的模型接口。') + `<div id="model-settings"><div class="service-toolbar"><div class="chart-mode" id="llm-mode" hidden role="tablist" aria-label="模型使用方式"><button type="button" role="tab" data-llm-mode="managed">默认</button><button type="button" role="tab" data-llm-mode="custom">自定义</button></div><span id="llm-mode-status" class="helper" role="status"></span></div><div id="llm-managed-panel" hidden><div class="managed-overview"><section class="panel credit-panel"><span class="helper">可用积分</span><strong id="llm-credit-balance">—</strong><p id="llm-credit-note" class="helper"></p><p id="llm-managed-vision" class="helper"></p><p id="llm-managed-context" class="helper"></p><span class="service-badge">服务器提供 · 免配置</span></section><section class="panel checkin-panel" id="llm-checkin-card" hidden><div><h3>每日签到</h3><p id="llm-checkin-note" class="helper"></p></div><strong id="llm-checkin-state">—</strong><button type="button" class="secondary" data-credit-checkin hidden>立即签到</button></section></div></div><div class="settings-grid" id="llm-custom-panel" data-motion-key="model-preferences"><form id="llm-form" class="panel settings-panel"><div id="llm-provider-fields"><h3>自定义接口</h3><p class="helper">支持兼容 Chat Completions 的接口。配置按账号保存，电脑和手机共用。</p><p id="llm-managed-note" class="helper" hidden></p><label>API 地址<input id="llm-url" type="url" placeholder="https://api.example.com/v1" required></label><label>API Key<input id="llm-key" type="password" autocomplete="new-password" placeholder="留空保留已保存的 Key"><span id="llm-key-note" class="helper"></span></label><div class="form-grid"><label>模型<input id="llm-model" list="model-options" required placeholder="填写模型名称"><datalist id="model-options"></datalist></label><label>上下文窗口<input id="llm-context-window" type="number" min="8192" max="2000000" step="1024" placeholder="默认 256K"><span class="helper">单位 tokens，留空使用 256K</span></label></div></div><h3>分析偏好</h3><label id="llm-vision-setting" class="switch-line"><input id="llm-vision" type="checkbox"><span><strong>模型支持图片分析</strong><small>启用后，图片会发送实际图像给模型，判断截图内容和提交状态；纯文本模型请关闭。</small></span></label><label class="switch-line"><input id="llm-auto" type="checkbox"><span><strong>自动分析新消息</strong><small>仅处理桌面端所选会话同步的新消息。关闭后，可在通知页手动分析。</small></span></label><div class="form-grid"><label>只自动分析含这些词的消息<input id="llm-include" placeholder="提交,报名,截止（留空处理全部）"></label><label>跳过含这些词的消息<input id="llm-exclude" placeholder="签到成功,红包（英文逗号分隔）"></label></div><label>分类偏好<textarea id="llm-instruction" rows="3" placeholder="例如：重点关注课程作业与比赛报名，日常约饭视为普通聊天。"></textarea></label><div class="detail-actions"><button type="submit" class="primary">保存设置</button><button type="button" class="secondary" data-custom-action data-action="test-llm">保存并读取模型</button><button type="button" class="plain-button" data-custom-action data-action="clear-llm-key">清除 Key</button></div><div id="llm-status" class="settings-status" role="status"></div><div id="models-output" class="models-output" hidden></div></form><aside class="settings-side"><h3>分析如何进行</h3><ol><li>采集端同步你选择的联系人和群聊。</li><li>模型结合上下文，区分待办通知、普通聊天和其他信息。</li><li>同一群聊或私聊共用一段会话，可在触发历史中继续处理。</li></ol><div class="divider"></div><p>消息在对应聊天的持续会话中处理，上下文接近窗口上限时自动压缩。</p><p>API Key 加密保存在服务端。留空保存会沿用已有 Key。</p></aside></div></div>`;
 }
 function applyLlmMode(mode, animate = false) {
   if (animate) return uiMotion.relayout($('#model-settings'), () => applyLlmMode(mode));
@@ -454,6 +454,7 @@ function applyLlmMode(mode, animate = false) {
     const n = v => Number(v || 0).toLocaleString('zh-CN', {maximumFractionDigits: 3});
     $('#llm-credit-balance').textContent = n(llmCredit.balance);
     $('#llm-managed-vision').textContent = llmCredit.vision_enabled ? '支持图片分析 · 管理员已启用' : '仅支持文本分析 · 由管理员配置';
+    $('#llm-managed-context').textContent = '上下文窗口 · ' + n(llmCredit.context_window_tokens || 262144) + ' tokens';
     $('#llm-credit-note').textContent = '1 积分 = ' + n(llmCredit.tokens_per_credit) + ' tokens';
     $('#llm-checkin-card').hidden = !llmCredit.checkin_enabled;
     $('#llm-checkin-state').textContent = llmCredit.checked_today ? '今日已签到' : '+' + n(llmCredit.checkin_credits) + ' 积分';
@@ -513,21 +514,21 @@ function render() {
   const sameView = $('#view').dataset.viewKey === viewKey;
   const scrollTop = sameView ? $('#view').scrollTop : 0;
   const pageScroll = sameView ? document.scrollingElement.scrollTop : 0;
-  const titles = { files:'文件', inbox: '通知', tasks: '待办', shares:'分享', sources: '触发器', agent:'AI', settings: '设置',stats:'统计',plugins:'插件' };
+  const titles = { files:'文件', inbox: '通知', tasks: '待办', shares:'分享', sources: '触发器', settings: '设置',stats:'统计',plugins:'插件' };
   $('#breadcrumb').textContent = titles[state.page]||window.pluginUI?.title(state.page)||'插件';
   $$('[data-nav]').forEach(button => button.classList.toggle('active', button.dataset.nav === state.page));
   // 分享依赖服务器，离线工作区不显示入口。
   const sharesNav = document.querySelector('[data-nav="shares"]');
   if (sharesNav) sharesNav.hidden = state.session?.mode === 'offline';
-  if (state.page !== 'agent') window.agentUI?.unmount();
+  if (state.page !== 'sources') window.agentUI?.unmount();
   window.statistics?.unmount();
-  $('#view').innerHTML = state.page.startsWith('plugin:') ? '<div id=plugin-page></div>' : state.page === 'sources' && window.experience ? experience.sourcesView() : ({ files:()=>window.shelf?.page()||'', inbox: inboxView, tasks: tasksView, shares:()=>window.shares?.page()||'', sources: sourcesView, agent:()=>window.agentUI?.page()||'', settings: settingsView,plugins:()=>window.pluginUI?.page()||'',stats:()=>window.statistics.page() })[state.page]();
+  $('#view').innerHTML = state.page.startsWith('plugin:') ? '<div id=plugin-page></div>' : state.page === 'sources' && window.experience ? experience.sourcesView() : ({ files:()=>window.shelf?.page()||'', inbox: inboxView, tasks: tasksView, shares:()=>window.shares?.page()||'', sources: sourcesView, settings: settingsView,plugins:()=>window.pluginUI?.page()||'',stats:()=>window.statistics.page() })[state.page]();
   hydrateIcons(); updateCounts(); syncLocationHash();
   $('#view').dataset.viewKey = viewKey;
   $('#view').scrollTop = scrollTop;
   uiMotion.syncNavigation();
   if(state.page==='stats')window.statistics?.mount();
-  if(state.page==='agent')window.agentUI?.mount();
+  if(state.page==='sources')window.agentUI?.mount();
   if(state.page==='files')window.shelf?.refreshStorage?.();
   if(state.page==='shares')window.shares?.mount();
   state.firstRenderDone = true;
@@ -556,6 +557,7 @@ function renderDetailOnly(messageId) {
   hydrateIcons();
 }
 async function navigate(page) {
+  if(state.page==='sources'&&page!=='sources'&&!window.experience?.confirmLeaveSources())return false;
   const changed=state.page!==page;
   state.page = page; state.search = ''; state.taskId = null;
   if(changed){
@@ -724,9 +726,9 @@ async function loadLlm() {
     const loaded = await api('/api/settings/llm');
     if (!form?.isConnected) return;
     llmSettings = loaded;
-    $('#llm-url').value = llmSettings.base_url; $('#llm-model').value = llmSettings.model;
-    $('#llm-vision').checked=!!llmSettings.vision_enabled;$('#llm-context').value = llmSettings.context_count; $('#llm-auto').checked = llmSettings.auto_analyze; $('#llm-auto-task').checked=!!llmSettings.auto_task&&llmSettings.auto_analyze;
-    $('#auto-task-line').hidden=!llmSettings.auto_analyze;
+    $('#llm-url').value = llmSettings.base_url; $('#llm-model').value = llmSettings.model; $('#llm-context-window').value = llmSettings.context_window_tokens || 262144;
+    $('#llm-vision').checked=!!llmSettings.vision_enabled;$('#llm-auto').checked = llmSettings.auto_analyze;
+
     $('#llm-include').value = llmSettings.include_keywords; $('#llm-exclude').value = llmSettings.exclude_keywords;
     $('#llm-instruction').value = llmSettings.instruction;
     $('#llm-key-note').textContent = llmSettings.has_key ? '已保存 Key，留空即可沿用。' : '尚未保存 Key，本地免鉴权模型可留空。';
@@ -741,19 +743,18 @@ async function loadLlm() {
 async function saveLlm() {
   if (!$('#llm-form').reportValidity()) throw new Error('请补全 API 地址与模型');
   const key = $('#llm-key').value;
-  const body = { service_mode: $('#model-settings')?.dataset.mode || 'custom', base_url: $('#llm-url').value.trim(), model: $('#llm-model').value.trim(), context_count: Number($('#llm-context').value), auto_analyze: $('#llm-auto').checked, auto_task: $('#llm-auto').checked&&$('#llm-auto-task').checked, vision_enabled:$('#llm-vision').checked, include_keywords: $('#llm-include').value.replaceAll('，', ','), exclude_keywords: $('#llm-exclude').value.replaceAll('，', ','), instruction: $('#llm-instruction').value };
+  const body = { service_mode: $('#model-settings')?.dataset.mode || 'custom', base_url: $('#llm-url').value.trim(), model: $('#llm-model').value.trim(), context_window_tokens: $('#llm-context-window').value.trim()?Number($('#llm-context-window').value):262144, auto_analyze: $('#llm-auto').checked, vision_enabled:$('#llm-vision').checked, include_keywords: $('#llm-include').value.replaceAll('，', ','), exclude_keywords: $('#llm-exclude').value.replaceAll('，', ','), instruction: $('#llm-instruction').value };
   if (key) body.api_key = key;
   llmSettings = await api('/api/settings/llm', 'PUT', body); $('#llm-key').value = '';
   $('#llm-status').textContent = '设置已保存，其他设备将共用此配置。';
   $('#llm-key-note').textContent = llmSettings.has_key ? '已保存 Key，留空即可沿用。' : '当前未保存 Key。';
 }
 function readSourcesForm() {
-  const c = state.sources;
+  const c = {...state.sources};
   if ($('#qq-http')) {
     c.qq_http_url = $('#qq-http').value.trim(); c.qq_ws_url = $('#qq-ws').value.trim(); c.qq_token = $('#qq-token').value;
     c.wechat_account = $('#wechat-account').value.trim(); c.wechat_db_dir = $('#wechat-db-dir').value.trim();
     c.python_path = $('#python-path').value.trim(); c.capture_keywords = $('#capture-keywords').value.replaceAll('，', ',');
-    for (const type of ['qq', 'wechat']) c[type + '_chats'] = $$(`[data-subscribe="${type}"]:checked`).map(x => x.value);
   }
   return c;
 }
@@ -783,8 +784,8 @@ async function runAction(action, button) {
     }
     case 'analyze': {
       if (state.busyAnalysis.has(message.id) || (!message.analysis && message.analysis_pending)) return;
-      const body = { message_id: message.id, context_count: Number($('#context-count').value) };
-      if (state.contexts.size) body.context_ids = [...state.contexts].filter(id => id !== message.id);
+      const body = { message_id: message.id };
+
       const analysisGeneration=state.generation;state.busyAnalysis.add(message.id); render();
       try { const result = await liveAnalysis.run('/api/analyze',body,'message:'+message.id);if(analysisGeneration!==state.generation)return; const current=state.snapshot.messages.find(m=>m.id===message.id);if(current){current.analysis=result;delete current.analysis_pending;delete current.analysis_error;current.analysis_state='done';}cacheSoon();toast('分析完成，确认后可生成待办'); }
       finally { state.busyAnalysis.delete(message.id); if (state.page === 'inbox') render(); }
@@ -964,7 +965,7 @@ const CMDK_COMMANDS = [
   { icon: 'inbox', label: '前往：通知', kbd: 'G I', run: () => navigate('inbox') },
   { icon: 'check', label: '前往：待办', kbd: 'G T', run: () => navigate('tasks') },
   { icon: 'connect', label: '前往：触发器', kbd: 'G S', run: () => navigate('sources') },
-  { icon: 'agent', label: '前往：AI 助手', kbd: 'G A', run: () => navigate('agent') },
+  { icon: 'agent', label: '前往：触发历史', kbd: 'G H', run: async () => { await navigate('sources'); window.pageNavigation?.select('history'); } },
   { icon: 'settings', label: '前往：设置', kbd: 'G C', run: () => navigate('settings') },
   { icon: 'plus', label: '新建待办', kbd: 'N', run: () => { state.page = 'inbox'; render(); openTask(); } },
   { icon: 'file', label: '粘贴一条通知', kbd: 'P', run: () => { state.page = 'inbox'; render(); $('#paste-content').value = ''; uiMotion.openDialog($('#paste-dialog')); } },
@@ -1063,7 +1064,8 @@ document.addEventListener('keydown', event => {
   if (key === 'g' && !shelfOpen) { awaitG = !awaitG; setTimeout(() => { awaitG = false; }, 1200); return; }
   if (awaitG && !shelfOpen) {
     awaitG = false;
-    const goto = { i: 'inbox', t: 'tasks', s: 'sources', a: 'agent', c: 'settings' }[key];
+    if (key === 'h') { event.preventDefault(); return navigate('sources').then(() => window.pageNavigation?.select('history')); }
+    const goto = { i: 'inbox', t: 'tasks', s: 'sources', c: 'settings' }[key];
     if (goto) { event.preventDefault(); return navigate(goto); }
     return;
   }
@@ -1099,6 +1101,13 @@ $('#cmdk-list').addEventListener('click', event => { const item = event.target.c
 function applyHashRoute() {
   if (!state.session) return;
   const hash = location.hash.replace(/^#\/?/, '');
+  if (hash === 'agent' || hash === 'sources/history') {
+    state.page = 'sources'; render();
+    requestAnimationFrame(() => window.pageNavigation?.select('history'));
+    history.replaceState(null, '', '#/sources');
+    return true;
+  }
+  if(state.page==='sources'&&hash!=='sources'&&!window.experience?.confirmLeaveSources()){syncLocationHash();return true;}
   if (hash.startsWith('task/')) { const id = hash.slice(5); if (state.snapshot.tasks.some(t => t.id === id)) { state.page = 'tasks'; state.taskId = id; render(); return true; } }
   if (hash.startsWith('message/')) { const id = hash.slice(8); if (state.snapshot.messages.some(m => m.id === id)) { state.page = 'inbox'; state.selected = id; render(); return true; } }
   if(hash==='shares'&&state.session.mode!=='offline'){state.page='shares';render();return true;}
@@ -1119,7 +1128,6 @@ window.jjbOpenTask = async id => {
 window.addEventListener('hashchange', () => applyHashRoute());
 document.addEventListener('input', event => {
   if (['inbox-search', 'task-search'].includes(event.target.id)) { state.search = event.target.value; render(); }
-  if (event.target.id === 'context-count') state.contextCount = Number(event.target.value);
 });
 document.addEventListener('change', async event => {
   try {
@@ -1187,6 +1195,7 @@ $('#auth-form').addEventListener('submit', async event => {
   finally { $('#auth-submit').disabled = false; }
 });
 $('#logout').addEventListener('click', async () => {
+  if(!window.experience?.confirmLeaveSources()) return;
   if (state.pending.length && !confirm(`还有 ${state.pending.length} 项修改未同步，本机草稿会保留。仍要退出吗？`)) return;
   try { await api('/api/auth/logout', 'POST'); } catch { /* 离线仍可退出本机。 */ }
   state.generation++;window.liveAnalysis?.cancelAll();window.statistics?.unmount();window.shelf?.reset();clearTimeout(reconnectTimer); clearTimeout(cacheTimer); state.socket?.close();

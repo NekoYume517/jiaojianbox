@@ -202,6 +202,7 @@ host.api('/api/tasks', 'POST', { title: '新待办' });  // 应用 API（带会�
 host.request('/api/tasks', 'GET');                   // host.api 的同义方法
 host.invoke('/api/snapshot', 'GET');                 // host.api 的同义方法
 host.apiAll('/api/search?q=作业', 'GET');             // 可调用项目全部受保护 /api 路由
+await fetch('/api/snapshot');                        // 标准 fetch 也会自动附带当前会话
 host.navigate('tasks'); host.render(); host.refresh();
 host.toast('提示'); host.open('https://example.com');
 host.addStyle('.my-plugin { color: var(--ink) }');
@@ -211,7 +212,7 @@ host.moduleURL('lib/tool.js');  // 可导入的包内 ES module URL
 host.patch(window, 'fetch', wrapped);  // 运行期补丁，停用时自动还原
 ```
 
-`host.api`、`host.request`、`host.invoke` 和 `host.apiAll` 使用当前登录会话，可以访问本项目全部 `/api/` 路由，不需要在 manifest 中额外配置接口白名单。请只调用用户明确需要的能力，并处理 401、403、409 和网络错误。
+`host.api`、`host.request`、`host.invoke` 和 `host.apiAll` 使用当前登录会话，可以访问本项目全部 `/api/` 路由，不需要在 manifest 中额外配置接口白名单。插件也可以直接使用标准 `fetch()` 调用相对路径或同源 `/api/` 地址；宿主会在请求离开渲染器前自动附加当前会话，即使插件开发时没有读取本指南或专门适配交件箱 API 也能使用。跨域地址不会获得会话令牌。请只调用用户明确需要的能力，并处理 401、403、409 和网络错误。
 
 ## 3. 示例
 

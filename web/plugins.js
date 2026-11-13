@@ -22,6 +22,27 @@
     cooldownMs: 30000,
   });
   const key = () => state.session ? state.session.server + '|' + state.session.user_id : '';
+  const nativeFetch = window.fetch.bind(window);
+  // Plugin code can use the standard fetch API with relative or same-origin
+  // /api routes. Authentication is attached before the request leaves the
+  // renderer, so plugins do not need host-specific wrappers just to work.
+  window.fetch = function sessionAwareFetch(input, init) {
+    let target;
+    try {
+      target = new URL(typeof input === 'string' || input instanceof URL ? String(input) : input.url, location.href);
+    } catch {
+      return nativeFetch(input, init);
+    }
+    if (target.origin !== location.origin || !target.pathname.startsWith('/api/') || !state.session?.token) {
+      return nativeFetch(input, init);
+    }
+    const headers = new Headers(init?.headers || (input instanceof Request ? input.headers : undefined));
+    if (!headers.has('Authorization')) headers.set('Authorization', 'Bearer ' + state.session.token);
+    if (input instanceof Request && init === undefined) {
+      return nativeFetch(new Request(input, { headers }));
+    }
+    return nativeFetch(input, { ...(init || {}), headers });
+  };
   const errorText = error => String(error?.message || error);
   const runtimeNumber = (value, fallback, min, max) => {
     const number = Number(value);

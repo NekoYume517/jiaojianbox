@@ -353,6 +353,8 @@ func (s *Server) messageRoutes() {
 			settings := first(query(r.Context(), db, "SELECT payload FROM llm_settings WHERE user_id=?", r.User))
 			if settings != nil && eligible(store.Payload(settings), str(m, "text")) {
 				exec(r.Context(), db, "INSERT OR IGNORE INTO analysis_jobs(user_id,message_id) VALUES(?,?)", r.User, m["id"])
+				sessionID := s.ensureConversationSession(r.Context(), db, r.User, m, agentContextLimitFromConfig(store.Payload(settings)))
+				s.queueAgentRun(r.Context(), db, r.User, "notification-"+str(m, "id"), sessionID, str(m, "id"))
 				m["analysis_pending"] = true
 				m["analysis_state"] = "queued"
 			}

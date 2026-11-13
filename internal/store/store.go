@@ -112,6 +112,8 @@ func Open(root string) (*Store, error) {
 		{"messages", "deleted_at", "ALTER TABLE messages ADD COLUMN deleted_at TEXT"},
 		{"tasks", "deleted_at", "ALTER TABLE tasks ADD COLUMN deleted_at TEXT"},
 		{"attachments", "deleted_at", "ALTER TABLE attachments ADD COLUMN deleted_at TEXT"},
+		{"agent_sessions", "trigger_chat_id", "ALTER TABLE agent_sessions ADD COLUMN trigger_chat_id TEXT NOT NULL DEFAULT ''"},
+		{"agent_messages", "session_id", "ALTER TABLE agent_messages ADD COLUMN session_id TEXT NOT NULL DEFAULT ''"},
 	} {
 		rows, err := Query(context.Background(), db, "PRAGMA table_info("+migration.table+")")
 		if err != nil {
@@ -130,6 +132,10 @@ func Open(root string) (*Store, error) {
 				return nil, err
 			}
 		}
+	}
+	if _, err = db.Exec("CREATE INDEX IF NOT EXISTS ix_agent_messages_session ON agent_messages(user_id,session_id,created_at)"); err != nil {
+		db.Close()
+		return nil, err
 	}
 	return s, nil
 }

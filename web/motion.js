@@ -96,18 +96,37 @@
     segmentMemory.set(segmentKey(box), { rect: { left: rect.left, top: rect.top, width: rect.width, height: rect.height }, at: performance.now() });
   }
   function syncSegments() {
-    document.querySelectorAll('.theme-picker,.page-tabs,.chart-mode').forEach(box => {
+    document.querySelectorAll('.theme-picker,.page-tabs,.chart-mode,.trigger-origin-list').forEach(box => {
       const selected = box.querySelector('button.active,button[aria-selected=true]');
       if (!selected?.offsetWidth || !box.getClientRects().length) return;
       let entry = segments.get(box);
       const fresh = !entry;
-      if (!entry) {
-        const thumb = document.createElement('span'); thumb.className = 'segment-highlight'; thumb.setAttribute('aria-hidden', 'true');
-        box.prepend(thumb); entry = { thumb, selected: null, animations: [], to: null }; segments.set(box, entry); box.classList.add('motion-segment');
+      if (!entry || !entry.thumb.isConnected) {
+        // Page-level tab strips keep the same container while replacing their
+        // buttons. Reinsert the shared highlight when its old node was cleared;
+        // otherwise the segment map points at a detached thumb and every later
+        // tab change loses both the highlight and its transition.
+        const thumb = entry?.thumb || document.createElement('span');
+        if (!thumb.className) thumb.className = 'segment-highlight';
+        if (!thumb.hasAttribute('aria-hidden')) thumb.setAttribute('aria-hidden', 'true');
+        if (entry) {
+          stop(entry);
+          entry.animations = [];
+          entry.selected = null;
+          entry.to = null;
+        } else {
+          entry = { thumb, selected: null, animations: [], to: null };
+          segments.set(box, entry);
+        }
+        box.prepend(thumb);
+        box.classList.add('motion-segment');
       }
       const before = entry.thumb.style.width ? getComputedStyle(entry.thumb) : null;
       const from = before && { transform: before.transform, width: before.width, height: before.height };
-      const to = { transform: `translate(${selected.offsetLeft}px,${selected.offsetTop}px)`, width: selected.offsetWidth + 'px', height: selected.offsetHeight + 'px' };
+      const boxRect = box.getBoundingClientRect(), selectedRect = selected.getBoundingClientRect();
+      const x = box.matches('.trigger-origin-list') ? selectedRect.left - boxRect.left + box.scrollLeft : selected.offsetLeft;
+      const y = box.matches('.trigger-origin-list') ? selectedRect.top - boxRect.top + box.scrollTop : selected.offsetTop;
+      const to = { transform: `translate(${x}px,${y}px)`, width: selected.offsetWidth + 'px', height: selected.offsetHeight + 'px' };
       if(entry.selected===selected && entry.to && Object.entries(to).every(([key,value])=>entry.to[key]===value)){if(keyboard||reduced.matches||document.hidden)stop(entry);rememberSegment(box,entry);return;}
       stop(entry);entry.animations=[];
       Object.assign(entry.thumb.style, to);

@@ -145,10 +145,13 @@ module.exports = async function verifyMotion(page, scratch) {
     assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),'sources must not overflow horizontally');
   }
   await page.setViewportSize({width:390,height:830});await page.locator('[data-nav="stats"]').click();
-  await page.locator('.page-tabs button').first().waitFor();
+  // Page navigation swaps share a single mobile tab strip. Wait for the
+  // destination tab itself so a leaving source tab cannot be mistaken for the
+  // statistics group during the transition.
+  await page.locator('.page-tabs [data-subnav="tokens"]').waitFor({state:'visible'});
   const tabThumb=page.locator('.page-tabs .segment-highlight');
   const tabBefore=await tabThumb.evaluate(el=>el.style.transform);
-  await page.locator('.page-tabs button').nth(1).click();
+  await page.locator('.page-tabs [data-subnav="tokens"]').click();
   await page.waitForFunction(([before])=>{
     const thumb=document.querySelector('.page-tabs .segment-highlight');
     return thumb&&thumb.style.transform!==before&&document.querySelector('.page-tabs button[aria-selected=true]').textContent.trim()!=='概览';
@@ -196,6 +199,28 @@ module.exports = async function verifyMotion(page, scratch) {
   await page.waitForTimeout(320);
   const after=await page.locator('#verify-shared-element>div').boundingBox();assert(Math.abs(after.x-before.x-100)<.5);
   await page.evaluate(()=>document.querySelector('#verify-shared-element').remove());
+  // Nested conversation rows share the same segment runtime as primary tabs.
+  await page.evaluate(() => {
+    const rail = document.createElement('div');
+    rail.id = 'verify-session-motion'; rail.className = 'trigger-origin-list';
+    rail.style.cssText = 'position:fixed;left:300px;top:180px;width:220px;height:140px;z-index:1005';
+    rail.innerHTML = '<section class="trigger-origin-group"><div class="trigger-session-list"><button class="trigger-session-row active">会话一</button><button class="trigger-session-row">会话二</button></div></section>';
+    document.body.append(rail); uiMotion.syncSegments();
+    window.verifySessionThumb = rail.querySelector('.segment-highlight');
+  });
+  await page.mouse.click(700,90);
+  await page.evaluate(() => {
+    const rail = document.querySelector('#verify-session-motion');
+    rail.querySelectorAll('button').forEach((b,i)=>b.classList.toggle('active',i===1));
+    uiMotion.syncSegments();
+  });
+  await page.waitForTimeout(320);
+  assert(await page.evaluate(() => {
+    const rail=document.querySelector('#verify-session-motion'),thumb=rail.querySelector('.segment-highlight');
+    const a=rail.querySelector('button.active').getBoundingClientRect(),b=thumb.getBoundingClientRect();
+    return thumb===window.verifySessionThumb && Math.abs(a.y-b.y)<1 && Math.abs(a.width-b.width)<1;
+  }));
+  await page.evaluate(()=>document.querySelector('#verify-session-motion').remove());
   await require('./verify-controls.cjs')(page,scratch);
   console.log('Motion: first render, spring retargeting, press feedback, interrupted dialogs, menu re-entry/keyboard, reduced motion and narrow bounds passed.');
 };

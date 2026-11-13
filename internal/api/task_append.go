@@ -21,7 +21,8 @@ func taskSourceMessage(message Object) Object {
 func sameSourceConversation(left, right Object) bool {
 	return str(left, "conversation_id") != "" &&
 		str(left, "conversation_id") == str(right, "conversation_id") &&
-		str(left, "source") == str(right, "source")
+		str(left, "source") == str(right, "source") &&
+		str(left, "account_id") == str(right, "account_id")
 }
 
 func taskMatchesConversation(ctx context.Context, db store.SQL, user string, task, message Object) bool {
