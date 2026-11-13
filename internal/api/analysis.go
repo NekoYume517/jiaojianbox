@@ -320,7 +320,11 @@ func (s *Server) analyzeWorker(ctx context.Context) {
 			_, err := attempt(func() any {
 				var job Object
 				s.transaction(ctx, func(db store.SQL) any {
-					job = first(query(ctx, db, "SELECT * FROM analysis_jobs WHERE state='queued' AND next_at<=? ORDER BY id LIMIT 1", timestamp()))
+					// 分层处理：只取不在分诊等待中的任务，避免深度分析抢在批量分诊之前。
+					job = first(query(ctx, db, `SELECT * FROM analysis_jobs WHERE state='queued' AND next_at<=?
+						AND NOT EXISTS (SELECT 1 FROM messages m WHERE m.id=analysis_jobs.message_id
+							AND json_extract(m.payload,'$.triage_state')='pending')
+						ORDER BY id LIMIT 1`, timestamp()))
 					if job != nil {
 						exec(ctx, db, "UPDATE analysis_jobs SET state='running',attempts=attempts+1 WHERE id=?", job["id"])
 						event(ctx, db, str(job, "user_id"), "message.upsert", str(job, "message_id"))

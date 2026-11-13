@@ -240,6 +240,14 @@ func (s *Server) messages(ctx context.Context, db store.SQL, rows []Object) []Ob
 	for _, m := range out {
 		delete(m, "analysis_pending")
 		delete(m, "analysis_state")
+		if str(m, "triage_state") == "pending" {
+			m["triage_pending"] = true
+		}
+		if result := object(m["triage_result"]); len(result) > 0 {
+			// 已分诊但未升级：前端用轻量标签展示，不触发深度分析。
+			m["triage_label"] = str(result, "verdict")
+			m["triage_reason"] = str(result, "reason")
+		}
 		if len(object(m["analysis"])) > 0 {
 			m["analysis_state"] = "done"
 			delete(m, "analysis_error")
@@ -261,16 +269,40 @@ func (s *Server) messages(ctx context.Context, db store.SQL, rows []Object) []Ob
 	}
 	return out
 }
+func (s *Server) allTasks(ctx context.Context, db store.SQL, user string) []Object {
+	// 一次查出全部任务与附件后在内存里分组，避免每个任务 2~3 条 SQL 的 N+1。
+	rows := query(ctx, db, "SELECT payload FROM tasks WHERE user_id=? AND deleted_at IS NULL ORDER BY rowid DESC", user)
+	tasks := make([]Object, 0, len(rows))
+	index := make(map[string]Object, len(rows))
+	for _, row := range rows {
+		payload := store.Payload(row)
+		payload["attachments"] = []any{}
+		tasks = append(tasks, payload)
+		if id := str(payload, "id"); id != "" {
+			index[id] = payload
+		}
+	}
+	if len(tasks) == 0 {
+		return tasks
+	}
+	for _, file := range query(ctx, db, "SELECT id,name,size,sha256,kind,task_id FROM attachments WHERE user_id=? AND deleted_at IS NULL ORDER BY rowid", user) {
+		if task := index[str(file, "task_id")]; task != nil {
+			task["attachments"] = append(list(task, "attachments"), file)
+		}
+	}
+	return tasks
+}
 func (s *Server) snapshot(ctx context.Context, user string) any {
 	return s.transaction(ctx, func(db store.SQL) any {
 		cursor := one(ctx, db, "SELECT COALESCE(MAX(seq),0) AS cursor FROM events WHERE user_id=?", user)
-		tasks := []Object{}
-		for _, t := range query(ctx, db, "SELECT id FROM tasks WHERE user_id=? AND deleted_at IS NULL ORDER BY rowid DESC", user) {
-			tasks = append(tasks, s.task(ctx, db, user, str(t, "id")))
-		}
+		tasks := s.allTasks(ctx, db, user)
 		messages := s.messages(ctx, db, query(ctx, db, "SELECT payload FROM messages WHERE user_id=? AND deleted_at IS NULL ORDER BY rowid DESC LIMIT 200", user))
+		digests := []Object{}
+		for _, row := range query(ctx, db, "SELECT payload FROM digests WHERE user_id=? ORDER BY rowid DESC LIMIT 40", user) {
+			digests = append(digests, store.Payload(row))
+		}
 		shelf := s.shelfItems(ctx, db, user)
-		return Object{"cursor": cursor["cursor"], "tasks": tasks, "messages": messages, "shelf": shelf}
+		return Object{"cursor": cursor["cursor"], "tasks": tasks, "messages": messages, "digests": digests, "shelf": shelf}
 	})
 }
 func (s *Server) messageRoutes() {
@@ -349,15 +381,30 @@ func (s *Server) messageRoutes() {
 			m["id"] = store.ID()
 			m["created_at"] = store.Now()
 			m["draft"] = extract(str(m, "text"), sent)
-			exec(r.Context(), db, "INSERT INTO messages(id,user_id,dedup,payload,created_at) VALUES(?,?,?,?,?)", m["id"], r.User, dedup, store.JSON(m), m["created_at"])
 			settings := first(query(r.Context(), db, "SELECT payload FROM llm_settings WHERE user_id=?", r.User))
-			if settings != nil && eligible(store.Payload(settings), str(m, "text")) {
+			config := store.Payload(settings)
+			verdict := localVerdict{"unknown", "本地规则已关闭"}
+			if settings != nil && boolean(config, "local_triage") {
+				// 第一层：本地规则。噪声直接丢弃，强信号直接进深度分析，
+				// 其余留在待分诊队列，不占用模型额度。
+				verdict = localTriage(m)
+				m["triage_local"] = Object{"verdict": verdict.Verdict, "reason": verdict.Reason, "layer": "local", "at": store.Now()}
+			}
+			if verdict.Verdict == "noise" {
+				m["triage"] = "ignored"
+			}
+			if settings != nil && verdict.Verdict != "noise" && eligible(config, str(m, "text")) {
 				exec(r.Context(), db, "INSERT OR IGNORE INTO analysis_jobs(user_id,message_id) VALUES(?,?)", r.User, m["id"])
-				sessionID := s.ensureConversationSession(r.Context(), db, r.User, m, agentContextLimitFromConfig(store.Payload(settings)))
+				sessionID := s.ensureConversationSession(r.Context(), db, r.User, m, agentContextLimitFromConfig(config))
 				s.queueAgentRun(r.Context(), db, r.User, "notification-"+str(m, "id"), sessionID, str(m, "id"))
 				m["analysis_pending"] = true
 				m["analysis_state"] = "queued"
+				if verdict.Verdict == "unknown" && boolean(config, "batch_triage") {
+					// 第二层：进入分诊队列，由分诊 worker 批量判断后再决定是否深度分析。
+					m["triage_state"] = "pending"
+				}
 			}
+			exec(r.Context(), db, "INSERT INTO messages(id,user_id,dedup,payload,created_at) VALUES(?,?,?,?,?)", m["id"], r.User, dedup, store.JSON(m), m["created_at"])
 			event(r.Context(), db, r.User, "message.upsert", str(m, "id"))
 			return m
 		})

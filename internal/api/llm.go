@@ -25,7 +25,7 @@ func endpoint(base, action string) string {
 	return base + "/" + action
 }
 func defaultLLM() Object {
-	return Object{"service_mode": "", "base_url": "", "model": "", "context_count": 12, "context_window_tokens": defaultModelContextWindow, "auto_analyze": false, "vision_enabled": false, "include_keywords": "", "exclude_keywords": "", "instruction": ""}
+	return Object{"service_mode": "", "base_url": "", "model": "", "context_count": 12, "context_window_tokens": defaultModelContextWindow, "auto_analyze": false, "vision_enabled": false, "batch_triage": true, "local_triage": true, "include_keywords": "", "exclude_keywords": "", "instruction": ""}
 }
 func (s *Server) llmConfig(ctx context.Context, user string) (Object, string) {
 	config := defaultLLM()
@@ -56,7 +56,7 @@ func llmInput(body Object) Object {
 			fail(422, "AI 配置类型无效："+key)
 		}
 	}
-	for _, key := range []string{"auto_analyze", "vision_enabled"} {
+	for _, key := range []string{"auto_analyze", "vision_enabled", "batch_triage", "local_triage"} {
 		if _, ok := out[key].(bool); !ok {
 			fail(422, "AI 开关类型无效："+key)
 		}

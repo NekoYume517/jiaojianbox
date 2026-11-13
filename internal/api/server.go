@@ -192,6 +192,7 @@ func New(database *store.Store, assets fs.FS, version string) (*Server, error) {
 		s.reminderRoutes()
 		s.fileRoutes()
 		s.aiRoutes()
+		s.digestRoutes()
 		s.aiCreditRoutes()
 		s.accountRoutes()
 		s.transferRoutes()
@@ -256,6 +257,8 @@ func New(database *store.Store, assets fs.FS, version string) (*Server, error) {
 	s.cancel = cancel
 	s.workers.Add(1)
 	go func() { defer s.workers.Done(); s.analyzeWorker(ctx) }()
+	s.workers.Add(1)
+	go func() { defer s.workers.Done(); s.triageWorker(ctx) }()
 	s.workers.Add(1)
 	go s.recycleWorker(ctx)
 	return s, nil

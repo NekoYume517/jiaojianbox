@@ -128,3 +128,7 @@ CREATE TABLE IF NOT EXISTS agent_runs(
  created_at TEXT NOT NULL,
  updated_at TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS ix_agent_runs_session ON agent_runs(user_id,session_id,state,created_at);
+
+CREATE TABLE IF NOT EXISTS digests(id TEXT PRIMARY KEY, user_id TEXT, source TEXT, account_id TEXT, conversation_id TEXT, payload TEXT NOT NULL, created_at TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS ix_digests_owner ON digests(user_id,created_at);
+CREATE INDEX IF NOT EXISTS ix_digests_chat ON digests(user_id,source,account_id,conversation_id,created_at);
