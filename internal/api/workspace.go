@@ -383,8 +383,9 @@ func (s *Server) messageRoutes() {
 			m["draft"] = extract(str(m, "text"), sent)
 			settings := first(query(r.Context(), db, "SELECT payload FROM llm_settings WHERE user_id=?", r.User))
 			config := store.Payload(settings)
+			// 本地规则不依赖模型配置：没有保存设置时也默认启用。
 			verdict := localVerdict{"unknown", "本地规则已关闭"}
-			if settings != nil && boolean(config, "local_triage") {
+			if settings == nil || boolean(config, "local_triage") {
 				// 第一层：本地规则。噪声直接丢弃，强信号直接进深度分析，
 				// 其余留在待分诊队列，不占用模型额度。
 				verdict = localTriage(m)
