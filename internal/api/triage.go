@@ -31,8 +31,8 @@ var (
 	// 时间信号：有明确时间点，值得进一步判断。
 	timeSignals = regexp.MustCompile(`(?i)(\d{1,2}[:：]\d{2}|\d{1,2}\s*月\s*\d{1,2}\s*[日号]|周[一二三四五六日天]|星期[一二三四五六日天]|明天|后天|今晚|明晚|下周|月底|月初|季度|上午|下午|晚上|\d{4}[-/]\d{1,2}[-/]\d{1,2}|[0-9]{1,2}[:：][0-9]{2}\s*(前|之前))`)
 	// 明显的闲聊/噪声：纯表情、单字应答、贴纸占位。
-	noiseText = regexp.MustCompile(`^(?:\[[^\]]{1,12}\]){1,6}$`)
-	ackWords  = []string{"好的", "收到", "ok", "OK", "嗯", "嗯嗯", "哈哈", "哈哈哈", "草", "666", "1", "？", "?", "在吗", "谢谢", "感谢", "辛苦"}
+	noiseText   = regexp.MustCompile(`^(?:\[[^\]]{1,12}\]){1,6}$`)
+	ackWords    = []string{"好的", "收到", "ok", "OK", "嗯", "嗯嗯", "哈哈", "哈哈哈", "草", "666", "1", "？", "?", "在吗", "谢谢", "感谢", "辛苦"}
 	systemNoise = []string{"加入了群聊", "退出了群聊", "撤回了一条消息", "修改群名", "移出了群聊", "开启了朋友验证", "邀请"}
 )
 
@@ -105,11 +105,11 @@ func (s *Server) triageBatch(ctx context.Context, user string, items []Object, p
 		}
 		used += len([]rune(text))
 		input = append(input, Object{
-			"id":       str(m, "id"),
-			"sender":   fallback(str(m, "sender_name"), str(m, "sender_id")),
-			"sent_at":  str(m, "sent_at"),
-			"text":     text,
-			"triage":   str(object(m["triage_local"]), "reason"),
+			"id":      str(m, "id"),
+			"sender":  fallback(str(m, "sender_name"), str(m, "sender_id")),
+			"sent_at": str(m, "sent_at"),
+			"text":    text,
+			"triage":  str(object(m["triage_local"]), "reason"),
 		})
 	}
 	if len(input) == 0 {

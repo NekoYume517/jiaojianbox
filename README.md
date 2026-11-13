@@ -1,6 +1,14 @@
-# 交件箱 · 0.6.4
+# 交件箱 · 0.6.20
 
 通知、待办与文件，一处整理。
+
+> **合规与隐私声明**
+>
+> 交件箱只用于处理使用者有权访问的工作通知、待办与文件。QQ、微信采集默认只在本机 Windows 设备上运行，使用者必须在应用内确认授权并主动选择要监听的会话；不采集聊天软件密码，不代替用户登录，不自动发送消息。QQ 通过本机 SnowLuma/SnowCat OneBot 接口读取获准消息；微信通过本机已登录客户端的数据目录进行只读查询，媒体通常只保留类型占位，除用户主动上传外不会把聊天数据库、媒体文件或数据库密钥上传到服务器。
+>
+> 默认服务端 `https://jiaojianbox.bansonic.top` 只在启用云端或登录后同步时处理账号资料、同步的通知/待办/文件、用户主动创建或接收的分享与收集内容、触发器会话、模型用量和必要配置。用户选择的聊天上下文、文件内容或图片可由交件箱发往用户自行配置的模型接口；启用管理员提供的默认 AI 服务时，则由服务端转发到管理员配置的上游模型。分享是否公开、是否需要登录、是否允许下载或修改以及访问期限由分享者设置。项目不出售用户数据，不用于广告画像。
+>
+> 完整范围与删除、备份和安全边界见 [隐私与数据处理](PRIVACY.md)，微信本地只读采集规则见 [微信采集协议](docs/wechat-collection.md)。使用者应遵守适用法律、平台规则和所在组织的数据制度，并仅在具有合法处理依据时收集他人信息。
 
 桌面端和服务端共用 Go 核心；Windows 桌面使用 Wails v3 与系统 WebView2，界面采用原生 JavaScript/CSS。Android 在线模式采用 M3 登录门、共享网页工作区和文件/日历连接器，见 [Android 套壳预览说明](docs/android-web-shell.md)。技术结构参考 [Magpie](https://github.com/yetone/magpie)，视觉采用中性表面、克制圆角和细边框，支持浅色、深色、跟随系统，以及 Tokyo Night、Nord、Graphite 配色。
 
@@ -52,3 +60,9 @@ python -X utf8 scripts/verify-installer.py
 ## 插件开发
 
 扩展契约、一级/二级 tab、任务触发器与外部 AI 工具接入见 [插件开发指南](docs/plugin-development.md)。可导入样例位于 [examples/plugins/task-agent](examples/plugins/task-agent)。
+
+## 开源许可与贡献
+
+本项目原创代码采用 [MIT License](LICENSE)。第三方组件仍分别适用各自许可证，尤其 SnowCat/NapCat 运行时受其 Limited Redistribution License 限制；详见 [第三方与来源](THIRD_PARTY_NOTICES.md)。
+
+维护者与代码贡献者见 [CONTRIBUTORS.md](CONTRIBUTORS.md)。

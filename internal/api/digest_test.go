@@ -36,9 +36,9 @@ func stubDigestUpstream(t *testing.T) *httptest.Server {
 			}
 		}
 		payload := Object{
-			"headline":  "群里在讨论周末活动",
-			"topics":    []any{Object{"title": "活动安排", "summary": "约了周六下午", "messages": ids}},
-			"decisions": []any{"周六下午集合"},
+			"headline":   "群里在讨论周末活动",
+			"topics":     []any{Object{"title": "活动安排", "summary": "约了周六下午", "messages": ids}},
+			"decisions":  []any{"周六下午集合"},
 			"todo_hints": []any{},
 		}
 		text, _ := json.Marshal(payload)
