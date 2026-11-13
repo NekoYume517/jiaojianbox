@@ -3,9 +3,11 @@ import os
 import sys
 import types
 from pathlib import Path
+import pytest
 from collector import wechat_reader
 
 
+@pytest.mark.skipif(sys.platform != 'win32', reason='Windows msvcrt cache lock')
 def test_cache_isolation_from_original_exporter(tmp_path,monkeypatch):
     class Reader:
         def _pick_account(self):return 'fixture-account'
