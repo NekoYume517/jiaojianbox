@@ -178,7 +178,9 @@
          Magpie's Compose. Defaults first, then values the schema allows. ---- */
   function composeConfig(manifest, userConfig) {
     const composed = {};
-    for (const setting of Array.isArray(manifest?.settings) ? manifest.settings : []) {
+    const settings = Array.isArray(manifest?.settings) ? manifest.settings : [];
+    if (!settings.length) return { ...(userConfig || {}) };
+    for (const setting of settings) {
       if (setting?.key && 'default' in setting) composed[setting.key] = setting.default;
     }
     const valueMatches = (setting, value) => {
@@ -191,7 +193,7 @@
       }
     };
     for (const [name, value] of Object.entries(userConfig || {})) {
-      const setting = (manifest?.settings || []).find(item => item?.key === name);
+      const setting = settings.find(item => item?.key === name);
       if (setting && valueMatches(setting, value)) composed[name] = value;
     }
     return composed;

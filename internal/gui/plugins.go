@@ -27,11 +27,12 @@ const (
 )
 
 var (
-	pluginIDPattern       = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,63}$`)
-	pluginKeyPattern      = regexp.MustCompile(`^[a-zA-Z0-9_-]{1,100}$`)
-	pluginSettingPattern  = regexp.MustCompile(`^[a-z][a-z0-9-]{0,63}$`)
-	pluginAPIPattern      = regexp.MustCompile(`^\^1(?:\.\d+)?$`)
-	pluginPermissionLimit = 32
+	pluginIDPattern        = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,63}$`)
+	pluginKeyPattern       = regexp.MustCompile(`^[a-zA-Z0-9_-]{1,100}$`)
+	pluginSettingPattern   = regexp.MustCompile(`^[a-z][a-z0-9-]{0,63}$`)
+	pluginAPIPattern       = regexp.MustCompile(`^\^1(?:\.\d+)?$`)
+	legacyPluginAPIPattern = regexp.MustCompile(`^desktop-1(?:\.\d+)?$`)
+	pluginPermissionLimit  = 32
 )
 
 func getArray(value any) []any {
@@ -120,9 +121,43 @@ func normalizePluginFiles(value any) (Object, error) {
 	return files, nil
 }
 
+func normalizePluginAPI(value string) (string, bool) {
+	value = strings.TrimSpace(value)
+	if pluginAPIPattern.MatchString(value) {
+		return value, true
+	}
+	if legacyPluginAPIPattern.MatchString(value) {
+		return "^1", true
+	}
+	return "", false
+}
+
+func normalizePluginManifest(manifest Object) Object {
+	normalized := cloneObject(manifest)
+	if api, ok := normalizePluginAPI(getString(normalized, "api")); ok {
+		normalized["api"] = api
+	}
+	return normalized
+}
+
+// pluginManifestFromPackage keeps early local plugin bundles importable.
+// Those bundles either nested the manifest or put its fields beside "files".
+func pluginManifestFromPackage(pkg Object) Object {
+	if manifest := getObject(pkg["manifest"]); len(manifest) > 0 {
+		return manifest
+	}
+	manifest := Object{}
+	for key, value := range pkg {
+		if key != "files" {
+			manifest[key] = value
+		}
+	}
+	return manifest
+}
+
 func validatePlugin(manifest Object, files Object) error {
-	if !pluginAPIPattern.MatchString(getString(manifest, "api")) {
-		return errors.New("插件需要 api: \"^1\"（jjb-plugin-1 契约），且只能在桌面端运行")
+	if _, ok := normalizePluginAPI(getString(manifest, "api")); !ok {
+		return errors.New("插件需要 api: \"^1\"（jjb-plugin-1 契约）；兼容旧版 desktop-1，且只能在桌面端运行")
 	}
 	if !pluginIDPattern.MatchString(getString(manifest, "id")) {
 		return errors.New("插件 id 只能使用小写字母、数字和短横线")
@@ -249,7 +284,16 @@ func validatePluginPermissions(value any) error {
 // match the schema is left out, so the default stands.
 func composePluginConfig(manifest Object, userConfig Object) Object {
 	composed := Object{}
-	for _, item := range getArray(manifest["settings"]) {
+	settings := getArray(manifest["settings"])
+	if len(settings) == 0 {
+		// The original desktop-1 bundles stored free-form config from plugin
+		// code because they did not yet declare a settings schema.
+		for key, value := range userConfig {
+			composed[key] = cloneObjectValue(value)
+		}
+		return composed
+	}
+	for _, item := range settings {
 		setting := getObject(item)
 		key := getString(setting, "key")
 		if key == "" {
@@ -260,7 +304,7 @@ func composePluginConfig(manifest Object, userConfig Object) Object {
 		}
 	}
 	for key, value := range userConfig {
-		for _, item := range getArray(manifest["settings"]) {
+		for _, item := range settings {
 			setting := getObject(item)
 			if getString(setting, "key") == key && pluginSettingValueMatches(setting, value) {
 				composed[key] = cloneObjectValue(value)
@@ -309,7 +353,7 @@ func (d *Desktop) PluginImport(pkg Object) (Object, error) {
 	if err != nil {
 		return nil, err
 	}
-	return d.storePlugin(getObject(pkg["manifest"]), files)
+	return d.storePlugin(pluginManifestFromPackage(pkg), files)
 }
 
 func (d *Desktop) PluginImportArchive(encoded string) (Object, error) {
@@ -365,6 +409,7 @@ func decodeJSONObject(text string) Object {
 }
 
 func (d *Desktop) storePlugin(manifest Object, files Object) (Object, error) {
+	manifest = normalizePluginManifest(manifest)
 	if err := validatePlugin(manifest, files); err != nil {
 		return nil, err
 	}

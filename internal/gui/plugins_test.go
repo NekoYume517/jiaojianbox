@@ -141,10 +141,41 @@ func TestDesktopPluginArchiveImport(t *testing.T) {
 
 func TestDesktopPluginValidation(t *testing.T) {
 	d := newPluginDesktop(t)
-	bundle := pluginBundle("bad-contract")
+	bundle := pluginBundle("legacy-contract")
 	getObject(bundle["manifest"])["api"] = "desktop-1"
-	if _, err := d.PluginImport(bundle); err == nil {
-		t.Fatal("accepted legacy cloud contract")
+	delete(getObject(bundle["manifest"]), "settings")
+	if _, err := d.PluginImport(bundle); err != nil {
+		t.Fatalf("legacy desktop-1 contract was rejected: %v", err)
+	}
+	imported, err := d.PluginGet("legacy-contract")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := getString(getObject(imported["manifest"]), "api"); got != "^1" {
+		t.Fatalf("legacy contract was not normalized: %q", got)
+	}
+	if _, err := d.PluginSet("legacy-contract", Object{"config": Object{"command": "legacy-tool", "args": []any{"--run"}}}); err != nil {
+		t.Fatalf("legacy free-form config was rejected: %v", err)
+	}
+	imported, err = d.PluginGet("legacy-contract")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := getString(getObject(imported["config"]), "command"); got != "legacy-tool" {
+		t.Fatalf("legacy free-form config was dropped: %#v", imported["config"])
+	}
+	bundle = pluginBundle("legacy-flat")
+	manifest := cloneObject(getObject(bundle["manifest"]))
+	delete(bundle, "manifest")
+	for key, value := range manifest {
+		bundle[key] = value
+	}
+	imported, err = d.PluginImport(bundle)
+	if err != nil {
+		t.Fatalf("flat legacy package was rejected: %v", err)
+	}
+	if imported["id"] != "legacy-flat" {
+		t.Fatalf("flat legacy package lost its manifest: %#v", imported)
 	}
 	bundle = pluginBundle("bad-setting")
 	getObject(bundle["manifest"])["settings"] = []any{map[string]any{"key": "mode", "type": "float", "title": "运行模式"}}

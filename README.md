@@ -10,7 +10,7 @@
 >
 > 完整范围与删除、备份和安全边界见 [隐私与数据处理](PRIVACY.md)，微信本地只读采集规则见 [微信采集协议](docs/wechat-collection.md)。使用者应遵守适用法律、平台规则和所在组织的数据制度，并仅在具有合法处理依据时收集他人信息。
 
-桌面端和服务端共用 Go 核心；Windows 桌面使用 Wails v3 与系统 WebView2，界面采用原生 JavaScript/CSS。Android 在线模式采用 M3 登录门、共享网页工作区和文件/日历连接器，见 [Android 套壳预览说明](docs/android-web-shell.md)。技术结构参考 [Magpie](https://github.com/yetone/magpie)，视觉采用中性表面、克制圆角和细边框，支持浅色、深色、跟随系统，以及 Tokyo Night、Nord、Graphite 配色。
+桌面端和服务端共用 Go 核心；Windows 桌面使用 Wails v3 与系统 WebView2，界面采用原生 JavaScript/CSS，本机能力通过 Wails 绑定调用，不再启动 Electron、FastAPI 或 Python UI 进程。Android 在线模式采用 M3 登录门、共享网页工作区和文件/日历连接器，见 [Android 套壳预览说明](docs/android-web-shell.md)。技术结构参考 [Magpie](https://github.com/yetone/magpie)，视觉采用中性表面、克制圆角和细边框，支持浅色、深色、跟随系统，以及 Tokyo Night、Nord、Graphite 配色。
 
 所有界面开发以 [UI、控件与动效规范](docs/ui-design-standard.md) 为统一基线，涵盖配色、字号、间距、布局、tab、表单、文件拖放、进度反馈、动效与验收矩阵。主工作区和服务端页面复用同一运行时与验收脚本，快捷收集保持轻量例外。
 
@@ -51,11 +51,11 @@ python -X utf8 scripts/verify-installer.py
 
 ## 数据与升级
 
-延续原数据库文件名、SQLite 表结构、文件 ID、密码哈希与 Fernet 加密格式。每次升级前会先合并 SQLite WAL、检查完整性，再在同一持久卷生成不可覆盖的数据库、密钥及附件校验备份；0 字节或中断备份会自动重建。主库损坏或缺失时会优先原位修复，再回退到最新完整备份并恢复附件与密钥；无法恢复时只隔离坏文件，不删除原内容。缺少原加密密钥时停止启动。旧 Electron 的 Windows 登录凭证可从原 `Local State` 与 DPAPI 安全迁移。安装/卸载不会删除本机工作空间。
+延续原数据库文件名、SQLite 表结构、文件 ID、密码哈希与 Fernet 加密格式。每次升级前会先合并 SQLite WAL、检查完整性，再在同一持久卷生成不可覆盖的数据库、密钥及附件校验备份；0 字节或中断备份会自动重建。主库损坏或缺失时会优先原位修复，再回退到最新完整备份并恢复附件与密钥；无法恢复时只隔离坏文件，不删除原内容。缺少原加密密钥时停止启动。为兼容历史升级，仍可从旧版本的 `Local State` 与 DPAPI 凭证安全读取 Windows 登录信息。安装/卸载不会删除本机工作空间。
 
 云端始终挂载原 `/data` 数据卷。不要在升级时删除或替换卷，也不要更换 `master.key`/`JJB_MASTER_KEY`。云端与本机迁移为复制式，不删除来源，不迁移账号凭证和模型密钥。部署步骤见 [Coolify 指南](docs/deploy-coolify.md)。
 
-`server/` 和旧 Electron 模块保留为兼容测试及回滚参考，不参与 0.6.0 安装包/服务端镜像。历史实现说明见 [历史文档](docs/legacy-implementation.md)。
+当前桌面端、安装包和服务端镜像均不包含 Electron 或 FastAPI 运行链路。`server/` 仅保留用于兼容测试与历史数据行为的参考文件；历史架构说明见 [历史文档](docs/legacy-implementation.md)。
 
 ## 插件开发
 
