@@ -1,5 +1,20 @@
 FROM debian:bookworm-slim AS base
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates tzdata && rm -rf /var/lib/apt/lists/* && useradd --uid 1000 --create-home app && mkdir /data && chown app:app /data
+# 国内构建：apt 源换阿里云。直连 deb.debian.org 在机房网络会 30s 超时，报
+# "Could not connect to deb.debian.org:80 ... Package 'ca-certificates' has no
+#  installation candidate"，构建直接失败。
+RUN set -eux; \
+    if [ -f /etc/apt/sources.list ]; then \
+        sed -i 's|deb.debian.org|mirrors.aliyun.com|g; s|security.debian.org|mirrors.aliyun.com/debian-security|g' /etc/apt/sources.list; \
+    fi; \
+    if [ -f /etc/apt/sources.list.d/debian.sources ]; then \
+        sed -i 's|deb.debian.org|mirrors.aliyun.com|g; s|security.debian.org|mirrors.aliyun.com/debian-security|g' /etc/apt/sources.list.d/debian.sources; \
+    fi; \
+    apt-get -o Acquire::Retries=3 update; \
+    apt-get install -y --no-install-recommends ca-certificates tzdata; \
+    rm -rf /var/lib/apt/lists/*; \
+    useradd --uid 1000 --create-home app; \
+    mkdir /data; \
+    chown app:app /data
 
 FROM base AS build
 # Use the checksum-verified official toolchain instead of a large compiler image.
