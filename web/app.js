@@ -382,7 +382,15 @@ function messageClass(message) {
 }
 function inboxMode() { return state.inboxMode || 'digest'; }
 function isActionable(message) { return message.analysis?.classification === 'actionable'; }
-function needsAttention(message) { return !message.analysis && message.triage !== 'ignored'; }
+function needsAttention(message) {
+  // 只有「还没被任何一层判断过」的消息才需要单独出现在列表里。
+  // 批量分诊已经判定为闲聊/无关的，交给群聊摘要，不再平铺。
+  if (message.analysis) return false;
+  if (message.triage === 'ignored') return false;
+  const verdict = message.triage_result?.verdict;
+  if (verdict === 'chatting' || verdict === 'irrelevant') return false;
+  return true;
+}
 function triageSummary() {
   const all = state.snapshot.messages.filter(m => m.triage !== 'ignored');
   const pending = all.filter(m => m.triage_state === 'pending').length;
