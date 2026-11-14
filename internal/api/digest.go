@@ -296,6 +296,17 @@ func (s *Server) digestRoutes() {
 		})
 		return Object{"ok": true}
 	})
+	// 清除全部摘要：删除本用户所有摘要并解除消息绑定，恢复原始消息列表。
+	s.route("DELETE /api/digests", "owner", func(r request) any {
+		s.transaction(r.Context(), func(db store.SQL) any {
+			exec(r.Context(), db, `DELETE FROM digests WHERE user_id=?`, r.User)
+			exec(r.Context(), db, `UPDATE messages SET payload=json_remove(payload,'$.digest_id')
+				WHERE user_id=? AND json_extract(payload,'$.digest_id') IS NOT NULL`, r.User)
+			event(r.Context(), db, r.User, "digest.clear", "all")
+			return nil
+		})
+		return Object{"ok": true, "cleared": true}
+	})
 }
 
 // rawRows 把已解析的 payload 包回 messages() 期望的 [{"payload": ...}] 形状。
