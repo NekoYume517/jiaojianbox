@@ -382,7 +382,15 @@ function messageClass(message) {
 }
 function inboxMode() { return state.inboxMode || 'digest'; }
 function isActionable(message) { return message.analysis?.classification === 'actionable'; }
-function needsAttention(message) { return !message.analysis && message.triage !== 'ignored'; }
+function needsAttention(message) {
+  // 只有「还没被任何一层判断过」的消息才需要单独出现在列表里。
+  // 批量分诊已经判定为闲聊/无关的，交给群聊摘要，不再平铺。
+  if (message.analysis) return false;
+  if (message.triage === 'ignored') return false;
+  const verdict = message.triage_result?.verdict;
+  if (verdict === 'chatting' || verdict === 'irrelevant') return false;
+  return true;
+}
 function triageSummary() {
   const all = state.snapshot.messages.filter(m => m.triage !== 'ignored');
   const pending = all.filter(m => m.triage_state === 'pending').length;
@@ -474,7 +482,7 @@ function inboxView() {
   const emptyState = !digests.length && !messages.length ? empty('暂无通知', state.search ? '换个关键词或筛选条件试试。' : '连接 QQ / 微信，或先粘贴一条通知。', '<button class="primary" data-action="paste">添加第一条通知</button>') : '';
   const counts = triageSummary();
   const triageNote = counts.pending || counts.chatting ? `<span class="helper triage-note">${counts.pending ? counts.pending + ' 条待分诊' : ''}${counts.pending && counts.chatting ? ' · ' : ''}${counts.chatting ? counts.chatting + ' 条已判为闲聊' : ''}</span>` : '';
-  const digestButton = mode === 'digest' ? `<button class="plain-button" data-action="digest-all" ${pendingDigest ? '' : 'disabled'}>${pendingDigest ? '汇总 ' + pendingDigest + ' 个群聊' : '暂无可汇总的群聊'}</button>` : '';
+  const digestButton = mode === 'digest' ? `<button class="plain-button" data-action="digest-all" ${pendingDigest ? '' : 'disabled'}>${pendingDigest ? '汇总 ' + pendingDigest + ' 个群聊' : '暂无可汇总的群聊'}</button>${(state.snapshot.digests || []).length ? `<button class="plain-button danger-hover" data-action="digest-clear">清除全部</button>` : ''}` : '';
   return heading('通知', '重要通知单独列出，其余群聊内容自动汇总。', `<button class="secondary" data-action="paste">粘贴通知</button><button class="primary" data-action="new-task">${icon('plus')}新建待办</button>`) +
     `<div class="toolbar">${toggle}<div class="search"><span>${icon('search')}</span><input id="inbox-search" placeholder="搜索通知、群聊或联系人" value="${esc(state.search)}" aria-label="搜索消息"></div><select id="source-filter" aria-label="来源"><option value="all">全部来源</option><option value="qq">QQ</option><option value="wechat">微信</option><option value="manual">手动添加</option></select><select id="category-filter" aria-label="分类"><option value="all">全部</option><option value="actionable">待办通知</option><option value="unprocessed">待分析</option><option value="chatting">普通聊天</option><option value="irrelevant">其他信息</option><option value="ignored">已忽略</option></select><span class="result-count">${mode === 'digest' ? digests.length + ' 条摘要 · ' + messages.length + ' 条通知' : messages.length + ' 条消息'}</span>${triageNote}${digestButton}</div>` +
     `<div class="inbox-grid ${(selected && !selectedDigest) || selectedDigest ? 'has-selection' : ''}"><section class="panel messages-panel"><div class="panel-head"><h3>${mode === 'digest' ? '最近摘要' : '最近通知'}</h3><small>按聊天持续管理上下文</small></div>${digestSection}${messageSection}${emptyState}<div class="load-more"><button class="plain-button" data-action="more-messages">加载更早的消息</button></div></section><section class="panel detail">${detail}</section></div>`;
@@ -937,6 +945,15 @@ async function runAction(action, button) {
       const digest = (state.snapshot.digests || []).find(d => d.id === state.selectedDigest);
       if (!digest) return;
       return digestOne({ source: digest.source, account_id: digest.account_id, conversation_id: digest.conversation_id }, true);
+    }
+    case 'digest-clear': {
+      if (!(state.snapshot.digests || []).length) return;
+      if (!confirm('清除全部摘要？原始消息会恢复到通知列表。')) return;
+      try { await api('/api/digests', 'DELETE'); } catch (error) { return toast(error.message || '清除失败'); }
+      state.snapshot.digests = [];
+      state.selectedDigest = null; state.digestMessages = [];
+      for (const message of state.snapshot.messages) delete message.digest_id;
+      cacheSoon(); toast('已清除全部摘要'); return refresh();
     }
     case 'back-tasks': state.taskId = null; return render();
     case 'clear-context': state.contexts.clear(); return render();
