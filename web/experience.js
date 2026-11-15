@@ -187,7 +187,7 @@
       const status=qqStatusLabel(p.status);
       const meta=p.uin||(p.pid?`进程 ${p.pid}`:'未建立消息连接');
       const incompatible=connector==='snowcat'&&connectorState.state==='unsupported_qq_version';
-      return `<div class="instance-row ${incompatible?'is-warning':''}"><span class="instance-avatar">Q</span><div><strong>${esc(p.nickname||p.uin||(p.accounts?.[0]?.nickname)||'QQ 客户端')}</strong><small>${esc(meta)} <span>·</span> ${esc(status)}</small></div><button type="button" class="${c.qq_pid===p.pid?'plain-button':'secondary'}" ${incompatible?'data-experience="open-qq-download"':'data-connect-qq="'+(p.pid||0)+'"'}>${incompatible?'获取最新 QQ':c.qq_pid===p.pid?'刷新聊天':connector==='snowcat'&&connectorState.state==='restart_required'?'重新检测':'连接'}</button></div>`;
+      return `<div class="instance-row ${incompatible?'is-warning':''}"><span class="instance-avatar">Q</span><div><strong>${esc(p.nickname||p.uin||(p.accounts?.[0]?.nickname)||'QQ 客户端')}</strong><small>${esc(meta)} <span>·</span> ${esc(status)}</small></div>${incompatible?'':`<button type="button" class="${c.qq_pid===p.pid?'plain-button':'secondary'}" data-connect-qq="${p.pid||0}">${c.qq_pid===p.pid?'刷新聊天':connector==='snowcat'&&connectorState.state==='restart_required'?'重新检测':'连接'}</button>`}</div>`;
     }).join(''):`<p class="helper">${connector==='snowcat'?'正在检测 QQ 安装目录和运行状态。':'正在检测本机 QQ，保持 QQ 登录即可。'}</p>`;
     const incompatibleQQ=connector==='snowcat'&&connectorState.state==='unsupported_qq_version';
     const statusTone=connectorState.ready?'is-connected':incompatibleQQ?'is-warning':connectorState.state==='restart_required'?'is-warning':'is-muted';
