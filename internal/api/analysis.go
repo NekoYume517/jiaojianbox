@@ -310,6 +310,9 @@ func (s *Server) runAnalysis(ctx context.Context, user string, body Object, p pr
 	runSuccess = true
 	return result
 }
+// analyzeWorker 在「消息密集」时攒批一次调用模型，单条消息仍走原
+// runAnalysis（保留工具、持久会话、SSE 实时输出和 stop 能力）。
+// 这样既解决 burst 场景下逐条往返叠加的延迟，又不破坏依赖单条路径的行为。
 func (s *Server) analyzeWorker(ctx context.Context) {
 	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
@@ -319,77 +322,59 @@ func (s *Server) analyzeWorker(ctx context.Context) {
 			return
 		case <-ticker.C:
 			_, err := attempt(func() any {
-				var job Object
-				s.transaction(ctx, func(db store.SQL) any {
-					// 分层处理：只取不在分诊等待中的任务，避免深度分析抢在批量分诊之前。
-					job = first(query(ctx, db, `SELECT * FROM analysis_jobs WHERE state='queued' AND next_at<=?
-						AND NOT EXISTS (SELECT 1 FROM messages m WHERE m.id=analysis_jobs.message_id
-							AND json_extract(m.payload,'$.triage_state')='pending')
-						ORDER BY id LIMIT 1`, timestamp()))
-					if job != nil {
-						exec(ctx, db, "UPDATE analysis_jobs SET state='running',attempts=attempts+1 WHERE id=?", job["id"])
-						event(ctx, db, str(job, "user_id"), "message.upsert", str(job, "message_id"))
-					}
-					return nil
-				})
-				if job == nil {
+				// 取最老的一个用户，保证多用户公平。
+				users := query(ctx, s.Store.DB, `SELECT user_id,MIN(id) AS first_job
+					FROM analysis_jobs
+					WHERE state='queued' AND next_at<=?
+					GROUP BY user_id ORDER BY first_job LIMIT 1`, timestamp())
+				if len(users) == 0 {
 					return nil
 				}
-				callCtx, stop := context.WithTimeout(ctx, 180*time.Second)
-				_, callErr := attempt(func() any {
-					return s.runAnalysis(callCtx, str(job, "user_id"), Object{"message_id": job["message_id"], "_automatic": true}, nil)
-				})
+				user := str(users[0], "user_id")
+				targets := s.gatherBatchTargets(ctx, user, batchAnalysisSize)
+				if len(targets) == 0 {
+					s.retireStaleJobs(ctx, user)
+					return nil
+				}
+				// 只有 >=2 条时才考虑攒批；单条立即走原逐条路径。
+				if len(targets) < 2 {
+					s.runSingleJob(ctx, user, targets[0])
+					return nil
+				}
+				// 攒批条件：凑满 batchAnalysisSize，或队列最新消息已静默
+				// batchAnalysisIdleSec，或最老消息超过等待上限。
+				oldest, newest := time.Now(), time.Time{}
+				for _, target := range targets {
+					if at, err := time.Parse(time.RFC3339Nano, str(target.Message, "created_at")); err == nil {
+						if at.Before(oldest) {
+							oldest = at
+						}
+						if at.After(newest) {
+							newest = at
+						}
+					}
+				}
+				idle := time.Since(newest)
+				ready := len(targets) >= batchAnalysisSize || idle >= batchAnalysisIdleSec*time.Second || time.Since(oldest) >= batchAnalysisWaitMax
+				if !ready {
+					return nil
+				}
+				// 占住整批 job；批量写回阶段会统一收尾 agent_runs。
+				for _, target := range targets {
+					exec(ctx, s.Store.DB, "UPDATE analysis_jobs SET state='running',attempts=attempts+1 WHERE id=?", target.JobID)
+					event(ctx, s.Store.DB, user, "message.upsert", str(target.Message, "id"))
+				}
+				callCtx, stop := context.WithTimeout(ctx, 300*time.Second)
+				written := s.runBatchAnalysis(callCtx, user, targets, nil)
 				stop()
 				if ctx.Err() != nil {
 					return nil
 				}
-				state, errorText, next := "done", "", float64(0)
-				if callErr != nil {
-					state = "queued"
-					errorText = "本次分析未完成，稍后自动重试"
-					next = timestamp() + 20
-					if num(job, "attempts") >= 2 {
-						state = "failed"
-						errorText = "自动分析失败，请检查模型设置后重试"
-					}
-				}
-				s.transaction(ctx, func(db store.SQL) any {
-					row := first(query(ctx, db, "SELECT payload FROM messages WHERE id=? AND user_id=?", job["message_id"], job["user_id"]))
-					cancelled := first(query(ctx, db, "SELECT state FROM analysis_jobs WHERE id=?", job["id"]))
-					if str(cancelled, "state") == "cancelled" {
-						event(ctx, db, str(job, "user_id"), "message.upsert", str(job, "message_id"))
-						return nil
-					}
-					if row == nil {
-						state = "ignored"
-					} else {
-						m := store.Payload(row)
-						if len(object(m["analysis"])) > 0 {
-							state = "done"
-							errorText = ""
-						}
-						if str(m, "triage") == "ignored" {
-							state = "ignored"
-						}
-						if errorText != "" {
-							m["analysis_error"] = errorText
-							exec(ctx, db, "UPDATE messages SET payload=? WHERE id=?", store.JSON(m), job["message_id"])
-						}
-					}
-					if callErr != nil && choice(state, "queued", "failed") {
-						runID := "notification-" + str(job, "message_id")
-						if run := first(query(ctx, db, "SELECT payload FROM agent_runs WHERE id=? AND user_id=?", runID, job["user_id"])); run != nil {
-							payload := store.Payload(run)
-							payload["state"] = state
-							payload["stage"] = "retrying"
-							payload["error"] = errorText
-							exec(ctx, db, "UPDATE agent_runs SET state=?,payload=?,updated_at=? WHERE id=? AND user_id=? AND state<>'cancelled'", state, store.JSON(payload), store.Now(), runID, job["user_id"])
-						}
-					}
-					exec(ctx, db, "UPDATE analysis_jobs SET state=?,error=?,next_at=? WHERE id=?", state, errorText, next, job["id"])
-					event(ctx, db, str(job, "user_id"), "message.upsert", str(job, "message_id"))
+				if written > 0 {
+					s.retryMissingBatch(ctx, user, targets)
 					return nil
-				})
+				}
+				s.failBatchJobs(ctx, user, targets)
 				return nil
 			})
 			if err != nil && ctx.Err() == nil {
@@ -402,5 +387,162 @@ func (s *Server) analyzeWorker(ctx context.Context) {
 		}
 	}
 }
+
+// runSingleJob 是原 analyzeWorker 的单条路径，保持 SSE 实时输出、工具调用、
+// 持久会话与 stop/cancel 语义不变。
+func (s *Server) runSingleJob(ctx context.Context, user string, target batchTarget) {
+	job := Object{
+		"id": target.JobID, "user_id": user, "message_id": str(target.Message, "id"),
+		"attempts": target.Attempts,
+	}
+	exec(ctx, s.Store.DB, "UPDATE analysis_jobs SET state='running',attempts=attempts+1 WHERE id=?", target.JobID)
+	event(ctx, s.Store.DB, user, "message.upsert", str(target.Message, "id"))
+	callCtx, stop := context.WithTimeout(ctx, 180*time.Second)
+	_, callErr := attempt(func() any {
+		return s.runAnalysis(callCtx, user, Object{"message_id": str(target.Message, "id"), "_automatic": true}, nil)
+	})
+	stop()
+	if ctx.Err() != nil {
+		return
+	}
+	state, errorText, next := "done", "", float64(0)
+	if callErr != nil {
+		state = "queued"
+		errorText = "本次分析未完成，稍后自动重试"
+		next = timestamp() + 20
+		if num(job, "attempts") >= 2 {
+			state = "failed"
+			errorText = "自动分析失败，请检查模型设置后重试"
+		}
+	}
+	s.transaction(ctx, func(db store.SQL) any {
+		row := first(query(ctx, db, "SELECT payload FROM messages WHERE id=? AND user_id=?", str(job, "message_id"), user))
+		cancelled := first(query(ctx, db, "SELECT state FROM analysis_jobs WHERE id=?", target.JobID))
+		if str(cancelled, "state") == "cancelled" {
+			event(ctx, db, user, "message.upsert", str(job, "message_id"))
+			return nil
+		}
+		if row == nil {
+			state = "ignored"
+		} else {
+			m := store.Payload(row)
+			if len(object(m["analysis"])) > 0 {
+				state, errorText = "done", ""
+			}
+			if str(m, "triage") == "ignored" {
+				state = "ignored"
+			}
+			if errorText != "" {
+				m["analysis_error"] = errorText
+				exec(ctx, db, "UPDATE messages SET payload=? WHERE id=?", store.JSON(m), str(job, "message_id"))
+			}
+		}
+		if callErr != nil && choice(state, "queued", "failed") {
+			runID := "notification-" + str(job, "message_id")
+			if run := first(query(ctx, db, "SELECT payload FROM agent_runs WHERE id=? AND user_id=?", runID, user)); run != nil {
+				payload := store.Payload(run)
+				payload["state"] = state
+				payload["stage"] = "retrying"
+				payload["error"] = errorText
+				exec(ctx, db, "UPDATE agent_runs SET state=?,payload=?,updated_at=? WHERE id=? AND user_id=? AND state<>'cancelled'", state, store.JSON(payload), store.Now(), runID, user)
+			}
+		}
+		exec(ctx, db, "UPDATE analysis_jobs SET state=?,error=?,next_at=? WHERE id=?", state, errorText, next, target.JobID)
+		event(ctx, db, user, "message.upsert", str(job, "message_id"))
+		return nil
+	})
+}
+
+// retryMissingBatch 把批量结果缺失的单条转回单条 runAnalysis 路径。
+func (s *Server) retryMissingBatch(ctx context.Context, user string, targets []batchTarget) {
+	for _, target := range targets {
+		id := str(target.Message, "id")
+		row := first(query(ctx, s.Store.DB, "SELECT payload FROM messages WHERE id=? AND user_id=?", id, user))
+		if row == nil {
+			continue
+		}
+		m := store.Payload(row)
+		if len(object(m["analysis"])) > 0 {
+			continue // 批量已写入
+		}
+		if str(m, "triage") == "ignored" {
+			s.transaction(ctx, func(db store.SQL) any {
+				exec(ctx, db, "UPDATE analysis_jobs SET state='ignored' WHERE message_id=? AND user_id=?", id, user)
+				return nil
+			})
+			continue
+		}
+		// 模型漏判：回到逐条 runAnalysis，由 analyzeWorker 下一轮的
+		// 单条 fallback 兜底。这里直接调用一次，失败保留 queued。
+		callCtx, stop := context.WithTimeout(ctx, 180*time.Second)
+		_, callErr := attempt(func() any {
+			return s.runAnalysis(callCtx, user, Object{"message_id": id, "_automatic": true}, nil)
+		})
+		stop()
+		if ctx.Err() != nil {
+			return
+		}
+		state, errorText, next := "done", "", float64(0)
+		if callErr != nil {
+			state = "queued"
+			errorText = "批量结果缺失，单条重试未完成"
+			next = timestamp() + 20
+			if target.Attempts >= batchAnalysisMaxRetry {
+				state = "failed"
+				errorText = "自动分析失败，请检查模型设置后重试"
+			}
+		}
+		s.transaction(ctx, func(db store.SQL) any {
+			row := first(query(ctx, s.Store.DB, "SELECT payload FROM messages WHERE id=? AND user_id=?", id, user))
+			if row != nil {
+				m := store.Payload(row)
+				if len(object(m["analysis"])) > 0 {
+					state, errorText = "done", ""
+				}
+				if errorText != "" {
+					m["analysis_error"] = errorText
+					exec(ctx, db, "UPDATE messages SET payload=? WHERE id=?", store.JSON(m), id)
+				}
+			}
+			exec(ctx, db, "UPDATE analysis_jobs SET state=?,error=?,next_at=? WHERE message_id=? AND user_id=? AND state='running'", state, errorText, next, id, user)
+			event(ctx, db, user, "message.upsert", id)
+			return nil
+		})
+	}
+}
+
+// failBatchJobs 批量整体失败时统一推进重试状态。
+func (s *Server) failBatchJobs(ctx context.Context, user string, targets []batchTarget) {
+	s.transaction(ctx, func(db store.SQL) any {
+		for _, target := range targets {
+			state, errorText, next := "queued", "本次批量分析未完成，稍后自动重试", timestamp()+30
+			if target.Attempts >= batchAnalysisMaxRetry {
+				state = "failed"
+				errorText = "自动分析失败，请检查模型设置后重试"
+				next = 0
+			}
+			exec(ctx, db, "UPDATE analysis_jobs SET state=?,error=?,next_at=? WHERE id=?", state, errorText, next, target.JobID)
+			event(ctx, db, user, "message.upsert", str(target.Message, "id"))
+		}
+		return nil
+	})
+}
+
+// retireStaleJobs 把消息已删除或已忽略的孤儿 job 收尾。
+func (s *Server) retireStaleJobs(ctx context.Context, user string) {
+	s.transaction(ctx, func(db store.SQL) any {
+		rows := query(ctx, db, `SELECT a.id,a.message_id,m.payload FROM analysis_jobs a
+			LEFT JOIN messages m ON m.id=a.message_id AND m.user_id=a.user_id
+			WHERE a.user_id=? AND a.state='queued' LIMIT 100`, user)
+		for _, row := range rows {
+			m := store.Payload(row)
+			if row["payload"] == nil || str(m, "triage") == "ignored" {
+				exec(ctx, db, "UPDATE analysis_jobs SET state='ignored' WHERE id=?", row["id"])
+			}
+		}
+		return nil
+	})
+}
+
 
 var _ = strings.TrimSpace
