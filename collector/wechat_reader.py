@@ -8,13 +8,25 @@ import json
 import hashlib
 import os
 import re
+import sys
 import shutil
 import tempfile
 import time
 from pathlib import Path
 
 
+def _vendor_path() -> str:
+    """源码运行时装包时把 wechatauto 的 vendor 副本加入 sys.path。"""
+    root = Path(__file__).resolve().parents[1]
+    for candidate in (root / "runtime-vendor" / "wechatauto-replica", root / "runtime-vendor"):
+        if (candidate / "wechatauto").exists() and str(candidate) not in sys.path:
+            sys.path.insert(0, str(candidate))
+            return str(candidate)
+    return ""
+
+
 def open_database(config):
+    _vendor_path()
     from wechatauto.db import WeChatDB, auto_detect_db_dir
     import psutil
     directory = config.get('wechat_db_dir') or auto_detect_db_dir()

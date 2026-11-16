@@ -19,6 +19,7 @@ import logging
 import os
 import re
 import tempfile
+import sys
 import threading
 from pathlib import Path
 
@@ -106,7 +107,18 @@ def find_session_db(base: str, account: str = "") -> str:
     return ""
 
 
+def _vendor_path() -> str:
+    """源码运行时装包时把 wechatauto 的 vendor 副本加入 sys.path。"""
+    root = Path(__file__).resolve().parents[1]
+    for candidate in (root / "runtime-vendor" / "wechatauto-replica", root / "runtime-vendor"):
+        if (candidate / "wechatauto").exists() and str(candidate) not in sys.path:
+            sys.path.insert(0, str(candidate))
+            return str(candidate)
+    return ""
+
+
 def _unprotect(raw: bytes) -> bytes:
+    _vendor_path()
     try:
         from wechatauto.db import _unprotect_key_cache
         return _unprotect_key_cache(raw)
