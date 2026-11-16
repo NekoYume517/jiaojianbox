@@ -906,8 +906,24 @@ function readSourcesForm() {
   }
   return c;
 }
+const SOURCE_STATE_LABEL = { connected: '已连接', starting: '连接中', reconnecting: '重连中', warning: '部分可用', error: '读取失败', unauthorized: '登录过期', offline: '离线', pending: '等待上传', stopped: '未启动' };
+function paintSourceBadges(value) {
+  const sources = value?.sources || {};
+  for (const name of ['qq', 'wechat']) {
+    const badge = $('#source-' + name);
+    if (!badge) continue;
+    const info = sources[name] || {};
+    const state = info.state || (value?.source === name ? value.state : '');
+    if (!state) { badge.hidden = true; continue; }
+    badge.hidden = false;
+    badge.dataset.state = state;
+    const label = SOURCE_STATE_LABEL[state] || state;
+    badge.title = `${name === 'qq' ? 'QQ' : '微信'}采集：${label}${info.message ? ' · ' + info.message : ''}`;
+  }
+}
 function showCollectorState(value) {
   value={...value,message:String(value.message||'').replace(/^Error invoking remote method '[^']+': (?:Error: )?/,'')};
+  paintSourceBadges(value);
   const el = $('#collector-status');
   const problems = Object.values(value.sources || {}).filter(x => ['error','unauthorized','offline','reconnecting','warning'].includes(x.state));
   if (el) el.textContent = problems.length ? problems.map(x => x.message).join('；') : value.source === 'queue' ? `采集运行中 · ${value.count} 条消息等待上传` : value.message || ({ starting: '正在连接…', connected: '已连接，正在同步所选会话的新消息', stopped: '采集已停止' }[value.state] || value.state);
@@ -1390,6 +1406,7 @@ $('#logout').addEventListener('click', async () => {
   state.generation++;window.liveAnalysis?.cancelAll();window.statistics?.unmount();window.shelf?.reset();clearTimeout(reconnectTimer); clearTimeout(cacheTimer); state.socket?.close();
   if (window.desktop) { await desktop.stopCollector(); await desktop.remove('session'); } else localStorage.removeItem('jjb-session');
   window.pluginUI?.stop();state.session = null; state.selected = null; state.contexts.clear(); state.pending = []; state.snapshot = { tasks: [], messages: [], cursor: 0 };
+  for (const name of ['qq','wechat']) { const badge = $('#source-' + name); if (badge) badge.hidden = true; }
   $('#workspace').hidden = true; $('#auth').hidden = false;
   if (window.mobile) await mobile.logout();
 });
@@ -1397,6 +1414,7 @@ $('#refresh').addEventListener('click', () => { refresh(); flushOutbox(); });
 window.addEventListener('online', () => { refresh(); flushOutbox(); if (!state.socket || state.socket.readyState > 1) syncSocket(); });
 window.addEventListener('offline', () => online(false));
 window.desktop?.onCollector(showCollectorState);
+window.desktop?.collectorState().then(showCollectorState).catch(() => {});
 setInterval(() => { if (state.session) { refresh({ renderPage: false }); if (state.pending.length) flushOutbox(); } }, 30000);
 (async () => {
   hydrateIcons();
