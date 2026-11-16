@@ -627,3 +627,6 @@ body.cmdk-open{overflow:hidden}
 .source-state[data-state="error"],.source-state[data-state="unauthorized"],.source-state[data-state="offline"]{color:var(--red-text,var(--orange-text))}
 .source-state[data-state="error"] i,.source-state[data-state="unauthorized"] i,.source-state[data-state="offline"] i{background:var(--red-text,var(--orange-text))}
 @media(prefers-reduced-motion:reduce){.source-state{transition:none}}
+
+/* 阶段分析提示：一条消息属于群聊某一时间窗口，窗口内打包出多个任务。 */
+.stage-note{font-size:0.82rem;color:var(--muted);margin:4px 0 8px;line-height:1.5}
