@@ -912,9 +912,9 @@ function paintSourceBadges(value) {
   for (const name of ['qq', 'wechat']) {
     const badge = $('#source-' + name);
     if (!badge) continue;
+    if (!window.desktop) { badge.hidden = true; continue; }
     const info = sources[name] || {};
-    const state = info.state || (value?.source === name ? value.state : '');
-    if (!state) { badge.hidden = true; continue; }
+    const state = info.state || (value?.source === name ? value.state : '') || 'stopped';
     badge.hidden = false;
     badge.dataset.state = state;
     const label = SOURCE_STATE_LABEL[state] || state;
