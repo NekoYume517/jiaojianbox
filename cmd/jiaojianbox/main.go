@@ -5,7 +5,7 @@ import (
 	"os"
 )
 
-var version = "0.6.22"
+var version = "0.6.23"
 
 func main() {
 	// The desktop process is a user-controlled local workspace. Allow models

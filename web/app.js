@@ -34,7 +34,9 @@ const EMOJI={'微笑':'🙂','撇嘴':'😕','色':'😍','发呆':'😮','得�
 const EMOJI_RE=new RegExp('\\[(' + Object.keys(EMOJI).sort((a,b)=>b.length-a.length).map(k=>k.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')).join('|') + ')\\]','g');
 const pretty = text => String(text ?? '').replace(/[\x00-\x08\x0b-\x1f]/g,'').replace(EMOJI_RE,(m,name)=>EMOJI[name]);
 const classifications = { actionable: ['待办通知', 'green'], chatting: ['普通聊天', ''], irrelevant: ['其他信息', ''], unprocessed: ['待分析', 'orange'] };
-const state = { session: null, profile: '', page: 'inbox', snapshot: { tasks: [], messages: [], digests: [], cursor: 0 }, pending: [], selected: null, selectedDigest: null, digestMessages: [], taskId: null, contexts: new Set(), search: '', source: 'all', category: 'all', taskFilter: 'active', online: false, socket: null, sources: {}, busyAnalysis: new Set(), isRegister: false, generation: 0, firstRenderDone: false, cmdkIndex: 0 };
+const TASK_SORT_OPTIONS = ['created-desc', 'created-asc', 'due-asc', 'due-desc', 'title-asc', 'title-desc'];
+const savedTaskSort = (() => { try { return localStorage.getItem('jjb-task-sort'); } catch { return null; } })();
+const state = { session: null, profile: '', page: 'inbox', snapshot: { tasks: [], messages: [], digests: [], cursor: 0 }, pending: [], selected: null, selectedDigest: null, digestMessages: [], taskId: null, contexts: new Set(), search: '', source: 'all', category: 'all', taskFilter: 'active', taskSort: TASK_SORT_OPTIONS.includes(savedTaskSort) ? savedTaskSort : 'created-desc', online: false, socket: null, sources: {}, busyAnalysis: new Set(), isRegister: false, generation: 0, firstRenderDone: false, cmdkIndex: 0 };
 let editingUrgency = null, editingReminders = null;
 let flushRunning = false, refreshRunning = false, cacheTimer, reconnectTimer, llmSettings = null, llmCredit = null, editingVersion = 0, uploading = false, lastSeenMessageId = null, pendingUndoId = null;
 
@@ -199,7 +201,7 @@ async function refresh({ renderPage = true } = {}) {
     state.snapshot.messages.push(...previousMessages.filter(m => !latestIds.has(m.id)));
     for (const m of state.snapshot.messages) if (!knownIds.has(m.id) && state.firstRenderDone) m.isNew = true;
     online(true); cacheSoon();
-    if (renderPage && contentChanged && !uploading && !['settings', 'sources','stats','plugins','shares'].includes(state.page) && !state.page.startsWith('plugin:')) render();
+    if (renderPage && contentChanged && !uploading && !compositionActive() && !['settings', 'sources','stats','plugins','shares'].includes(state.page) && !state.page.startsWith('plugin:')) render();
     window.dispatchEvent(new CustomEvent('snapshot-updated', { detail: state.snapshot }));
     window.agentUI?.synced?.();
     window.pluginUI?.sync();
@@ -541,6 +543,30 @@ function dueUrgency(t) {
   if (hours <= 72) return 'soon';
   return '';
 }
+function taskTimestamp(value, fallback = 0) {
+  const timestamp = Date.parse(value || '');
+  return Number.isFinite(timestamp) ? timestamp : fallback;
+}
+function compareTasks(left, right, sort) {
+  const [field, direction] = sort.split('-');
+  const sign = direction === 'asc' ? 1 : -1;
+  if (field === 'title') return sign * (left.title || '').localeCompare(right.title || '', 'zh-CN', { numeric: true, sensitivity: 'base' });
+  const leftValue = left[field === 'due' ? 'due_at' : 'created_at'];
+  const rightValue = right[field === 'due' ? 'due_at' : 'created_at'];
+  if (field === 'due') {
+    const leftMissing = !leftValue || !Number.isFinite(Date.parse(leftValue));
+    const rightMissing = !rightValue || !Number.isFinite(Date.parse(rightValue));
+    if (leftMissing !== rightMissing) return leftMissing ? 1 : -1;
+    if (leftMissing) return 0;
+  }
+  const leftTime = taskTimestamp(leftValue);
+  const rightTime = taskTimestamp(rightValue);
+  return sign * (leftTime - rightTime);
+}
+function sortTasks(tasks) {
+  const originalIndex = new Map(tasks.map((task, index) => [task.id, index]));
+  return tasks.map((task, index) => ({ task, index })).sort((left, right) => compareTasks(left.task, right.task, state.taskSort) || left.index - right.index).map(item => item.task);
+}
 function tasksView() {
   if (state.taskId) {
     const task = state.snapshot.tasks.find(t => t.id === state.taskId);
@@ -548,9 +574,10 @@ function tasksView() {
     state.taskId = null;
   }
   const all = state.snapshot.tasks;
-  const list = all.filter(t => (state.taskFilter === 'all' || state.taskFilter === 'active' ? state.taskFilter === 'all' || ['collecting', 'ready'].includes(t.status) : t.status === state.taskFilter) && (!state.search || (t.title + t.description).toLowerCase().includes(state.search.toLowerCase())));
+  const list = sortTasks(all.filter(t => (state.taskFilter === 'all' || state.taskFilter === 'active' ? state.taskFilter === 'all' || ['collecting', 'ready'].includes(t.status) : t.status === state.taskFilter) && (!state.search || (t.title + t.description).toLowerCase().includes(state.search.toLowerCase()))));
+  const sortOptions = [['created-desc','创建时间 ↓'],['created-asc','创建时间 ↑'],['due-asc','截止时间 ↑'],['due-desc','截止时间 ↓'],['title-asc','名称 A-Z'],['title-desc','名称 Z-A']];
   return heading('待办', '要求、材料与提交回执，一处整理。', `<button class="plain-button" data-productivity-action="templates">模板</button><button class="plain-button" data-productivity-action="recycle">回收站</button><button class="secondary" data-action="show-archived">已归档（${all.filter(t=>t.status==='archived').length}）</button><button class="primary" data-action="new-task">${icon('plus')}新建待办</button>`) +
-    `<div class="task-summary">${[['collecting','准备材料'],['ready','待提交'],['submitted','已提交']].map(([s,label])=>`<div class="summary-cell"><strong>${all.filter(t=>t.status===s).length}</strong><span>${label}</span></div>`).join('')}</div><div class="toolbar"><div class="search"><span>${icon('search')}</span><input id="task-search" placeholder="搜索待办" value="${esc(state.search)}" aria-label="搜索待办"></div><select id="task-filter" aria-label="待办进度"><option value="active">进行中</option><option value="all">全部待办</option><option value="collecting">准备材料</option><option value="ready">待提交</option><option value="submitted">已提交</option><option value="archived">已归档</option></select></div><div class="task-grid ${state.firstRenderDone ? '' : 'stagger'}">${list.map(t => `<article class="task-card ${state.firstRenderDone ? '' : 'stagger-item'} ${dueUrgency(t) === 'overdue' ? 'card-overdue' : ''}" tabindex="0" role="button" data-task="${esc(t.id)}"><div class="pill-row">${tag(...states[t.status])}${t.pending ? tag(t.conflict ? '同步冲突' : '待同步', 'orange') : ''}${dueUrgency(t) ? `<span class="due-chip ${dueUrgency(t)}">${dueUrgency(t) === 'overdue' ? '已逾期' : dueUrgency(t) === 'today' ? '今天截止' : '3 天内截止'}</span>` : ''}</div><h3>${esc(t.title)}</h3><p>${esc(t.description || '暂无补充说明')}</p><div class="task-card-footer"><span class="${t.due_at && new Date(t.due_at) < new Date() && !['submitted', 'archived'].includes(t.status) ? 'overdue' : ''}">${dueBadge(t.due_at)}</span><span>${t.attachments.filter(f => f.kind === 'material').length} 份材料</span></div></article>`).join('')}</div>${list.length ? '' : `<div class="panel">${empty('把下一次交件安排好', '从通知生成待办，或直接创建一项。', '<button class="primary" data-action="new-task">新建待办</button>')}</div>`}`;
+    `<div class="task-summary">${[['collecting','准备材料'],['ready','待提交'],['submitted','已提交']].map(([s,label])=>`<div class="summary-cell"><strong>${all.filter(t=>t.status===s).length}</strong><span>${label}</span></div>`).join('')}</div><div class="toolbar"><div class="search"><span>${icon('search')}</span><input id="task-search" placeholder="搜索待办" value="${esc(state.search)}" aria-label="搜索待办"></div><label class="task-sort-control"><span>排序</span><select id="task-sort" aria-label="待办排序">${sortOptions.map(([value,label]) => `<option value="${value}">${label}</option>`).join('')}</select></label><select id="task-filter" aria-label="待办进度"><option value="active">进行中</option><option value="all">全部待办</option><option value="collecting">准备材料</option><option value="ready">待提交</option><option value="submitted">已提交</option><option value="archived">已归档</option></select></div><div class="task-grid ${state.firstRenderDone ? '' : 'stagger'}">${list.map(t => `<article class="task-card ${state.firstRenderDone ? '' : 'stagger-item'} ${dueUrgency(t) === 'overdue' ? 'card-overdue' : ''}" tabindex="0" role="button" data-task="${esc(t.id)}"><div class="pill-row">${tag(...states[t.status])}${t.pending ? tag(t.conflict ? '同步冲突' : '待同步', 'orange') : ''}${dueUrgency(t) ? `<span class="due-chip ${dueUrgency(t)}">${dueUrgency(t) === 'overdue' ? '已逾期' : dueUrgency(t) === 'today' ? '今天截止' : '3 天内截止'}</span>` : ''}</div><h3>${esc(t.title)}</h3><p>${esc(t.description || '暂无补充说明')}</p><div class="task-card-footer"><span class="${t.due_at && new Date(t.due_at) < new Date() && !['submitted', 'archived'].includes(t.status) ? 'overdue' : ''}">${dueBadge(t.due_at)}</span><span>${t.attachments.filter(f => f.kind === 'material').length} 份材料</span></div></article>`).join('')}</div>${list.length ? '' : `<div class="panel">${empty('把下一次交件安排好', '从通知生成待办，或直接创建一项。', '<button class="primary" data-action="new-task">新建待办</button>')}</div>`}`;
 }
 function fileRow(f, task) { const ext = f.name.split('.').pop().toLowerCase().slice(0, 5); return `<div class="file-row"><span class="file-icon" data-ext="${esc(ext)}">${esc(ext)}</span><span class="file-info"><strong>${esc(f.name)}</strong><small>${bytes(f.size)}</small></span><button class="plain-button file-kind-button" data-change-kind="${esc(f.id)}" data-next-kind="${f.kind==='receipt'?'material':'receipt'}" data-version="${task.version}" ${task.pending?'disabled':''} title="${f.kind==='receipt'?'移动到待办材料，参与材料核对':'移动到提交回执'}">${f.kind==='receipt'?'转为材料':'转为回执'}</button><button class="icon-button" data-preview-file="${esc(f.id)}" data-name="${esc(f.name)}" title="预览" aria-label="预览 ${esc(f.name)}">${icon('preview')}</button><button class="icon-button" data-rename-file="${esc(f.id)}" data-name="${esc(f.name)}" data-version="${task.version}" title="重命名" aria-label="重命名 ${esc(f.name)}">${icon('edit')}</button><button class="icon-button" data-download="${esc(f.id)}" data-name="${esc(f.name)}" title="下载" aria-label="下载 ${esc(f.name)}">${icon('download')}</button><button class="icon-button" data-delete-file="${esc(f.id)}" data-version="${task.version}" title="移入回收站" aria-label="移入回收站 ${esc(f.name)}">${icon('trash')}</button></div>`; }
 function urgencySwitch(t) {
@@ -654,6 +681,7 @@ function syncLocationHash() {
 }
 function render() {
   const active = document.activeElement;
+  if (active?.isComposing || compositionActive()) return;
   const focus = active?.id;
   const selection = active?.selectionStart;
   const viewKey = state.page + ':' + (state.taskId || '');
@@ -688,6 +716,7 @@ function render() {
   if ($('#source-filter')) $('#source-filter').value = state.source;
   if ($('#category-filter')) $('#category-filter').value = state.category;
   if ($('#task-filter')) $('#task-filter').value = state.taskFilter;
+  if ($('#task-sort')) $('#task-sort').value = state.taskSort;
   if (focus && document.getElementById(focus)) {
     document.getElementById(focus).focus({preventScroll:true});
     if (selection != null && ['text', 'search'].includes(document.getElementById(focus).type)) document.getElementById(focus).setSelectionRange(selection, selection);
@@ -1315,14 +1344,38 @@ window.jjbOpenTask = async id => {
   }
 };
 window.addEventListener('hashchange', () => applyHashRoute());
+let searchComposition = null;
+function isSearchInput(target) {
+  return target instanceof HTMLInputElement && ['inbox-search', 'task-search'].includes(target.id);
+}
+function compositionActive() {
+  return Boolean(searchComposition?.isConnected || document.activeElement?.isComposing);
+}
+document.addEventListener('compositionstart', event => {
+  if (isSearchInput(event.target)) searchComposition = event.target;
+});
+document.addEventListener('compositionend', event => {
+  if (searchComposition !== event.target) return;
+  searchComposition = null;
+  state.search = event.target.value;
+  render();
+});
+document.addEventListener('compositioncancel', event => {
+  if (searchComposition === event.target) searchComposition = null;
+});
 document.addEventListener('input', event => {
-  if (['inbox-search', 'task-search'].includes(event.target.id)) { state.search = event.target.value; render(); }
+  if (isSearchInput(event.target) && !searchComposition && !event.isComposing) { state.search = event.target.value; render(); }
 });
 document.addEventListener('change', async event => {
   try {
     if (event.target.id === 'source-filter') { state.source = event.target.value; render(); }
     if (event.target.id === 'category-filter') { state.category = event.target.value; render(); }
     if (event.target.id === 'task-filter') { state.taskFilter = event.target.value; render(); }
+    if (event.target.id === 'task-sort') {
+      state.taskSort = TASK_SORT_OPTIONS.includes(event.target.value) ? event.target.value : 'created-desc';
+      try { localStorage.setItem('jjb-task-sort', state.taskSort); } catch {}
+      render();
+    }
     if (event.target.dataset.context) { if (event.target.checked) state.contexts.add(event.target.dataset.context); else state.contexts.delete(event.target.dataset.context); render(); }
     if (event.target.id === 'reminder-preset') {
       const task = state.snapshot.tasks.find(t => t.id === state.taskId); if (!task) return;
