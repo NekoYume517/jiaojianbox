@@ -51,7 +51,7 @@ module.exports=async(page,scratch)=>{
     assert(await page.locator('#statistics-recent').isVisible());assert(await page.locator('#chart-tokens').isHidden());
     await selectTab('overview');
     for(const pageName of ['settings','stats','sources','settings'])await page.locator(`[data-nav="${pageName}"]`).click();
-    await page.waitForTimeout(500);
+    await page.waitForFunction(()=>document.querySelectorAll('.nav-sub.leaving,.nav-sub.moving').length===0,null,{timeout:3000});
     assert.equal(await page.locator('.nav-sub.leaving,.nav-sub.moving').count(),0,'interrupted submenus must finish folding');
     assert.equal(await page.locator('#page-subnav').count(),1);
     await page.locator('[data-nav="settings"]').click();await selectTab('general');
