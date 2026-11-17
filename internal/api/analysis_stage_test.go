@@ -110,7 +110,7 @@ func TestStageAnalysisPacksConversationWindow(t *testing.T) {
 	}
 }
 
-// 静默不足 1 分钟的会话不应触发；最老消息等待超过上限后强制触发。
+// 静默不足 2 分钟的会话不应触发；最老消息等待超过上限后强制触发。
 func TestStageAnalysisWaitsForIdle(t *testing.T) {
 	s := testServer(t)
 	token, _ := login(t, s, "stage-idle@example.com")
@@ -133,7 +133,7 @@ func TestStageAnalysisWaitsForIdle(t *testing.T) {
 	// 把 sent_at 改到 2 分钟前，立即满足静默条件。
 	exec(testContext(), s.Store.DB,
 		"UPDATE messages SET payload=json_set(payload,'$.sent_at',?) WHERE user_id=?",
-		time.Now().Add(-2*time.Minute).UTC().Format(time.RFC3339Nano), user)
+		time.Now().Add(-3*time.Minute).UTC().Format(time.RFC3339Nano), user)
 	groups := s.pendingStageGroups(testContext(), user)
 	if len(groups) != 1 {
 		t.Fatalf("expected 1 ready group after idle, got %d", len(groups))

@@ -11,7 +11,7 @@ import (
 )
 
 const (
-	triageIdleMinutes = 1
+	triageIdleMinutes = 2
 	triageMaxWait     = 20 * time.Minute
 	triageGroupsPass  = 24
 	triageRetryDelay  = 2 * time.Minute

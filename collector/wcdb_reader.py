@@ -376,6 +376,11 @@ class WcdbReader:
             row.get("localType") or row.get("local_type")
             or row.get("msg_type") or row.get("type") or 1
         )
+        # webot 的 WCDB 行带方向与 sender id；保留 is_send 供上层区分
+        # 「我发的」与「对方发的」，兼容模式则用 sender_username 判断。
+        is_send = row.get("is_send")
+        if is_send is None:
+            is_send = row.get("isSend")
         return {
             "local_id": int(local_id or 0),
             "server_id": int(
@@ -384,6 +389,8 @@ class WcdbReader:
             "sort_seq": sort_seq_for(create_time, local_id),
             "create_time": int(create_time or 0),
             "sender_username": sender,
+            "sender_id": int(row.get("real_sender_id") or row.get("sender_id") or 0),
+            "is_send": bool(is_send) if is_send is not None else False,
             "content": str(content or ""),
             "type": message_type_name(message_type),
             "type_code": message_type,

@@ -9,6 +9,22 @@ def timestamp(value):
     return datetime.fromtimestamp(float(value or 0), timezone.utc).isoformat()
 
 
+def _self_usernames(account):
+    """账号目录名可能带 _<hash> 后缀（wxid_xxx_9353），自己消息的
+    sender_username 往往是没有后缀的 wxid；两种都算自己。
+
+    注意 wxid 本身含下划线，只能去掉最后一段形如 9353/5420 的数字后缀。
+    """
+    account = str(account or "")
+    if not account:
+        return set()
+    ids = {account}
+    head, _, tail = account.rpartition("_")
+    if head.startswith("wxid_") and 3 <= len(tail) <= 10 and re.fullmatch(r"[0-9a-fA-F]+", tail):
+        ids.add(head)
+    return ids
+
+
 def wechat(row, account, chat, chat_name="", sender_name=""):
     raw = row.get("content") or ""
     if isinstance(raw, bytes):
@@ -19,6 +35,10 @@ def wechat(row, account, chat, chat_name="", sender_name=""):
     if chat.endswith("@chatroom") and match:
         sender = sender or match[1]
         raw = raw[match.end():]
+    self_ids = _self_usernames(account)
+    from_self = bool(row.get("is_send") in (1, "1", True)) or sender in self_ids
+    if from_self:
+        sender_name = "我"
     text = raw
     message_type = str(row.get("type", "文本"))
     metadata = {}
@@ -44,6 +64,7 @@ def wechat(row, account, chat, chat_name="", sender_name=""):
     return {"source": "wechat", "account_id": str(account), "conversation_id": chat,
             "conversation_name": chat_name or chat, "external_id": external,
             "sender_id": sender, "sender_name": sender_name or sender,
+            "from_self": from_self,
             "text": text[:30000], "sent_at": timestamp(row.get("create_time")),
             "message_type": message_type, "metadata": metadata}
 

@@ -26,7 +26,7 @@ import (
 )
 
 const (
-	stageIdle         = 60 * time.Second // 会话静默多久后开始分析
+	stageIdle         = 120 * time.Second // 会话静默多久后开始分析
 	stageWaitMax      = 10 * time.Minute // 活跃会话的兜底等待上限
 	stageMaxMessages  = 60               // 单个窗口最多打包多少条消息
 	stageChars        = 40000            // 输入正文总字符预算
