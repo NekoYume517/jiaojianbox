@@ -3,12 +3,14 @@ package api
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"io"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -17,6 +19,71 @@ import (
 
 	"github.com/NekoYume517/jiaojianbox/internal/store"
 )
+
+func TestLegacyAnalysisJobsSchemaAcceptsMessages(t *testing.T) {
+	t.Setenv("JJB_REQUIRE_EMAIL", "false")
+	t.Setenv("JJB_ALLOW_REGISTRATION", "true")
+	t.Setenv("JJB_ALLOW_PRIVATE_UPSTREAMS", "true")
+	t.Setenv("JJB_BOOTSTRAP_ADMIN_USERNAME", "")
+	t.Setenv("JJB_MASTER_KEY", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
+	root := t.TempDir()
+	legacy, err := sql.Open("sqlite", filepath.ToSlash(filepath.Join(root, "jiaojianbox.sqlite3")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, statement := range []string{
+		`CREATE TABLE users(id TEXT PRIMARY KEY, username TEXT UNIQUE COLLATE NOCASE, salt TEXT, password TEXT)`,
+		`CREATE TABLE attachments(id TEXT PRIMARY KEY, user_id TEXT, task_id TEXT, size INTEGER, sha256 TEXT)`,
+		`CREATE TABLE analysis_jobs(id INTEGER PRIMARY KEY AUTOINCREMENT,user_id TEXT,message_id TEXT UNIQUE,state TEXT DEFAULT 'queued',attempts INTEGER DEFAULT 0,next_at REAL DEFAULT 0,error TEXT DEFAULT '')`,
+		`PRAGMA user_version = 1`,
+	} {
+		if _, err = legacy.Exec(statement); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err = legacy.Close(); err != nil {
+		t.Fatal(err)
+	}
+	db, err := store.Open(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, err := New(db, fstest.MapFS{"index.html": {Data: []byte("<html>交件箱</html>")}}, "test")
+	if err != nil {
+		db.Close()
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { s.Close(); db.Close() })
+	token, user := login(t, s, "legacy-schema-user")
+	status, settings := call(t, s, "PUT", "/api/settings/llm", token, Object{
+		"service_mode": "custom",
+		"base_url":     "https://example.test/v1",
+		"model":        "fixture",
+		"auto_analyze": true,
+		"local_triage": true,
+	})
+	if status != 200 {
+		t.Fatalf("save LLM settings %d: %v", status, settings)
+	}
+	status, message := call(t, s, "POST", "/api/messages", token, Object{
+		"source":          "wechat",
+		"account_id":      "legacy-wx",
+		"conversation_id": "legacy-chat",
+		"external_id":     "legacy-message",
+		"text":            "请提交课程作业",
+		"sent_at":         "2026-11-18T02:51:33+08:00",
+	})
+	if status != 201 {
+		t.Fatalf("legacy database rejected message: %d %v", status, message)
+	}
+	job, err := store.One(context.Background(), db.DB, "SELECT session_id,window_key FROM analysis_jobs WHERE user_id=? AND message_id=?", user, str(message, "id"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if str(job, "session_id") == "" || str(job, "window_key") == "" {
+		t.Fatalf("migrated queue fields empty: %v", job)
+	}
+}
 
 func testServer(t *testing.T) *Server {
 	t.Helper()
