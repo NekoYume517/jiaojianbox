@@ -104,7 +104,11 @@ module.exports = async function verifyMotion(page, scratch) {
     onboardActive=false;
     suggestStatus({id:'verify-auto-stack',title:'验证任务',status:'ready'},{ready:false,results:[{ok:false}]});
   });
-  await page.waitForTimeout(320);
+  await page.waitForFunction(()=>{
+    const toastRect=document.querySelector('#toast').getBoundingClientRect();
+    const cardRect=document.querySelector('#status-suggest').getBoundingClientRect();
+    return toastRect.bottom<=cardRect.top-11.5;
+  });
   const toastStack=await page.evaluate(()=>{
     const toastRect=document.querySelector('#toast').getBoundingClientRect();
     const cardRect=document.querySelector('#status-suggest').getBoundingClientRect();
