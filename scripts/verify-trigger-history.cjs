@@ -85,7 +85,8 @@ module.exports = async (page, base) => {
     assert.equal(await page.locator('[data-agent-input]').inputValue(),'保留输入草稿');
     await page.locator('[data-agent-permission="restricted"]').click();
     await page.locator('[data-agent-input]').fill('');
-    await page.locator('[data-agent-context] summary').hover();
+    await page.locator('[data-agent-context] summary').click();
+    await page.locator('.agent-context-popup').waitFor({ state: 'visible' });
     assert(await page.locator('.agent-context-popup').isVisible());
     await page.keyboard.press('Escape');
 
@@ -97,7 +98,7 @@ module.exports = async (page, base) => {
 
     for (const width of [1280, 820, 390, 320]) {
       await page.setViewportSize({ width, height: 860 });
-      await page.waitForTimeout(80);
+      await page.waitForTimeout(300);
       assert(
         await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth),
         `trigger history overflows at ${width}px`,
@@ -121,17 +122,20 @@ module.exports = async (page, base) => {
       });
       const before = await page.evaluate(() => {
         const thread = document.querySelector('[data-agent-thread]');
-        const input = document.querySelector('[data-agent-form]').getBoundingClientRect();
+        const input = document.querySelector('.agent-compose-surface').getBoundingClientRect();
         const panel = document.querySelector('[data-trigger-history]').getBoundingClientRect();
-        return {inputTop:input.top,inputBottom:input.bottom,panelBottom:panel.bottom,scroll:document.scrollingElement.scrollTop,client:thread.clientHeight,total:thread.scrollHeight};
+        const formStyle = getComputedStyle(document.querySelector('[data-agent-form]'));
+        const paddingBottom = parseFloat(formStyle.paddingBottom);
+        const form = document.querySelector('[data-agent-form]').getBoundingClientRect();
+        return {inputTop:input.top,inputBottom:input.bottom+paddingBottom,panelBottom:panel.bottom,formBottom:form.bottom,scroll:document.scrollingElement.scrollTop,client:thread.clientHeight,total:thread.scrollHeight};
       });
       assert(before.total > before.client + 100, 'transcript needs a bounded scrolling area');
-      assert(Math.abs(before.panelBottom - before.inputBottom) < 3, 'composer must be pinned to bottom');
+      assert(Math.abs(before.panelBottom - before.formBottom) < 3, `composer and its status must be pinned to bottom at ${width}px: ${JSON.stringify(before)}`);
       const threadBox = await page.locator('[data-agent-thread]').boundingBox();
       await page.mouse.move(threadBox.x + threadBox.width / 2, threadBox.y + Math.min(80,threadBox.height/2));
       await page.mouse.wheel(0, 500);
       await page.waitForTimeout(120);
-      const after = await page.evaluate(() => ({top:document.querySelector('[data-agent-thread]').scrollTop,inputTop:document.querySelector('[data-agent-form]').getBoundingClientRect().top,scroll:document.scrollingElement.scrollTop}));
+      const after = await page.evaluate(() => ({top:document.querySelector('[data-agent-thread]').scrollTop,inputTop:document.querySelector('.agent-compose-surface').getBoundingClientRect().top,scroll:document.scrollingElement.scrollTop}));
       assert(after.top > 0, `wheel must scroll transcript at ${width}px`);
       assert(Math.abs(after.inputTop - before.inputTop) < 1, 'composer moved while scrolling');
       assert.equal(after.scroll,before.scroll,'wheel escaped to outer page');

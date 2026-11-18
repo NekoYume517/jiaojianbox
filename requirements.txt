@@ -9,3 +9,4 @@ pypdf>=6,<7
 psutil>=6,<8
 Pillow>=11,<13
 zstandard>=0.23,<1
+imageio-ffmpeg>=0.4.9,<1

@@ -224,6 +224,11 @@ class WcdbReader:
         if not key:
             raise WcdbUnavailable("未找到 session.db 密钥，先用兼容模式完成一次读取")
         self._session_db = session_db
+        self.account_dir = str(Path(session_db).parents[2])
+        self._cfg_checked = False
+        self._cfg_value = None
+        cache_root = Path(config.get("_wechat_cache_root") or tempfile.gettempdir())
+        self.workdir = str(cache_root / "wcdb-media")
         self.client = WcdbNativeClient(
             dll_dir=dll_dir,
             wxid=self._account,
@@ -246,6 +251,32 @@ class WcdbReader:
     @property
     def account(self) -> str:
         return self._account
+
+    @property
+    def wxid(self) -> str:
+        return re.sub(r"_\w{4}$", "", self._account)
+
+    @property
+    def cfg_dword(self):
+        if self._cfg_checked:
+            return self._cfg_value
+        self._cfg_checked = True
+        try:
+            from wechatauto.db import WeChatDB, extract_master_key_from_cfg
+            finder = WeChatDB.__new__(WeChatDB)
+            for pid in finder._find_weixin_pids():
+                found = extract_master_key_from_cfg(pid)
+                if found and (not self._account or str(found[2]).lower() == self.wxid.lower()):
+                    self._cfg_value = found[1]
+                    break
+        except Exception:
+            logger.debug("图片配置密钥读取失败", exc_info=True)
+        return self._cfg_value
+
+    @staticmethod
+    def _find_weixin_pids():
+        from wechatauto.db import WeChatDB
+        return WeChatDB._find_weixin_pids(WeChatDB.__new__(WeChatDB))
 
     def get_sessions(self, limit: int = 500) -> list[dict]:
         with self._lock:
@@ -377,4 +408,5 @@ class WcdbReader:
             "type_code": message_type,
             "chat": chat,
             "shard": "",
+            "packed_info": row.get("packed_info_data") or row.get("packedInfo") or row.get("packed_info"),
         }

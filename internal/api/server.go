@@ -132,6 +132,8 @@ type Server struct {
 	analysis     sync.Map
 	sessionTurns sync.Map
 	runCancels   sync.Map
+	batchWake    chan struct{}
+	batchWriteMu sync.Mutex
 	MaxUpload    int64
 	Version      string
 }
@@ -184,7 +186,7 @@ func New(database *store.Store, assets fs.FS, version string) (*Server, error) {
 	if err := database.BackupVersion(context.Background(), version); err != nil {
 		log.Printf("升级备份失败，继续使用已通过完整性检查的工作区: %v", err)
 	}
-	s := &Server{Store: database, Assets: assets, Version: version, Mux: http.NewServeMux(), MaxUpload: 50 << 20}
+	s := &Server{Store: database, Assets: assets, Version: version, Mux: http.NewServeMux(), MaxUpload: 50 << 20, batchWake: make(chan struct{}, 1)}
 	if n, e := strconv.Atoi(os.Getenv("JJB_MAX_UPLOAD_MB")); e == nil && n > 0 {
 		s.MaxUpload = int64(n) << 20
 	}
@@ -195,6 +197,7 @@ func New(database *store.Store, assets fs.FS, version string) (*Server, error) {
 		s.taskRoutes()
 		s.reminderRoutes()
 		s.fileRoutes()
+		s.messageMediaRoutes()
 		s.aiRoutes()
 		s.digestRoutes()
 		s.aiCreditRoutes()
@@ -239,7 +242,7 @@ func New(database *store.Store, assets fs.FS, version string) (*Server, error) {
 			http.ServeContent(w, r, "share.html", stat.ModTime(), asset.(io.ReadSeeker))
 		})
 		s.Mux.Handle("GET /", http.FileServerFS(s.Assets))
-		exec(context.Background(), s.Store.DB, "UPDATE analysis_jobs SET state='queued' WHERE state='running'")
+		exec(context.Background(), s.Store.DB, "UPDATE analysis_jobs SET state='queued' WHERE state IN ('running','batch')")
 		s.transaction(context.Background(), func(db store.SQL) any {
 			ctx := context.Background()
 			if first(query(ctx, db, "SELECT key FROM site_settings WHERE key='migration.agent-full-default-v1'")) == nil {
@@ -251,15 +254,18 @@ func New(database *store.Store, assets fs.FS, version string) (*Server, error) {
 		})
 		exec(context.Background(), s.Store.DB, "UPDATE agent_runs SET state='interrupted' WHERE state IN ('queued','running')")
 		exec(context.Background(), s.Store.DB, "UPDATE agent_runs SET state='queued' WHERE source_message_id IN (SELECT message_id FROM analysis_jobs WHERE state='queued') AND state IN ('interrupted','cancelled')")
+		exec(context.Background(), s.Store.DB, "UPDATE analysis_batches SET state='collecting',ready_at=0 WHERE state='running'")
 		s.purgeExpiredRecycle(context.Background(), s.Store.DB, "")
 		return nil
 	})
 	if err != nil {
 		return nil, err
 	}
+	s.resumePendingNotificationWindows(context.Background())
 	ctx, cancel := context.WithCancel(context.Background())
 	s.cancel = cancel
 	s.startWorker(ctx, "analysis", s.analyzeWorker)
+	s.startWorker(ctx, "analysis-batch", s.analysisBatchWorker)
 	s.startWorker(ctx, "triage", s.triageWorker)
 	s.startWorker(ctx, "recycle", s.recycleWorker)
 	return s, nil

@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -13,6 +14,16 @@ import (
 	"github.com/NekoYume517/jiaojianbox/internal/store"
 )
 
+func TestAnalysisLiveSummarySupportsNotificationWindows(t *testing.T) {
+	raw := `{"items":[{"id":"first","summary":"正在检查截图材料，"},{"id":"second","summary":"补充提交入口"}]}`
+	if got := analysisLiveSummary(raw); got != "正在检查截图材料，\n补充提交入口" {
+		t.Fatalf("unexpected window summary: %q", got)
+	}
+	if got := analysisLiveSummary(`{"summary":"旧格式保留"}`); got != "旧格式保留" {
+		t.Fatalf("legacy summary regressed: %q", got)
+	}
+}
+
 func TestTriggerLiveOutputStopAndQueueIsolation(t *testing.T) {
 	s := testServer(t)
 	token, user := login(t, s, "live-stop")
@@ -21,7 +32,16 @@ func TestTriggerLiveOutputStopAndQueueIsolation(t *testing.T) {
 	cancelled := make(chan struct{}, 1)
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if calls.Add(1) > 1 {
-			writeJSON(w, 200, textCompletion(store.JSON(Object{"classification": "actionable", "confidence": .95, "summary": "第二条正常完成", "title": "第二项待办", "requirements": []any{}})))
+			var body Object
+			json.NewDecoder(r.Body).Decode(&body)
+			messages := objects(body["messages"])
+			parts := objects(object(messages[len(messages)-1])["content"])
+			packet := decodeObject(str(object(parts[0]), "text"))
+			items := []Object{}
+			for _, message := range objects(packet["MESSAGES"]) {
+				items = append(items, Object{"id": message["id"], "classification": "actionable", "confidence": .95, "summary": "第二条正常完成", "title": "第二项待办", "requirements": []any{}})
+			}
+			writeJSON(w, 200, textCompletion(store.JSON(Object{"items": items})))
 			return
 		}
 		w.Header().Set("Content-Type", "text/event-stream")
@@ -41,6 +61,8 @@ func TestTriggerLiveOutputStopAndQueueIsolation(t *testing.T) {
 		return m
 	}
 	first := ingest("one")
+	exec(context.Background(), s.Store.DB, "UPDATE analysis_batches SET ready_at=0 WHERE id=?", first["analysis_batch_id"])
+	s.wakeNotificationWorker()
 	select {
 	case <-started:
 	case <-time.After(5 * time.Second):
@@ -69,7 +91,7 @@ func TestTriggerLiveOutputStopAndQueueIsolation(t *testing.T) {
 	if calls.Load() != 1 {
 		t.Fatal("queued turn interrupted running turn")
 	}
-	runID := "notification-" + str(first, "id")
+	runID := "notification-batch-" + str(first, "analysis_batch_id")
 	code, stopped := call(t, s, "POST", "/api/agent/sessions/"+sid+"/stop", token, Object{"run_id": runID})
 	if code != 200 || !boolean(stopped, "stopped") {
 		t.Fatal(code, stopped)
@@ -79,6 +101,8 @@ func TestTriggerLiveOutputStopAndQueueIsolation(t *testing.T) {
 	case <-time.After(3 * time.Second):
 		t.Fatal("stop did not cancel actual upstream request")
 	}
+	exec(context.Background(), s.Store.DB, "UPDATE analysis_batches SET ready_at=0 WHERE id=?", second["analysis_batch_id"])
+	s.wakeNotificationWorker()
 	deadline = time.Now().Add(5 * time.Second)
 	done := false
 	for time.Now().Before(deadline) {

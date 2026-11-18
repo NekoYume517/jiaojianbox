@@ -99,6 +99,7 @@ module.exports=async(page,scratch)=>{
     await page.locator('.page-tabs [data-subnav="model"]').click();assert(await page.locator('#llm-url').isVisible());
     await page.setViewportSize({width:1280,height:860});await selectTab('general');
     await page.evaluate(()=>scrollTo(0,300));await page.locator('[data-nav="tasks"]').click();
+    await page.waitForFunction(()=>state.page==='tasks'&&scrollY===0);
     assert.equal(await page.evaluate(()=>scrollY),0,'new page must start at the top');
     await page.emulateMedia({reducedMotion:'reduce'});await page.locator('[data-nav="settings"]').click();await selectTab('model');
     assert.equal(await page.locator('#view').evaluate(el=>el.getAnimations().filter(a=>a.playState==='running').length),0);

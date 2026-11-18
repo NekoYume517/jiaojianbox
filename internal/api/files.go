@@ -113,7 +113,7 @@ func (s *Server) checkUserQuota(ctx context.Context, db store.SQL, user string, 
 	if quota < 0 {
 		return
 	}
-	used := one(ctx, db, "SELECT COALESCE(SUM(size),0) AS used FROM attachments WHERE user_id=?", user)
+	used := one(ctx, db, "SELECT COALESCE((SELECT SUM(size) FROM attachments WHERE user_id=?),0)+COALESCE((SELECT SUM(size) FROM message_media WHERE user_id=?),0) AS used", user, user)
 	if int64(num(used, "used"))+incoming > quota {
 		fail(413, "服务器存储空间已满，请清理文件或联系管理员调整配额")
 	}
@@ -159,7 +159,7 @@ func (s *Server) uploadFile(r request, fn func(store.SQL, Object) any) any {
 }
 func (s *Server) fileRoutes() {
 	s.route("GET /api/storage", "owner", func(r request) any {
-		used := one(r.Context(), s.Store.DB, "SELECT COALESCE(SUM(size),0) AS used FROM attachments WHERE user_id=?", r.User)
+		used := one(r.Context(), s.Store.DB, "SELECT COALESCE((SELECT SUM(size) FROM attachments WHERE user_id=?),0)+COALESCE((SELECT SUM(size) FROM message_media WHERE user_id=?),0) AS used", r.User, r.User)
 		quota := s.userQuota(r.Context(), s.Store.DB, r.User)
 		return Object{"used": int64(num(used, "used")), "quota": quota, "unlimited": quota < 0, "default_quota": defaultQuotaBytes}
 	})

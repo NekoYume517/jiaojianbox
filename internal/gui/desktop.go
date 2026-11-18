@@ -222,6 +222,9 @@ func Run(version string) error {
 	d.main = d.app.Window.NewWithOptions(application.WebviewWindowOptions{Name: "main", Title: windowTitle, Width: 1280, Height: 860, MinWidth: 360, MinHeight: 520, URL: "/?desktop=1", Frameless: false, EnableFileDrop: true, Hidden: silent, Windows: chrome, BackgroundColour: background})
 	d.notifier.onResponse(d.handleNotificationResponse)
 	d.app.Event.OnApplicationEvent(events.Common.ApplicationStarted, func(*application.ApplicationEvent) {
+		if os.Getenv("JJB_PREVIEW_UI_ONLY") == "1" {
+			return
+		}
 		d.startReminders()
 		// WebView2 creation is expensive. Build the small window while the
 		// desktop is idle instead of synchronously from Explorer's OLE drag loop.
@@ -278,7 +281,9 @@ func Run(version string) error {
 	tray.OnClick(func() {
 		d.requestActivation("tray-click")
 	})
-	d.app.GlobalShortcut.Register("Ctrl+Shift+Space", d.showQuick)
+	if os.Getenv("JJB_PREVIEW_UI_ONLY") != "1" {
+		d.app.GlobalShortcut.Register("Ctrl+Shift+Space", d.showQuick)
+	}
 	appendStartupLog(root, "application run beginning")
 	runErr := d.app.Run()
 	if d.snowcat != nil {

@@ -31,13 +31,25 @@ var (
 	// 时间信号：有明确时间点，值得进一步判断。
 	timeSignals = regexp.MustCompile(`(?i)(\d{1,2}[:：]\d{2}|\d{1,2}\s*月\s*\d{1,2}\s*[日号]|周[一二三四五六日天]|星期[一二三四五六日天]|明天|后天|今晚|明晚|下周|月底|月初|季度|上午|下午|晚上|\d{4}[-/]\d{1,2}[-/]\d{1,2}|[0-9]{1,2}[:：][0-9]{2}\s*(前|之前))`)
 	// 明显的闲聊/噪声：纯表情、单字应答、贴纸占位。
-	noiseText   = regexp.MustCompile(`^(?:\[[^\]]{1,12}\]){1,6}$`)
+	noiseText   = regexp.MustCompile(`^(?:\[[^\]\r\n]{1,20}\]\s*)+$`)
 	ackWords    = []string{"好的", "收到", "ok", "OK", "嗯", "嗯嗯", "哈哈", "哈哈哈", "草", "666", "1", "？", "?", "在吗", "谢谢", "感谢", "辛苦"}
 	systemNoise = []string{"加入了群聊", "退出了群聊", "撤回了一条消息", "修改群名", "移出了群聊", "开启了朋友验证", "邀请"}
 )
 
 // localTriage 不花任何 token 就把明显噪声摘掉，并把强信号直接送深度分析。
 func localTriage(m Object) localVerdict {
+	if str(m, "source") != "manual" && (str(m, "direction") == "self" || boolean(m, "is_self") || (str(m, "direction") == "" && str(m, "sender_id") != "" && str(m, "sender_id") == str(m, "account_id"))) {
+		return localVerdict{"noise", "自己发送"}
+	}
+	if str(m, "message_type") == "image" {
+		return localVerdict{"unknown", "图片消息"}
+	}
+	if str(m, "message_type") == "sticker" {
+		return localVerdict{"noise", "动画表情"}
+	}
+	if str(m, "direction") == "system" || str(m, "message_type") == "system" {
+		return localVerdict{"noise", "系统消息"}
+	}
 	text := strings.TrimSpace(str(m, "text"))
 	if text == "" {
 		return localVerdict{"noise", "空消息"}
@@ -58,10 +70,6 @@ func localTriage(m Object) localVerdict {
 				return localVerdict{"noise", "简短应答"}
 			}
 		}
-	}
-	// 自己发的消息通常已经知道，不当作待办信号；仍保留给摘要。
-	if str(m, "sender_id") != "" && str(m, "account_id") != "" && str(m, "sender_id") == str(m, "account_id") {
-		return localVerdict{"unknown", "自己发送"}
 	}
 	if strongSignals.MatchString(text) {
 		return localVerdict{"strong", "含行动关键词"}
@@ -105,11 +113,15 @@ func (s *Server) triageBatch(ctx context.Context, user string, items []Object, p
 		}
 		used += len([]rune(text))
 		input = append(input, Object{
-			"id":      str(m, "id"),
-			"sender":  fallback(str(m, "sender_name"), str(m, "sender_id")),
-			"sent_at": str(m, "sent_at"),
-			"text":    text,
-			"triage":  str(object(m["triage_local"]), "reason"),
+			"id":           str(m, "id"),
+			"sender":       fallback(str(m, "sender_name"), str(m, "sender_id")),
+			"direction":    fallback(str(m, "direction"), "unknown"),
+			"is_self":      m["is_self"],
+			"message_type": str(m, "message_type"),
+			"image":        object(m["media"]),
+			"sent_at":      str(m, "sent_at"),
+			"text":         text,
+			"triage":       str(object(m["triage_local"]), "reason"),
 		})
 	}
 	if len(input) == 0 {

@@ -9,11 +9,14 @@ async function composeSearch(page, selector, pinyin, committed) {
     const observer = new MutationObserver(() => { window.__imeRenderCount++; });
     observer.observe(document.querySelector('#view'), { childList: true, subtree: true });
     window.__imeObserver = observer;
+  });
+  await page.locator(selector).evaluate((input, text) => {
+    input.focus();
     input.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true, data: '' }));
     input.value = text;
     input.dispatchEvent(new InputEvent('input', { bubbles: true, data: text, isComposing: true, inputType: 'insertCompositionText' }));
   }, pinyin);
-  assert.equal(await page.evaluate(() => window.__imeNode === document.activeElement), true, `${selector} lost focus during composition`);
+  assert.equal(await page.evaluate(() => window.__imeNode === document.activeElement), true, `${selector} lost focus during composition: ${JSON.stringify(await page.evaluate(() => ({ active: document.activeElement?.outerHTML, composing: window.__imeNode?.isComposing, mutations: window.__imeRenderCount, page: state.page, search: state.search })))}`);
   assert.equal(await page.evaluate(() => window.__imeRenderCount), 0, `${selector} was rebuilt during composition`);
   await page.locator(selector).evaluate((input, text) => {
     input.value = text;
@@ -34,14 +37,18 @@ module.exports = async function verifyTaskSearchSort(page, scratch) {
     await refresh();
   });
 
-  await page.evaluate(() => navigate('inbox'));
+  await page.evaluate(() => { state.inboxMode = 'all'; state.category = 'all'; state.search = ''; return navigate('inbox'); });
   await page.waitForFunction(() => document.querySelector('#inbox-search'));
+  await page.locator('#inbox-search').focus();
   await composeSearch(page, '#inbox-search', 'gaoshu', '高数');
   assert.equal(await page.evaluate(() => state.search), '高数');
-  assert(await page.locator('.message-row').count() >= 1, 'Chinese inbox search returned no messages');
+  const messageCount = await page.locator('.message-row').count();
+  if (!messageCount) console.log('IME debug', await page.evaluate(() => ({ page: state.page, mode: state.inboxMode, source: state.source, category: state.category, search: state.search, messages: state.snapshot.messages })));
+  assert(messageCount >= 1, 'Chinese inbox search returned no messages');
 
   await page.evaluate(() => { state.search = ''; navigate('tasks'); });
   await page.waitForFunction(() => document.querySelector('#task-search'));
+  await page.locator('#task-search').focus();
   await composeSearch(page, '#task-search', 'gaoshu', '高数');
   assert.deepEqual(await page.locator('.task-card>h3').allTextContents(), ['高数中文作业']);
 

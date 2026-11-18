@@ -147,6 +147,7 @@
         const actions=node('.page-heading .actions');if(actions)actions.hidden=key==='history';
       }
       uiMotion.syncSegments();
+      window.agentUI?.fitHistory?.();
     };
     if(animate)uiMotion.swapPage(view,apply,{subsection:true});
     // The render-driven sync path must never move the viewport.

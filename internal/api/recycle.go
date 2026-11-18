@@ -124,8 +124,13 @@ func (s *Server) permanentDelete(ctx context.Context, db store.SQL, user, kind, 
 		event(ctx, db, user, "task.purge", id)
 	case "message":
 		one(ctx, db, "SELECT id FROM messages WHERE id=? AND user_id=? AND deleted_at IS NOT NULL", id, user)
-		exec(ctx, db, "DELETE FROM messages WHERE id=? AND user_id=?", id, user)
 		exec(ctx, db, "DELETE FROM analysis_jobs WHERE message_id=? AND user_id=?", id, user)
+		exec(ctx, db, "DELETE FROM analysis_batch_items WHERE message_id=?", id)
+		for _, row := range query(ctx, db, "SELECT id FROM message_media WHERE message_id=? AND user_id=?", id, user) {
+			paths = append(paths, s.blob(str(row, "id")))
+		}
+		exec(ctx, db, "DELETE FROM message_media WHERE message_id=? AND user_id=?", id, user)
+		exec(ctx, db, "DELETE FROM messages WHERE id=? AND user_id=?", id, user)
 		event(ctx, db, user, "message.purge", id)
 	case "file":
 		one(ctx, db, "SELECT id FROM attachments WHERE id=? AND user_id=? AND deleted_at IS NOT NULL", id, user)

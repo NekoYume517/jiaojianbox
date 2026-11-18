@@ -167,7 +167,7 @@ func TestFilesMaterialMatchingAndPortableMigration(t *testing.T) {
 		t.Fatal(replayed)
 	}
 }
-func TestImmediateAutomaticAnalysisAndLenientModelOutput(t *testing.T) {
+func TestManualAnalysisSupportsLenientModelOutput(t *testing.T) {
 	s := testServer(t)
 	token, _ := login(t, s, "student")
 	release := make(chan struct{})
@@ -189,25 +189,25 @@ func TestImmediateAutomaticAnalysisAndLenientModelOutput(t *testing.T) {
 			close(release)
 		}
 	}()
-	code, out := call(t, s, "PUT", "/api/settings/llm", token, Object{"base_url": upstream.URL, "model": "fixture", "auto_analyze": true})
+	code, out := call(t, s, "PUT", "/api/settings/llm", token, Object{"base_url": upstream.URL, "model": "fixture", "auto_analyze": false})
 	if code != 200 {
 		t.Fatal(out)
 	}
 	_, message := call(t, s, "POST", "/api/messages", token, Object{"source": "qq", "account_id": "1", "conversation_id": "g1", "external_id": "1", "text": "11月20日提交报告", "sent_at": "2026-11-07T12:00:00+08:00"})
-	if !boolean(message, "analysis_pending") {
-		t.Fatal("not pending on ingestion", message)
-	}
+	resultCh := make(chan Object, 1)
+	go func() {
+		_, result := call(t, s, "POST", "/api/analyze", token, Object{"message_id": str(message, "id")})
+		resultCh <- result
+	}()
 	select {
 	case <-started:
 	case <-time.After(4 * time.Second):
-		t.Fatal("worker did not start")
-	}
-	_, snapshot := call(t, s, "GET", "/api/snapshot", token, nil)
-	if str(first(objects(snapshot["messages"])), "analysis_state") != "running" {
-		t.Fatal(snapshot)
+		t.Fatal("manual analysis did not start")
 	}
 	close(release)
+	<-resultCh
 	deadline := time.Now().Add(4 * time.Second)
+	_, snapshot := call(t, s, "GET", "/api/snapshot", token, nil)
 	for time.Now().Before(deadline) {
 		_, snapshot = call(t, s, "GET", "/api/snapshot", token, nil)
 		m := first(objects(snapshot["messages"]))

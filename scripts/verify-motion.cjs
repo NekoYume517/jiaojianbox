@@ -15,10 +15,17 @@ module.exports = async function verifyMotion(page, scratch) {
   });
   assert.equal(await page.locator('.nav-highlight').count(), 1);
   const create = page.locator('#view [data-action="new-task"]').filter({ visible: true });
+  await create.scrollIntoViewIfNeeded();
   const box = await create.boundingBox();
+  await page.evaluate(() => uiMotion.usePointerInput());
   await page.mouse.move(box.x+box.width/2, box.y+box.height/2); await page.mouse.down();
   await page.waitForTimeout(90);
-  assert.notEqual(await create.evaluate(el => getComputedStyle(el).transform), 'none');
+  const pressedState = await create.evaluate(el => ({
+    active: el.matches(':active'),
+    inputMethod: document.documentElement.dataset.inputMethod,
+    transform: getComputedStyle(el).transform,
+  }));
+  assert.notEqual(pressedState.transform, 'none', JSON.stringify(pressedState));
   await page.mouse.up(); await page.locator('#task-dialog').waitFor({state:'visible'});
   await page.locator('#task-title').fill('动画中断后保留的草稿');
   // Cancel a close with a new open before its completion callback can run.
@@ -57,7 +64,7 @@ module.exports = async function verifyMotion(page, scratch) {
   await trigger.click(); const bounds=await menu.boundingBox(); assert(bounds.x>=0&&bounds.x+bounds.width<=390);
   await page.keyboard.press('Escape');
   // The command palette follows the same modal entry and exit choreography.
-  await page.keyboard.press('Control+k');
+  await page.evaluate(() => { uiMotion.usePointerInput(); cmdkShow(); });
   await page.locator('#cmdk-backdrop').waitFor({state:'visible'});
   assert(await page.locator('#cmdk-backdrop').evaluate(el=>el.classList.contains('show')));
   assert(await page.locator('#cmdk-backdrop .cmdk').evaluate(el=>el.getAnimations().some(a=>a.playState==='running')));
@@ -114,6 +121,7 @@ module.exports = async function verifyMotion(page, scratch) {
   // Mobile command palette stays between the app bar and bottom navigation, with only the list scrolling.
   for(const width of [320,360,390,412]){
     await page.setViewportSize({width,height:480});
+    await page.evaluate(()=>scrollTo(0,document.scrollingElement.scrollHeight));
     await page.evaluate(()=>cmdkShow());
     await page.locator('#cmdk-input').waitFor({state:'visible'});
     const geometry=await page.evaluate(()=>{
@@ -129,6 +137,7 @@ module.exports = async function verifyMotion(page, scratch) {
     assert(geometry.list.clientHeight>0&&geometry.list.scrollHeight>geometry.list.clientHeight,`command result list does not scroll internally at ${width}px`);
     assert(Math.abs(geometry.list.y-(geometry.input.y+geometry.input.height))<1,`command search must remain fixed above the result list at ${width}px`);
     await page.evaluate(()=>cmdkHide());
+    await page.locator('#cmdk-backdrop').waitFor({state:'hidden'});
   }
   await page.setViewportSize({width:1280,height:860});
   // The command input stays above its scrolling results without a clipped focus ring.

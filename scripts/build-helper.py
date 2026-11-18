@@ -25,6 +25,8 @@ wcdb_data = ['--add-data', f'{wcdb}{os.pathsep}runtime/wcdb'] if wcdb.is_dir() e
 jobs = [
     ['--name', 'collector-agent', '--paths', str(root), '--paths', str(root / 'runtime-vendor' / 'wechatauto-replica'),
      '--hidden-import', 'wechatauto.db', '--hidden-import', 'collector.wcdb_reader',
+     '--hidden-import', 'wechatauto.media',
+     '--hidden-import', 'imageio_ffmpeg',
      '--hidden-import', 'collector.wcdb_client', '--hidden-import', 'psutil',
      '--hidden-import', 'zstandard', *wcdb_data,
      str(root / 'build' / 'collector_entry.py')],

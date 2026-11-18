@@ -479,7 +479,7 @@ function inboxView() {
   const pendingDigest = digestableMessages().length;
   const toggle = `<div class="chart-mode" role="tablist" aria-label="通知视图"><button type="button" role="tab" data-inbox-mode="digest" class="${mode === 'digest' ? 'on' : ''}" aria-selected="${mode === 'digest'}">摘要</button><button type="button" role="tab" data-inbox-mode="all" class="${mode === 'all' ? 'on' : ''}" aria-selected="${mode === 'all'}">全部消息</button></div>`;
   const digestSection = digests.length ? `<div class="digest-list ${state.firstRenderDone ? '' : 'stagger'}">${digests.map(d => `<div class="${state.firstRenderDone ? '' : 'stagger-item'}">${digestRow(d)}</div>`).join('')}</div>` : '';
-  const messageRows = messages.length ? messages.map(m => `<article class="message-row ${state.firstRenderDone ? '' : 'stagger-item'} ${state.selected === m.id && !state.selectedDigest ? 'selected' : ''} ${m.isNew ? 'flash' : ''}" data-message="${esc(m.id)}" tabindex="0" role="button" aria-label="查看 ${esc(m.conversation_name)} 的消息"><div class="message-body"><div class="message-meta">${sourceTag(m.source)}<strong>${esc(m.conversation_name || '手动通知')}</strong><time>${formatDate(m.sent_at)}</time></div><div class="message-excerpt">${esc(pretty(m.text))}</div><div class="message-bottom">${tag(...messageClass(m))}${m.analysis ? confidenceChip(m.analysis.confidence) : ''}<span class="sender">${esc(m.sender_name || '我')}</span></div></div><div class="row-actions"><button data-row-action="message-task" data-id="${esc(m.id)}">建待办</button><button data-row-action="ignore-message" data-id="${esc(m.id)}" class="danger-hover">忽略</button><button data-row-action="delete-message" data-id="${esc(m.id)}" class="danger-hover">移入回收站</button></div></article>`).join('') : '';
+  const messageRows = messages.length ? messages.map(m => `<article class="message-row ${state.firstRenderDone ? '' : 'stagger-item'} ${state.selected === m.id && !state.selectedDigest ? 'selected' : ''} ${m.isNew ? 'flash' : ''}" data-message="${esc(m.id)}" tabindex="0" role="button" aria-label="查看 ${esc(m.conversation_name)} 的消息"><div class="message-body"><div class="message-meta">${sourceTag(m.source)}<strong>${esc(m.conversation_name || '手动通知')}</strong><time>${formatDate(m.sent_at)}</time></div><div class="message-excerpt">${esc(pretty(m.text))}</div><div class="message-bottom">${tag(...messageClass(m))}${m.analysis ? confidenceChip(m.analysis.confidence) : ''}<span class="sender">${esc(messageSender(m))}</span></div></div><div class="row-actions"><button data-row-action="message-task" data-id="${esc(m.id)}">建待办</button><button data-row-action="ignore-message" data-id="${esc(m.id)}" class="danger-hover">忽略</button><button data-row-action="delete-message" data-id="${esc(m.id)}" class="danger-hover">移入回收站</button></div></article>`).join('') : '';
   const messageSection = messageRows ? `<div class="message-list ${state.firstRenderDone ? '' : 'stagger'}">${messageRows}</div>` : '';
   const emptyState = !digests.length && !messages.length ? empty('暂无通知', state.search ? '换个关键词或筛选条件试试。' : '连接 QQ / 微信，或先粘贴一条通知。', '<button class="primary" data-action="paste">添加第一条通知</button>') : '';
   const counts = triageSummary();
@@ -512,7 +512,7 @@ function messageDetail(m) {
   const pending = !result && m.triage !== 'ignored' && !!m.analysis_pending;
   const working = busy || pending;
   const title = result?.title || pretty((m.text.split('\n').find(l=>l.trim()&&!l.trim().endsWith('：')&&!l.trim().endsWith(':')) || m.text.split('\n')[0] || '消息详情')).slice(0, 90);
-  return `<div class="panel-head"><h3>通知详情</h3><span class="helper">原文保留</span></div><div class="detail-content"><button class="link mobile-back" data-action="back-inbox">← 返回消息列表</button><div class="detail-meta">${sourceTag(m.source)}<span class="helper">${formatDate(m.sent_at)}</span></div><h2 class="detail-title">${esc(title)}</h2><div class="detail-byline">${esc(m.conversation_name)} · ${esc(m.sender_name || '我')}</div><div class="message-original">${esc(pretty(m.text))}${m.metadata?.quote ? '\n\n引用 ' + esc(m.metadata.quote.sender) + '：\n' + esc(m.metadata.quote.text) : ''}</div><div class="analysis-box"><div class="analysis-top"><h3>通知分析</h3>${working ? tag(pending && m.analysis_state === 'retrying' ? '等待重试' : '分析中', 'orange') : result ? `<small>${esc(result.model)}</small>` : m.analysis_error ? tag('分析失败', 'red') : tag('待分析', 'orange')}</div>${busy ? window.liveAnalysis?.markup('message:'+m.id)||'<p class="helper">正在结合上下文分析…</p>' : pending ? '<p class="helper" role="status">' + (m.analysis_state === 'running' ? '正在结合上下文自动分析，完成后会自动显示结果。' : m.analysis_state === 'retrying' ? '本次分析未完成，已加入自动重试队列。' : '正在自动分析，已加入队列，轮到这条消息后会立即处理。') + '</p>' : result ? `<div class="pill-row">${tag(...classifications[result.classification])}${confidenceChip(result.confidence)}${m.auto_task_id&&state.snapshot.tasks.some(t=>t.id===m.auto_task_id)?tag(result.auto_task_action==='appended'?'已追加到待办':result.auto_task_action==='matched'?'已关联待办':'已自动建待办','blue'):''}</div><p>${esc(result.summary)}</p>${result.due_at ? `<p>截止：${formatDate(result.due_at)}</p>` : ''}${result.requirements.length ? `<p>材料：${result.requirements.map(r => esc(r.label)).join('、')}</p>` : ''}<div class="analysis-reason">${esc(result.reason)}${result.notes?.length ? '<br>' + result.notes.map(esc).join('<br>') : ''}<br>使用当前聊天的会话上下文</div>${evidenceQuote(m)}${window.liveAnalysis?.performance(result)||''}` : m.analysis_error ? `<p class="error">${esc(m.analysis_error)}</p><p class="helper">请检查模型连接和配置，然后重试分析。</p>` : `<p>使用你在设置里配置的 AI，区分通知与闲聊，并提取可确认的待办草稿。</p>`}</div><div class="detail-actions"><button class="primary" data-action="analyze" ${working ? 'disabled' : ''}>${working ? '正在分析…' : m.analysis_error ? '重试分析' : result ? '重新分析' : '使用 AI 分析'}</button>${busy?'<button class="secondary" data-action="cancel-analysis">停止分析</button>':''}<button class="secondary" data-action="message-task">生成待办草稿</button><button class="plain-button" data-action="ignore-message">${m.triage === 'ignored' ? '恢复消息' : '忽略这条'}</button><button class="plain-button danger-button" data-action="delete-message">移入回收站</button></div>${related.length ? `<details class="context-list"><summary>查看同会话的最近上下文（${related.length}）</summary>${related.map(x => `<div class="context-message"><small>${esc(x.sender_name)} · ${formatDate(x.sent_at)}</small><p>${esc(x.text)}</p></div>`).join('')}</details>` : ''}</div>`;
+  return `<div class="panel-head"><h3>通知详情</h3><span class="helper">原文保留</span></div><div class="detail-content"><button class="link mobile-back" data-action="back-inbox">← 返回消息列表</button><div class="detail-meta">${sourceTag(m.source)}<span class="helper">${formatDate(m.sent_at)}</span></div><h2 class="detail-title">${esc(title)}</h2><div class="detail-byline">${esc(m.conversation_name)} · ${esc(messageSender(m))}</div><div class="message-original">${esc(pretty(m.text))}${m.metadata?.quote ? '\n\n引用 ' + esc(m.metadata.quote.sender) + '：\n' + esc(m.metadata.quote.text) : ''}</div>${messageMediaMarkup(m, true)}<div class="analysis-box"><div class="analysis-top"><h3>通知分析</h3>${working ? tag(pending && m.analysis_state === 'retrying' ? '等待重试' : '分析中', 'orange') : result ? `<small>${esc(result.model)}</small>` : m.analysis_error ? tag('分析失败', 'red') : tag('待分析', 'orange')}</div>${busy ? window.liveAnalysis?.markup('message:'+m.id)||'<p class="helper">正在结合上下文分析…</p>' : pending ? '<p class="helper" role="status">' + (m.analysis_state === 'running' ? '正在结合上下文自动分析，完成后会自动显示结果。' : m.analysis_state === 'retrying' ? '本次分析未完成，已加入自动重试队列。' : '正在自动分析，已加入队列，轮到这条消息后会立即处理。') + '</p>' : result ? `<div class="pill-row">${tag(...classifications[result.classification])}${confidenceChip(result.confidence)}${m.auto_task_id&&state.snapshot.tasks.some(t=>t.id===m.auto_task_id)?tag(result.auto_task_action==='appended'?'已追加到待办':result.auto_task_action==='matched'?'已关联待办':'已自动建待办','blue'):''}</div><p>${esc(result.summary)}</p>${result.due_at ? `<p>截止：${formatDate(result.due_at)}</p>` : ''}${result.requirements.length ? `<p>材料：${result.requirements.map(r => esc(r.label)).join('、')}</p>` : ''}<div class="analysis-reason">${result.image_analyzed ? '<span class="tag green">已读取图片</span>' : ''}${esc(result.reason)}${result.notes?.length ? '<br>' + result.notes.map(esc).join('<br>') : ''}<br>使用当前聊天的会话上下文</div>${evidenceQuote(m)}${window.liveAnalysis?.performance(result)||''}` : m.analysis_error ? `<p class="error">${esc(m.analysis_error)}</p><p class="helper">请检查模型连接和配置，然后重试分析。</p>` : `<p>使用你在设置里配置的 AI，区分通知与闲聊，并提取可确认的待办草稿。</p>`}</div><div class="detail-actions"><button class="primary" data-action="analyze" ${working ? 'disabled' : ''}>${working ? '正在分析…' : m.analysis_error ? '重试分析' : result ? '重新分析' : '使用 AI 分析'}</button>${busy?'<button class="secondary" data-action="cancel-analysis">停止分析</button>':''}<button class="secondary" data-action="message-task">生成待办草稿</button><button class="plain-button" data-action="ignore-message">${m.triage === 'ignored' ? '恢复消息' : '忽略这条'}</button><button class="plain-button danger-button" data-action="delete-message">移入回收站</button></div>${related.length ? `<details class="context-list"><summary>查看同会话的最近上下文（${related.length}）</summary>${related.map(x => `<div class="context-message"><small>${esc(x.sender_name)} · ${formatDate(x.sent_at)}</small><p>${esc(x.text)}</p></div>`).join('')}</details>` : ''}</div>`;
 }
 const startOfDay = value => { const d = new Date(value); return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime(); };
 function dueBadge(value) {
@@ -698,6 +698,7 @@ function render() {
   window.statistics?.unmount();
   $('#view').innerHTML = state.page.startsWith('plugin:') ? '<div id=plugin-page></div>' : state.page === 'sources' && window.experience ? experience.sourcesView() : ({ files:()=>window.shelf?.page()||'', inbox: inboxView, tasks: tasksView, shares:()=>window.shares?.page()||'', sources: sourcesView, settings: settingsView,plugins:()=>window.pluginUI?.page()||'',stats:()=>window.statistics.page() })[state.page]();
   hydrateIcons(); updateCounts(); syncLocationHash();
+  loadMessageImages($('#view'));
   $('#view').dataset.viewKey = viewKey;
   $('#view').scrollTop = scrollTop;
   uiMotion.syncNavigation();
@@ -730,6 +731,7 @@ function renderDetailOnly(messageId) {
   const message = state.snapshot.messages.find(m => m.id === messageId);
   holder.innerHTML = message ? messageDetail(message) : empty('先选一条消息', '通知原文、上下文和分析结果会显示在这里。');
   hydrateIcons();
+  loadMessageImages(holder);
 }
 async function navigate(page) {
   if(state.page==='sources'&&page!=='sources'&&!window.experience?.confirmLeaveSources())return false;
@@ -1213,15 +1215,19 @@ function cmdkRender() {
 }
 function syncCommandPaletteBounds() {
   if (innerWidth > 620) return;
-  const topbar = $('.main .topbar'), nav = $('.workspace > .sidebar');
+  const topbar = $('#workspace .main .topbar'), nav = $('#workspace > .sidebar');
   const viewport = window.visualViewport;
   const height = Math.round(viewport?.height || innerHeight || 0);
   const offsetTop = Math.round(viewport?.offsetTop || 0);
   const root = document.documentElement.style;
   if (height > 0) root.setProperty('--jjb-viewport-height', height + 'px');
   root.setProperty('--jjb-viewport-offset-top', offsetTop + 'px');
-  if (topbar) root.setProperty('--jjb-mobile-topbar-bottom', Math.ceil(topbar.getBoundingClientRect().bottom) + 'px');
-  if (nav) root.setProperty('--jjb-mobile-nav-offset', Math.ceil(innerHeight - nav.getBoundingClientRect().top) + 'px');
+  const topbarBottom = topbar ? Math.ceil(topbar.getBoundingClientRect().bottom - offsetTop) : 0;
+  root.setProperty('--jjb-mobile-topbar-bottom', Math.min(Math.max(topbarBottom, 0), height) + 'px');
+  if (nav) {
+    const navOffset = Math.ceil(nav.getBoundingClientRect().height);
+    root.setProperty('--jjb-mobile-nav-offset', Math.min(Math.max(navOffset, 0), height) + 'px');
+  }
 }
 function cmdkShow() {
   if (!state.session || cmdkOpen || document.querySelector('dialog[open]')) return;
@@ -1229,10 +1235,10 @@ function cmdkShow() {
   cmdkReturnFocus=document.activeElement;
   $('#workspace').inert=true;document.body.classList.add('cmdk-open');
   cmdkOpen = true; state.cmdkIndex = 0; cmdkItems = cmdkFilter('');
-  syncCommandPaletteBounds();
   const backdrop = $('#cmdk-backdrop');
   const panel = backdrop.querySelector('.cmdk');
   backdrop.hidden = false;
+  syncCommandPaletteBounds();
   $('#cmdk-input').value = ''; cmdkRender(); $('#cmdk-input').focus();
   if (window.uiMotion) return uiMotion.openSurface(panel, backdrop);
   backdrop.classList.add('show');

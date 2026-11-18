@@ -18,6 +18,7 @@ const path=require('node:path'),fs=require('node:fs/promises'),net=require('node
     await require('./verify-inbox-actions.cjs')(page);
     await require('./verify-productivity-layout.cjs')(page);
     await require('./verify-task-search-sort.cjs')(page,scratch);
+    await require('./verify-message-media-browser.cjs');
     await require('./verify-motion.cjs')(page,scratch);await require('./verify-auth-browser.cjs')(browser,base,scratch);
     await require('./verify-shares.cjs')(page,browser,base,scratch);
     await require('./verify-collection-studio.cjs')(page,browser,scratch);

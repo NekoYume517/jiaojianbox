@@ -25,7 +25,7 @@ func endpoint(base, action string) string {
 	return base + "/" + action
 }
 func defaultLLM() Object {
-	return Object{"service_mode": "", "base_url": "", "model": "", "context_count": 12, "context_window_tokens": defaultModelContextWindow, "auto_analyze": false, "vision_enabled": false, "batch_triage": true, "local_triage": true, "include_keywords": "", "exclude_keywords": "", "instruction": ""}
+	return Object{"service_mode": "", "base_url": "", "model": "", "context_count": 12, "context_window_tokens": defaultModelContextWindow, "auto_analyze": false, "vision_enabled": false, "batch_triage": false, "local_triage": true, "include_keywords": "", "exclude_keywords": "", "instruction": ""}
 }
 func (s *Server) llmConfig(ctx context.Context, user string) (Object, string) {
 	config := defaultLLM()
@@ -90,11 +90,14 @@ func notify(p progress, value Object) {
 }
 func compactMessage(m Object) Object {
 	out := Object{}
-	for _, k := range []string{"id", "source", "conversation_name", "sender_name", "sent_at", "text"} {
+	for _, k := range []string{"id", "source", "conversation_name", "sender_name", "sender_id", "sent_at", "text", "direction", "is_self", "message_type", "message_type_label"} {
 		out[k] = m[k]
 	}
 	if q := object(m["metadata"])["quote"]; q != nil {
 		out["quote"] = q
+	}
+	if media := object(m["media"]); len(media) > 0 {
+		out["image"] = Object{"available": str(media, "status") == "ready", "status": media["status"], "tier": media["tier"]}
 	}
 	return out
 }
@@ -575,6 +578,8 @@ func (s *Server) recordLLM(ctx context.Context, user, kind string, config Object
 	if duration == nil {
 		duration = time.Since(started).Milliseconds()
 	}
+	s.batchWriteMu.Lock()
+	defer s.batchWriteMu.Unlock()
 	exec(ctx, s.Store.DB, "INSERT INTO llm_calls(id,user_id,kind,model,status,started_at,duration_ms,first_token_ms,prompt_tokens,completion_tokens,total_tokens,http_status,usage_reported,streamed,managed) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", store.ID(), user, kind, str(config, "model"), status, started.UTC().Format(time.RFC3339Nano), duration, metrics["first_token_ms"], metrics["prompt_tokens"], metrics["completion_tokens"], metrics["total_tokens"], metrics["http_status"], boolean(metrics, "usage_reported"), boolean(metrics, "streamed"), boolean(config, "managed"))
 	if success && boolean(config, "managed") && boolean(metrics, "usage_reported") {
 		s.aiSpend(ctx, user, num(metrics, "total_tokens"))

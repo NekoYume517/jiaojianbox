@@ -11,7 +11,7 @@ import (
 )
 
 const (
-	triageIdleMinutes = 3
+	triageIdleMinutes = 1
 	triageMaxWait     = 20 * time.Minute
 	triageGroupsPass  = 24
 	triageRetryDelay  = 2 * time.Minute
@@ -144,9 +144,8 @@ func (s *Server) applyTriage(ctx context.Context, group triageGroup, verdicts ma
 			label := str(verdict, "verdict")
 			if label == "actionable" && num(verdict, "confidence") >= 0.5 {
 				// 第三层：只把批判断为 actionable 的消息送进深度分析。
-				exec(ctx, db, "INSERT OR IGNORE INTO analysis_jobs(user_id,message_id) VALUES(?,?)", group.User, id)
-				current["analysis_pending"] = true
-				current["analysis_state"] = "queued"
+				config := store.Payload(first(query(ctx, db, "SELECT payload FROM llm_settings WHERE user_id=?", group.User)))
+				s.scheduleNotificationWindow(ctx, db, group.User, current, config)
 			} else {
 				// Older pending messages may already have both queues. Retire
 				// them together so trigger history cannot show a ghost task.

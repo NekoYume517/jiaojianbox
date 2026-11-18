@@ -229,6 +229,7 @@ func (s *Server) messages(ctx context.Context, db store.SQL, rows []Object) []Ob
 	marks := []string{}
 	for _, row := range rows {
 		o := store.Payload(row)
+		o["user_id"] = row["user_id"]
 		out = append(out, o)
 		args = append(args, o["id"])
 		marks = append(marks, "?")
@@ -237,7 +238,23 @@ func (s *Server) messages(ctx context.Context, db store.SQL, rows []Object) []Ob
 	for _, j := range query(ctx, db, "SELECT message_id,state,attempts,error FROM analysis_jobs WHERE message_id IN ("+strings.Join(marks, ",")+")", args...) {
 		jobs[str(j, "message_id")] = j
 	}
+	media := map[string]Object{}
+	mediaArgs := []any{}
+	for _, row := range rows {
+		mediaArgs = append(mediaArgs, row["user_id"])
+		break
+	}
+	mediaArgs = append(mediaArgs, args...)
+	for _, row := range query(ctx, db, "SELECT id,message_id,mime,size FROM message_media WHERE user_id=? AND message_id IN ("+strings.Join(marks, ",")+") ORDER BY rowid", mediaArgs...) {
+		id := str(row, "message_id")
+		if media[id] == nil {
+			media[id] = Object{"id": row["id"], "kind": "image", "status": "ready", "mime": row["mime"], "size": row["size"]}
+		}
+	}
 	for _, m := range out {
+		if item := media[str(m, "id")]; item != nil {
+			m["media"] = item
+		}
 		delete(m, "analysis_pending")
 		delete(m, "analysis_state")
 		if str(m, "triage_state") == "pending" {
@@ -262,6 +279,10 @@ func (s *Server) messages(ctx context.Context, db store.SQL, rows []Object) []Ob
 				m["analysis_state"] = state
 			}
 			m["analysis_pending"] = choice(state, "queued", "running")
+			if state == "batch" {
+				m["analysis_pending"] = true
+				m["analysis_state"] = "running"
+			}
 			if str(job, "error") != "" {
 				m["analysis_error"] = job["error"]
 			}
@@ -296,7 +317,7 @@ func (s *Server) snapshot(ctx context.Context, user string) any {
 	return s.transaction(ctx, func(db store.SQL) any {
 		cursor := one(ctx, db, "SELECT COALESCE(MAX(seq),0) AS cursor FROM events WHERE user_id=?", user)
 		tasks := s.allTasks(ctx, db, user)
-		messages := s.messages(ctx, db, query(ctx, db, "SELECT payload FROM messages WHERE user_id=? AND deleted_at IS NULL ORDER BY rowid DESC LIMIT 200", user))
+		messages := s.messages(ctx, db, query(ctx, db, "SELECT payload,user_id FROM messages WHERE user_id=? AND deleted_at IS NULL ORDER BY rowid DESC LIMIT 200", user))
 		digests := []Object{}
 		for _, row := range query(ctx, db, "SELECT payload FROM digests WHERE user_id=? ORDER BY rowid DESC LIMIT 40", user) {
 			digests = append(digests, store.Payload(row))
@@ -326,10 +347,10 @@ func (s *Server) messageRoutes() {
 		}
 		q += " ORDER BY rowid DESC LIMIT ?"
 		args = append(args, r.integer("limit", 100, 1, 200))
-		return s.messages(r.Context(), s.Store.DB, query(r.Context(), s.Store.DB, q, args...))
+		return s.messages(r.Context(), s.Store.DB, query(r.Context(), s.Store.DB, strings.Replace(q, "SELECT payload FROM", "SELECT payload,user_id FROM", 1), args...))
 	})
 	s.route("POST /api/messages", "owner", func(r request) any {
-		b := r.body()
+		b, imageHeader := messageInput(r)
 		for _, key := range []string{"source", "account_id", "conversation_id", "external_id", "sent_at"} {
 			if str(b, key) == "" {
 				fail(422, "消息缺少字段："+key)
@@ -337,6 +358,14 @@ func (s *Server) messageRoutes() {
 		}
 		if !choice(str(b, "source"), "qq", "wechat", "manual") {
 			fail(422, "消息来源无效")
+		}
+		if b["is_self"] != nil {
+			if _, ok := b["is_self"].(bool); !ok {
+				fail(422, "消息发送人方向无效")
+			}
+		}
+		if !choice(fallback(str(b, "direction"), "unknown"), "self", "other", "system", "unknown") {
+			fail(422, "消息发送人方向无效")
 		}
 		for key, limit := range map[string]int{"account_id": 150, "conversation_id": 200, "external_id": 200, "conversation_name": 200, "sender_name": 200, "sender_id": 200, "text": 30000, "message_type": 50} {
 			if len([]rune(str(b, key))) > limit {
@@ -351,6 +380,8 @@ func (s *Server) messageRoutes() {
 		if len(store.JSON(b["metadata"])) > 20000 {
 			fail(422, "附加信息过大")
 		}
+		s.batchWriteMu.Lock()
+		defer s.batchWriteMu.Unlock()
 		return s.transaction(r.Context(), func(db store.SQL) any {
 			parts := []string{}
 			for _, k := range []string{"source", "account_id", "conversation_id", "external_id"} {
@@ -378,6 +409,13 @@ func (s *Server) messageRoutes() {
 			}
 			m["message_type"] = fallback(str(m, "message_type"), "text")
 			m["metadata"] = object(b["metadata"])
+			m["direction"] = fallback(str(b, "direction"), "unknown")
+			if b["is_self"] != nil {
+				m["is_self"] = boolean(b, "is_self")
+			} else if m["direction"] == "self" || m["direction"] == "other" {
+				m["is_self"] = m["direction"] == "self"
+			}
+			m["message_type_label"] = fallback(str(b, "message_type_label"), str(m, "message_type"))
 			m["id"] = store.ID()
 			m["created_at"] = store.Now()
 			m["draft"] = extract(str(m, "text"), sent)
@@ -394,20 +432,15 @@ func (s *Server) messageRoutes() {
 			if verdict.Verdict == "noise" {
 				m["triage"] = "ignored"
 			}
-			if settings != nil && verdict.Verdict != "noise" && eligible(config, str(m, "text")) {
-				if verdict.Verdict == "unknown" && boolean(config, "batch_triage") {
-					// Queue only the lightweight triage step. Analysis and Agent
-					// runs are created after the batch verdict is actionable.
-					m["triage_state"] = "pending"
-				} else {
-					exec(r.Context(), db, "INSERT OR IGNORE INTO analysis_jobs(user_id,message_id) VALUES(?,?)", r.User, str(m, "id"))
-					sessionID := s.ensureConversationSession(r.Context(), db, r.User, m, agentContextLimitFromConfig(config))
-					s.queueAgentRun(r.Context(), db, r.User, "notification-"+str(m, "id"), sessionID, str(m, "id"))
-					m["analysis_pending"] = true
-					m["analysis_state"] = "queued"
-				}
-			}
 			exec(r.Context(), db, "INSERT INTO messages(id,user_id,dedup,payload,created_at) VALUES(?,?,?,?,?)", m["id"], r.User, dedup, store.JSON(m), m["created_at"])
+			if media := s.storeMessageImage(r, db, str(m, "id"), imageHeader, object(b["media"])); media != nil {
+				m["media"] = media
+				exec(r.Context(), db, "UPDATE messages SET payload=? WHERE id=? AND user_id=?", store.JSON(m), m["id"], r.User)
+			}
+			if settings != nil && verdict.Verdict != "noise" && eligible(config, str(m, "text")) {
+				s.scheduleNotificationWindow(r.Context(), db, r.User, m, config)
+				exec(r.Context(), db, "UPDATE messages SET payload=? WHERE id=? AND user_id=?", store.JSON(m), m["id"], r.User)
+			}
 			event(r.Context(), db, r.User, "message.upsert", str(m, "id"))
 			return m
 		})

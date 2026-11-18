@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -45,10 +46,12 @@ func TestFollowupTriggerQueueAndSettings(t *testing.T) {
 						return
 					}
 				}
-				result := Object{"classification": "actionable", "confidence": .96, "title": "3D建模电子版作业", "summary": "周五中午12点前提交电子版，纸质版下周二课前收", "due_at": "2026-11-13T12:00:00+08:00", "urgency": "high", "requirements": []any{}, "reason": "通知含明确任务"}
+				messages := objects(body["messages"])
+				parts := objects(object(messages[len(messages)-1])["content"])
+				input := decodeObject(str(object(parts[0]), "text"))
+				original := first(objects(input["MESSAGES"]))
+				result := Object{"id": original["id"], "classification": "actionable", "confidence": .96, "title": "3D建模电子版作业", "summary": "周五中午12点前提交电子版，纸质版下周二课前收", "due_at": "2026-11-13T12:00:00+08:00", "urgency": "high", "requirements": []any{}, "reason": "通知含明确任务"}
 				if n > 1 {
-					messages := objects(body["messages"])
-					input := decodeObject(str(messages[len(messages)-1], "content"))
 					tasks := objects(input["USER_TASKS"])
 					if len(tasks) > 0 {
 						sawFirstTask.Store(true)
@@ -63,7 +66,7 @@ func TestFollowupTriggerQueueAndSettings(t *testing.T) {
 					result["submit_url"] = "https://upload.bansonic.top/ITrGTlKl"
 					result["summary"] = "补充已有3D建模作业的提交链接"
 				}
-				writeJSON(w, 200, textCompletion(store.JSON(result)))
+				writeJSON(w, 200, textCompletion(store.JSON(Object{"items": []any{result}})))
 			}))
 			defer upstream.Close()
 			defer unblock()
@@ -78,6 +81,8 @@ func TestFollowupTriggerQueueAndSettings(t *testing.T) {
 				return m
 			}
 			first := ingest("requirements", "请大家于本周五中午12点前提交3D建模电子版作业，纸质版下周二图像处理课前收", "2026-11-12T10:39:00+08:00")
+			exec(context.Background(), s.Store.DB, "UPDATE analysis_batches SET ready_at=0 WHERE id=?", first["analysis_batch_id"])
+			s.wakeNotificationWorker()
 			permission := "restricted"
 			if autoTask {
 				permission = "full"
@@ -93,6 +98,8 @@ func TestFollowupTriggerQueueAndSettings(t *testing.T) {
 				t.Fatal("first analysis did not start")
 			}
 			second := ingest("link", "三维建模期中过程性考核1收集\nhttps://upload.bansonic.top/ITrGTlKl", "2026-11-12T10:42:00+08:00")
+			exec(context.Background(), s.Store.DB, "UPDATE analysis_batches SET ready_at=0 WHERE id=?", second["analysis_batch_id"])
+			s.wakeNotificationWorker()
 			time.Sleep(600 * time.Millisecond)
 			if requests.Load() != 1 {
 				t.Fatal("followup ran before first completed", requests.Load())

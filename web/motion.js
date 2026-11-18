@@ -450,6 +450,6 @@
     const deadline=setTimeout(()=>element.remove(),320);
     animation.finished.catch(()=>{}).finally(()=>{clearTimeout(deadline);element.remove();});
   }
-  window.uiMotion = { adoptSegment, relayout, openDialog, closeDialog, openSurface, closeSurface, syncNavigation, syncSegments, hideMenu, transitionPage, swapPage, revealSubnavigation, hideSubnavigation };
+  window.uiMotion = { adoptSegment, relayout, openDialog, closeDialog, openSurface, closeSurface, syncNavigation, syncSegments, hideMenu, transitionPage, swapPage, revealSubnavigation, hideSubnavigation, usePointerInput: () => { keyboard = false; document.documentElement.dataset.inputMethod = 'pointer'; } };
   syncSegments();
 })();
