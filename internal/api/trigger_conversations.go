@@ -46,7 +46,8 @@ func (s *Server) saveTriggerTurn(ctx context.Context, db store.SQL, user, id str
 	mid := str(message, "id")
 	now := store.Now()
 	created := fallback(str(message, "created_at"), now)
-	content := fmt.Sprintf("%s · %s\n%s", fallback(str(message, "sender_name"), "通知"), str(message, "sent_at"), str(message, "text"))
+	content := fmt.Sprintf("%s · %s · %s · %s\n%s", fallback(str(message, "sender_name"), "通知"),
+		fallback(str(message, "direction"), "unknown"), fallback(str(message, "message_type"), "text"), str(message, "sent_at"), str(message, "text"))
 	input := Object{"id": "trigger-user-" + mid, "role": "user", "content": content, "trigger": Object{"source": str(message, "source"), "message_id": mid}, "created_at": created}
 	exec(ctx, db, `INSERT INTO agent_messages(id,user_id,session_id,payload,summarized,created_at) VALUES(?,?,?,?,0,?) ON CONFLICT(id) DO NOTHING`, input["id"], user, id, store.JSON(input), created)
 	if len(analysis) == 0 {
@@ -77,7 +78,10 @@ func (s *Server) migrateConversationSessions(ctx context.Context, user string) {
 		rows := query(ctx, db, "SELECT * FROM agent_sessions WHERE user_id=? AND kind=? AND id NOT LIKE 'chat-%'", user, agentSessionNotification)
 		for _, row := range rows {
 			original := first(query(ctx, db, "SELECT payload FROM messages WHERE id=? AND user_id=?", str(row, "source_message_id"), user))
-			message := store.Payload(original)
+			var message Object
+			if original != nil {
+				message = store.Payload(original)
+			}
 			if original == nil {
 				message = Object{"id": str(row, "id"), "source": str(row, "trigger_source"), "account_id": str(row, "trigger_account"), "conversation_name": str(row, "trigger_conversation"), "conversation_id": fallback(str(row, "trigger_chat_id"), str(row, "trigger_conversation"))}
 			}

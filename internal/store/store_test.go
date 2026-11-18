@@ -118,7 +118,7 @@ func TestOpenRejectsDatabaseFromNewerSchema(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = s.DB.Exec("PRAGMA user_version = 2"); err != nil {
+	if _, err = s.DB.Exec("PRAGMA user_version = 3"); err != nil {
 		t.Fatal(err)
 	}
 	if err = s.Close(); err != nil {
@@ -127,6 +127,61 @@ func TestOpenRejectsDatabaseFromNewerSchema(t *testing.T) {
 	if reopened, err := Open(root); err == nil {
 		reopened.Close()
 		t.Fatal("opened a database written by a newer schema")
+	}
+}
+
+func TestLegacyAnalysisJobsColumnsMigrateWithoutLosingQueue(t *testing.T) {
+	t.Setenv("JJB_MASTER_KEY", base64.URLEncoding.EncodeToString(make([]byte, 32)))
+	root := t.TempDir()
+	db, err := sql.Open("sqlite", filepath.ToSlash(filepath.Join(root, "jiaojianbox.sqlite3")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, statement := range []string{
+		`CREATE TABLE users(id TEXT PRIMARY KEY, username TEXT UNIQUE COLLATE NOCASE, salt TEXT, password TEXT)`,
+		`CREATE TABLE attachments(id TEXT PRIMARY KEY, user_id TEXT, task_id TEXT, size INTEGER, sha256 TEXT)`,
+		`CREATE TABLE analysis_jobs(
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			user_id TEXT,
+			message_id TEXT UNIQUE,
+			state TEXT DEFAULT 'queued',
+			attempts INTEGER DEFAULT 0,
+			next_at REAL DEFAULT 0,
+			error TEXT DEFAULT '')`,
+		`INSERT INTO analysis_jobs(user_id,message_id,state) VALUES('legacy-user','legacy-message','queued')`,
+	} {
+		if _, err = db.Exec(statement); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err = db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	s, err := Open(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	columns := map[string]bool{}
+	rows, err := Query(context.Background(), s.DB, "PRAGMA table_info(analysis_jobs)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, row := range rows {
+		columns[Str(row, "name")] = true
+	}
+	if !columns["session_id"] || !columns["window_key"] {
+		t.Fatalf("legacy analysis_jobs columns not migrated: %v", columns)
+	}
+	old, err := One(context.Background(), s.DB, "SELECT user_id,message_id,state,session_id,window_key FROM analysis_jobs WHERE message_id='legacy-message'")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if Str(old, "user_id") != "legacy-user" || Str(old, "state") != "queued" || Str(old, "session_id") != "" || Str(old, "window_key") != "" {
+		t.Fatalf("legacy queued job changed during migration: %v", old)
+	}
+	if _, err = s.DB.Exec("UPDATE analysis_jobs SET session_id='chat-current',window_key='batch-current' WHERE message_id='legacy-message'"); err != nil {
+		t.Fatal(err)
 	}
 }
 

@@ -9,11 +9,12 @@ for name in ['python.exe','python3.dll','python313.dll','vcruntime140.dll','vcru
 for name in ['DLLs','Lib']:
     shutil.copytree(python_home/name,py/name,dirs_exist_ok=True,ignore=shutil.ignore_patterns('site-packages','__pycache__','test','tests'))
 site=py/'Lib'/'site-packages';site.mkdir(parents=True,exist_ok=True)
-subprocess.run([sys.executable,'-m','pip','install','--index-url','https://pypi.tuna.tsinghua.edu.cn/simple','--timeout','12','--retries','1','--disable-pip-version-check','--only-binary=:all:','--python-version','3.13','--platform','win_amd64','--implementation','cp','--abi','cp313','--target',str(site),'httpx==0.28.1','websockets==13.1','cryptography>=43,<47','psutil>=6,<8','pywin32>=305','zstandard>=0.19'],check=True)
+subprocess.run([sys.executable,'-m','pip','install','--index-url','https://pypi.tuna.tsinghua.edu.cn/simple','--timeout','12','--retries','1','--disable-pip-version-check','--only-binary=:all:','--python-version','3.13','--platform','win_amd64','--implementation','cp','--abi','cp313','--target',str(site),'httpx==0.28.1','websockets==13.1','cryptography>=43,<47','psutil>=6,<8','pywin32>=305','zstandard>=0.19','imageio-ffmpeg>=0.4.9,<1'],check=True)
 (site/'sitecustomize.py').write_text('import os,sys\nfrom pathlib import Path\np=Path(__file__).parent\nsys.path.insert(0,str(p/"win32"))\nif (p/"pywin32_system32").exists():\n    _dll=os.add_dll_directory(str(p/"pywin32_system32"))\n',encoding='utf-8')
 vendor=Path(os.environ.get('JJB_WECHAT_SOURCE') or (root/'runtime-vendor'/'wechatauto-replica')); target=site/'wechatauto';target.mkdir(exist_ok=True)
 (target/'__init__.py').write_text('"""Database-only distribution of wechatauto-replica 1.2.9 (Apache-2.0)."""\n',encoding='utf-8')
 shutil.copy2(vendor/'wechatauto'/'db.py',target/'db.py');
+shutil.copy2(vendor/'wechatauto'/'media.py',target/'media.py');
 db_source=(target/'db.py').read_text(encoding='utf-8');db_source=db_source.replace('            conns = [self._open(rel) for rel in self._message_dbs()]','            for rel in self._message_dbs():\n                conns.append(self._open(rel))');(target/'db.py').write_text(db_source,encoding='utf-8')
 shutil.copy2(vendor/'LICENSE',target/'LICENSE')
 (target/'logger.py').write_text('import logging\nwxlog=logging.getLogger("wechatauto.database")\n',encoding='utf-8')

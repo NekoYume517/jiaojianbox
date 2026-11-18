@@ -50,8 +50,8 @@ android {
         applicationId = "com.jiaojianbox.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 30
-        versionName = "0.6.24"
+        versionCode = 34
+        versionName = "0.6.26"
     }
     signingConfigs {
         if (stableKeystore != null && stableStorePassword != null) {

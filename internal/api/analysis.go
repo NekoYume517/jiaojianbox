@@ -3,7 +3,6 @@ package api
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"io"
 	"strings"
 	"time"
@@ -106,7 +105,14 @@ func (s *Server) runAnalysis(ctx context.Context, user string, body Object, p pr
 	}
 	triggerContextLimit := agentContextLimitFromConfig(config)
 	target := store.Payload(one(ctx, s.Store.DB, "SELECT payload FROM messages WHERE id=? AND user_id=?", id, user))
-	s.migrateConversationSessions(ctx, user)
+	targets := s.analysisBatch(ctx, s.Store.DB, user, id, body)
+	if len(targets) == 0 {
+		targets = []Object{target}
+	}
+	ids := map[string]bool{}
+	for _, item := range targets {
+		ids[str(item, "id")] = true
+	}
 	sessionID := ""
 	s.transaction(ctx, func(db store.SQL) any {
 		sessionID = s.ensureConversationSession(ctx, db, user, target, triggerContextLimit)
@@ -118,7 +124,12 @@ func (s *Server) runAnalysis(ctx context.Context, user string, body Object, p pr
 	unlock := s.lockConversationTurn(ctx, user, sessionID)
 	notify(p, Object{"stage": "starting"})
 	defer unlock()
-	s.transaction(ctx, func(db store.SQL) any { s.saveTriggerTurn(ctx, db, user, sessionID, target, nil); return nil })
+	s.transaction(ctx, func(db store.SQL) any {
+		for _, item := range targets {
+			s.saveTriggerTurn(ctx, db, user, sessionID, item, nil)
+		}
+		return nil
+	})
 	sessionState := agentSessionState(s.agentSession(ctx, s.Store.DB, user, sessionID))
 	sessionState["context_limit"] = triggerContextLimit
 	config["auto_task"] = str(sessionState, "permission") == "full"
@@ -137,7 +148,11 @@ func (s *Server) runAnalysis(ctx context.Context, user string, body Object, p pr
 	for _, row := range query(ctx, s.Store.DB, "SELECT payload FROM tasks WHERE user_id=? AND deleted_at IS NULL ORDER BY rowid DESC LIMIT 40", user) {
 		tasks = append(tasks, store.Payload(row))
 	}
-	payload := Object{"TARGET": []Object{compactMessage(target)}, "USER_TASKS": compactTasks(tasks)}
+	compactTargets := []Object{}
+	for _, item := range targets {
+		compactTargets = append(compactTargets, compactMessage(item))
+	}
+	payload := Object{"TARGET": compactTargets, "USER_TASKS": compactTasks(tasks), "TARGET_NOTE": "TARGET 按时间顺序包含本轮的全部原始消息。整体判断，合并补充同一任务，不要逐条重复建待办。"}
 
 	prompt := analysisPrompt
 	if instruction := str(config, "instruction"); instruction != "" {
@@ -148,12 +163,31 @@ func (s *Server) runAnalysis(ctx context.Context, user string, body Object, p pr
 		conversation = append(conversation, Object{"role": "system", "content": "历史事实摘要：\n" + summary})
 	}
 	for _, m := range messages {
-		if boolean(m, "summarized") || str(m, "id") == "trigger-user-"+id {
+		if boolean(m, "summarized") || ids[str(object(m["trigger"]), "message_id")] {
 			continue
 		}
 		conversation = append(conversation, Object{"role": str(m, "role"), "content": str(m, "content")})
 	}
-	conversation = append(conversation, Object{"role": "user", "content": store.JSON(payload)})
+	targetContent := any(store.JSON(payload))
+	imageIncluded := false
+	resultImageInfo := Object{}
+	parts := []any{Object{"type": "text", "text": targetContent}}
+	if boolean(config, "vision_enabled") {
+		for _, item := range targets {
+			if str(object(item["media"]), "status") == "ready" {
+				if media := s.messageMedia(ctx, s.Store.DB, user, str(item, "id")); media != nil {
+					image, info := prepareImage(s.blob(str(media, "id")))
+					parts = append(parts, Object{"type": "text", "text": "图片所属消息 ID：" + str(item, "id")}, image)
+					resultImageInfo = info
+					imageIncluded = true
+				}
+			}
+		}
+	}
+	if imageIncluded {
+		targetContent = parts
+	}
+	conversation = append(conversation, Object{"role": "user", "content": targetContent})
 	var schemas map[string]Object
 	check(json.Unmarshal([]byte(toolSchemaJSON), &schemas))
 	tools := []Object{}
@@ -220,6 +254,10 @@ func (s *Server) runAnalysis(ctx context.Context, user string, body Object, p pr
 	result["tools"] = toolEvents
 	result["at"] = store.Now()
 	result["model"] = config["model"]
+	result["image_analyzed"] = imageIncluded
+	for k, v := range resultImageInfo {
+		result[k] = v
+	}
 	contextIDs := []string{}
 	for _, m := range messages {
 		if !boolean(m, "summarized") && str(object(m["trigger"]), "message_id") != id && str(m, "role") == "user" {
@@ -293,15 +331,27 @@ func (s *Server) runAnalysis(ctx context.Context, user string, body Object, p pr
 				result["auto_task_action"] = action
 			}
 		}
-		current["analysis"] = result
-		delete(current, "analysis_error")
-		delete(current, "analysis_pending")
-		delete(current, "analysis_state")
-		s.saveTriggerTurn(ctx, db, user, sessionID, current, result)
 		result["session_id"] = sessionID
-		exec(ctx, db, "UPDATE messages SET payload=? WHERE id=? AND user_id=?", store.JSON(current), id, user)
-		exec(ctx, db, "UPDATE analysis_jobs SET state='done',error='' WHERE message_id=? AND state IN ('queued','running')", id)
-		event(ctx, db, user, "message.upsert", id)
+		sources := []any{}
+		for _, item := range targets {
+			item["analysis"] = result
+			delete(item, "analysis_error")
+			delete(item, "analysis_pending")
+			delete(item, "analysis_state")
+			if created != nil {
+				item["auto_task_id"] = created["id"]
+				item["auto_task_action"] = action
+			}
+			s.saveTriggerTurn(ctx, db, user, sessionID, item, result)
+			exec(ctx, db, "UPDATE messages SET payload=? WHERE id=? AND user_id=?", store.JSON(item), item["id"], user)
+			exec(ctx, db, "UPDATE analysis_jobs SET state='done',error='' WHERE message_id=? AND state IN ('queued','running')", item["id"])
+			event(ctx, db, user, "message.upsert", str(item, "id"))
+			sources = append(sources, taskSourceMessage(item))
+		}
+		if created != nil && len(targets) > 1 {
+			created["source_messages"] = sources
+			exec(ctx, db, "UPDATE tasks SET payload=? WHERE id=? AND user_id=?", store.JSON(created), created["id"], user)
+		}
 		return nil
 	})
 	if created != nil {
@@ -311,9 +361,6 @@ func (s *Server) runAnalysis(ctx context.Context, user string, body Object, p pr
 	runSuccess = true
 	return result
 }
-
-// analyzeWorker 以「会话窗口」为单位调度阶段分析：同一群一段时间内的
-// 消息只调用一次模型，由模型直接给出这段时间产生了几个任务。
 func (s *Server) analyzeWorker(ctx context.Context) {
 	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
@@ -323,49 +370,88 @@ func (s *Server) analyzeWorker(ctx context.Context) {
 			return
 		case <-ticker.C:
 			_, err := attempt(func() any {
-				users := query(ctx, s.Store.DB, `SELECT user_id,MIN(id) AS first_job
-					FROM analysis_jobs
-					WHERE state='queued' AND next_at<=?
-					GROUP BY user_id ORDER BY first_job LIMIT 1`, timestamp())
-				if len(users) == 0 {
+				var job Object
+				s.transaction(ctx, func(db store.SQL) any {
+					// 分层处理：只取不在分诊等待中的任务，避免深度分析抢在批量分诊之前。
+					job = first(query(ctx, db, `SELECT * FROM analysis_jobs WHERE state='queued' AND next_at<=?
+						AND NOT EXISTS (SELECT 1 FROM messages m WHERE m.id=analysis_jobs.message_id
+							AND json_extract(m.payload,'$.triage_state')='pending')
+						AND NOT EXISTS (SELECT 1 FROM analysis_jobs other WHERE other.user_id=analysis_jobs.user_id
+							AND other.session_id=analysis_jobs.session_id AND other.state='running')
+						AND NOT EXISTS (SELECT 1 FROM analysis_batch_items bi WHERE bi.message_id=analysis_jobs.message_id)
+						ORDER BY id LIMIT 1`, timestamp()))
+					if job != nil {
+						windowKey := fallback(str(job, "window_key"), str(job, "message_id"))
+						rows := query(ctx, db, "SELECT message_id FROM analysis_jobs WHERE user_id=? AND window_key=? AND state='queued' ORDER BY id", job["user_id"], windowKey)
+						ids := []any{}
+						for _, row := range rows {
+							ids = append(ids, row["message_id"])
+						}
+						exec(ctx, db, "UPDATE analysis_jobs SET state='running',attempts=attempts+1 WHERE user_id=? AND window_key=? AND state='queued'", job["user_id"], windowKey)
+						job["message_ids"] = ids
+						job["message_id"] = windowKey
+						event(ctx, db, str(job, "user_id"), "agent.run.upsert", str(job, "session_id"))
+					}
+					return nil
+				})
+				if job == nil {
 					return nil
 				}
-				user := str(users[0], "user_id")
-				groups := s.pendingStageGroups(ctx, user)
-				if len(groups) == 0 {
-					s.retireStaleJobs(ctx, user)
+				callCtx, stop := context.WithTimeout(ctx, 180*time.Second)
+				_, callErr := attempt(func() any {
+					return s.runAnalysis(callCtx, str(job, "user_id"), Object{"message_id": job["message_id"], "message_ids": job["message_ids"], "_automatic": true}, nil)
+				})
+				stop()
+				if ctx.Err() != nil {
 					return nil
 				}
-				for _, group := range groups {
-					if ctx.Err() != nil {
-						return nil
-					}
-					s.claimStageGroup(ctx, user, group)
-					callCtx, stop := context.WithTimeout(ctx, 300*time.Second)
-					outcome, callErr := func() (result stageOutcome, err error) {
-						defer func() {
-							if recovered := recover(); recovered != nil {
-								if e, ok := recovered.(error); ok {
-									err = e
-								} else {
-									err = fmt.Errorf("阶段分析失败")
-								}
-							}
-						}()
-						return s.runStageAnalysis(callCtx, user, group, nil)
-					}()
-					stop()
-					if ctx.Err() != nil {
-						return nil
-					}
-					if callErr != nil {
-						s.failStageGroup(ctx, user, group, "阶段分析暂不可用，稍后自动重试")
-						continue
-					}
-					if len(outcome.Missing) > 0 {
-						s.retryStageMissing(ctx, user, group, outcome.Missing, group.Attempts)
+				state, errorText, next := "done", "", float64(0)
+				if callErr != nil {
+					state = "queued"
+					errorText = "本次分析未完成，稍后自动重试"
+					next = timestamp() + 20
+					if num(job, "attempts") >= 2 {
+						state = "failed"
+						errorText = "自动分析失败，请检查模型设置后重试"
 					}
 				}
+				s.transaction(ctx, func(db store.SQL) any {
+					row := first(query(ctx, db, "SELECT payload FROM messages WHERE id=? AND user_id=?", job["message_id"], job["user_id"]))
+					cancelled := first(query(ctx, db, "SELECT state FROM analysis_jobs WHERE id=?", job["id"]))
+					if str(cancelled, "state") == "cancelled" {
+						event(ctx, db, str(job, "user_id"), "message.upsert", str(job, "message_id"))
+						return nil
+					}
+					if row == nil {
+						state = "ignored"
+					} else {
+						m := store.Payload(row)
+						if len(object(m["analysis"])) > 0 {
+							state = "done"
+							errorText = ""
+						}
+						if str(m, "triage") == "ignored" {
+							state = "ignored"
+						}
+						if errorText != "" {
+							m["analysis_error"] = errorText
+							exec(ctx, db, "UPDATE messages SET payload=? WHERE id=?", store.JSON(m), job["message_id"])
+						}
+					}
+					if callErr != nil && choice(state, "queued", "failed") {
+						runID := "notification-" + str(job, "message_id")
+						if run := first(query(ctx, db, "SELECT payload FROM agent_runs WHERE id=? AND user_id=?", runID, job["user_id"])); run != nil {
+							payload := store.Payload(run)
+							payload["state"] = state
+							payload["stage"] = "retrying"
+							payload["error"] = errorText
+							exec(ctx, db, "UPDATE agent_runs SET state=?,payload=?,updated_at=? WHERE id=? AND user_id=? AND state<>'cancelled'", state, store.JSON(payload), store.Now(), runID, job["user_id"])
+						}
+					}
+					exec(ctx, db, "UPDATE analysis_jobs SET state=?,error=?,next_at=? WHERE id=?", state, errorText, next, job["id"])
+					event(ctx, db, str(job, "user_id"), "message.upsert", str(job, "message_id"))
+					return nil
+				})
 				return nil
 			})
 			if err != nil && ctx.Err() == nil {

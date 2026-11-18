@@ -1,7 +1,7 @@
 const assert=require('node:assert/strict');const http=require('node:http');
 module.exports=async(page,base)=>{
  let cancelled=false,cancelCount=0;const sockets=new Set();
- const upstream=http.createServer(async(req,res)=>{let body='';for await(const chunk of req)body+=chunk;const notification=!!JSON.parse(body).response_format;res.writeHead(200,{'Content-Type':'text/event-stream'});res.write(`data: ${JSON.stringify({choices:[{delta:{content:notification?'{"summary":"正在检查截图材料，':'正在手动处理任务，'}}]})}\n\n`);const timer=setTimeout(()=>res.write(`data: ${JSON.stringify({choices:[{delta:{content:'随后补充提交入口'}}]})}\n\n`),450);res.on('close',()=>{cancelled=true;cancelCount++;clearTimeout(timer)});});
+ const upstream=http.createServer(async(req,res)=>{let body='';for await(const chunk of req)body+=chunk;const notification=!!JSON.parse(body).response_format;res.writeHead(200,{'Content-Type':'text/event-stream'});res.write(`data: ${JSON.stringify({choices:[{delta:{content:notification?'{"items":[{"id":"fixture","summary":"正在检查截图材料，':'正在手动处理任务，'}}]})}\n\n`);const timer=setTimeout(()=>res.write(`data: ${JSON.stringify({choices:[{delta:{content:'随后补充提交入口'}}]})}\n\n`),450);res.on('close',()=>{cancelled=true;cancelCount++;clearTimeout(timer)});});
  upstream.on('connection',socket=>{sockets.add(socket);socket.on('close',()=>sockets.delete(socket));});
  await new Promise(r=>upstream.listen(0,'127.0.0.1',r));
  try{
@@ -13,8 +13,9 @@ module.exports=async(page,base)=>{
  await page.locator('[data-agent-session]').filter({hasText:'实时流式验收群'}).waitFor();
  await page.locator('[data-agent-session]').filter({hasText:'实时流式验收群'}).click();
  assert.equal(await page.locator('[data-agent-permission=full]').getAttribute('aria-selected'),'true');
- let run=page.locator(`[data-agent-run="notification-${message.id}"]`);
- await run.locator('[data-run-text]').filter({hasText:'正在检查截图材料'}).waitFor();
+ let run=page.locator(`[data-agent-run="notification-batch-${message.analysis_batch_id}"]`);
+ await run.locator('[data-run-status]').filter({hasText:'排队中'}).waitFor();
+ await run.locator('[data-run-text]').filter({hasText:'正在检查截图材料'}).waitFor({timeout:90000});
  await run.locator('[data-run-text]').filter({hasText:'随后补充提交入口'}).waitFor();
  const node=await run.elementHandle();
  await page.locator('[data-agent-input]').fill('处理时仍保留草稿');
@@ -22,7 +23,7 @@ module.exports=async(page,base)=>{
  assert(await node.evaluate(el=>el.isConnected),'live stream must preserve bubble DOM identity');
  await page.evaluate(async()=>{await navigate('tasks');await new Promise(resolve=>setTimeout(resolve,220));});
  await page.evaluate(async id=>{await navigate('sources');pageNavigation.select('history');await agentUI.reload(true);return id},message.id);
- run=page.locator(`[data-agent-run="notification-${message.id}"]`);
+ run=page.locator(`[data-agent-run="notification-batch-${message.analysis_batch_id}"]`);
  await run.locator('[data-run-text]').filter({hasText:'随后补充提交入口'}).waitFor();
  await page.screenshot({path:'work/trigger-live-preview.png'});
  await run.locator('[data-agent-stop]').click();

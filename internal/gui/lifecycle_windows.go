@@ -8,6 +8,7 @@ import (
 	"golang.org/x/sys/windows"
 	"os"
 	"os/user"
+	"path/filepath"
 	"unsafe"
 )
 
@@ -15,13 +16,40 @@ import (
 // closes it even on TerminateProcess, killing all descendants including helpers.
 var lifetimeJob windows.Handle
 
+func installerExitEventName(root string) string {
+	return "Local\\JiaojianBox.installer-exit." + store.Hash(filepath.Clean(root))[:20]
+}
+
+func listenInstallerExit(root string, quit func()) (func(), error) {
+	event, err := windows.CreateEvent(nil, 0, 0, windows.StringToUTF16Ptr(installerExitEventName(root)))
+	if err != nil {
+		return nil, err
+	}
+	done := make(chan struct{})
+	go func() {
+		for {
+			code, _ := windows.WaitForSingleObject(event, 250)
+			select {
+			case <-done:
+				return
+			default:
+			}
+			if code == windows.WAIT_OBJECT_0 {
+				quit()
+				return
+			}
+		}
+	}()
+	return func() { close(done); windows.CloseHandle(event) }, nil
+}
+
 func guardChildren() error {
 	job, err := windows.CreateJobObject(nil, nil)
 	if err != nil {
 		return err
 	}
 	info := windows.JOBOBJECT_EXTENDED_LIMIT_INFORMATION{}
-	info.BasicLimitInformation.LimitFlags = windows.JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+	info.BasicLimitInformation.LimitFlags = windows.JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE | windows.JOB_OBJECT_LIMIT_BREAKAWAY_OK
 	if _, err = windows.SetInformationJobObject(job, windows.JobObjectExtendedLimitInformation, uintptr(unsafe.Pointer(&info)), uint32(unsafe.Sizeof(info))); err != nil {
 		windows.CloseHandle(job)
 		return err

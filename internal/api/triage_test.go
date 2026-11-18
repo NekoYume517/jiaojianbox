@@ -40,8 +40,8 @@ func TestLocalTriageDropsNoiseWithoutModel(t *testing.T) {
 
 func TestLocalTriageSkipsOwnMessages(t *testing.T) {
 	m := Object{"text": "周五前提交报告", "sender_id": "wxid_me", "account_id": "wxid_me"}
-	if got := localTriage(m).Verdict; got != "unknown" {
-		t.Fatalf("own message should not be strong, got %s", got)
+	if got := localTriage(m).Verdict; got != "noise" {
+		t.Fatalf("own message should not automatically create a task, got %s", got)
 	}
 }
 
@@ -56,24 +56,15 @@ func TestBatchTriageGroupsAndUpgrades(t *testing.T) {
 		if items := objects(body["messages"]); len(items) > 0 {
 			user = str(items[len(items)-1], "content")
 		}
-		// 按消息逐条判断：只有含「报告」的那条是 actionable。
+		// Classify the fixture's messages by their structured text.
+		packet := decodeObject(user)
 		items := []any{}
-		for _, piece := range strings.Split(user, `"id":"`)[1:] {
-			end := strings.IndexByte(piece, '"')
-			if end < 0 {
-				continue
-			}
-			id := piece[:end]
-			next := strings.IndexByte(piece, '{')
-			segment := piece
-			if next >= 0 {
-				segment = piece[:next]
-			}
+		for _, message := range objects(packet["MESSAGES"]) {
 			verdict := "chatting"
-			if strings.Contains(segment, "报告") {
+			if strings.Contains(str(message, "text"), "报告") {
 				verdict = "actionable"
 			}
-			items = append(items, Object{"id": id, "verdict": verdict, "confidence": 0.8, "reason": "fixture"})
+			items = append(items, Object{"id": message["id"], "verdict": verdict, "confidence": 0.8, "reason": "fixture"})
 		}
 		text, _ := json.Marshal(Object{"items": items})
 		w.Header().Set("Content-Type", "application/json")
@@ -88,7 +79,7 @@ func TestBatchTriageGroupsAndUpgrades(t *testing.T) {
 	token, _ := login(t, s, "triage@example.com")
 	if status, out := call(t, s, "PUT", "/api/settings/llm", token, Object{
 		"service_mode": "custom", "base_url": upstream.URL, "model": "fixture",
-		"auto_analyze": true, "local_triage": false, "batch_triage": true,
+		"auto_analyze": true, "local_triage": false, "batch_triage": false,
 	}); status != 200 {
 		t.Fatalf("llm settings %d %v", status, out)
 	}
@@ -103,6 +94,7 @@ func TestBatchTriageGroupsAndUpgrades(t *testing.T) {
 			t.Fatalf("message %d %v", status, out)
 		}
 	}
+	exec(testContext(), s.Store.DB, "UPDATE messages SET payload=json_set(payload,'$.triage_state','pending') WHERE user_id=(SELECT id FROM users WHERE username='triage@example.com')")
 	if got := atomic.LoadInt32(&calls); got != 0 {
 		t.Fatalf("batch triage should not be synchronous, got %d calls", got)
 	}

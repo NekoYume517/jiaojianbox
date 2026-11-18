@@ -51,7 +51,7 @@ module.exports=async(page,scratch)=>{
     assert(await page.locator('#statistics-recent').isVisible());assert(await page.locator('#chart-tokens').isHidden());
     await selectTab('overview');
     for(const pageName of ['settings','stats','sources','settings'])await page.locator(`[data-nav="${pageName}"]`).click();
-    await page.waitForTimeout(500);
+    await page.waitForFunction(()=>document.querySelector('#page-subnav')&&document.querySelectorAll('.nav-sub.leaving,.nav-sub.moving').length===0,null,{timeout:3000});
     assert.equal(await page.locator('.nav-sub.leaving,.nav-sub.moving').count(),0,'interrupted submenus must finish folding');
     assert.equal(await page.locator('#page-subnav').count(),1);
     await page.locator('[data-nav="settings"]').click();await selectTab('general');
@@ -59,7 +59,7 @@ module.exports=async(page,scratch)=>{
       await page.evaluate(density=>appearance.update({density}),density);
       for(const width of [1280,1100,850,820,700,621,620,390,360]){
         await page.setViewportSize({width,height:860});
-        if(width>620){await page.waitForFunction(mode=>document.documentElement.dataset.sidebar===mode,width>820?'labels':'icons');}if(width>620)await page.waitForFunction(()=>{const sidebar=document.querySelector('.sidebar').getBoundingClientRect(),main=document.querySelector('.main').getBoundingClientRect();return Math.abs(sidebar.right-main.left)<=1.5;});
+        if(width>820){await page.waitForFunction(()=>document.documentElement.dataset.sidebar==='labels');await page.locator('.nav-sub:not(.leaving) [data-subnav="general"]').waitFor({state:'visible'});}else if(width>620){await page.waitForFunction(()=>document.documentElement.dataset.sidebar==='icons');await page.locator('.page-tabs [data-subnav="general"]').waitFor({state:'visible'});}if(width>620)await page.waitForFunction(()=>{const sidebar=document.querySelector('.sidebar').getBoundingClientRect(),main=document.querySelector('.main').getBoundingClientRect();return Math.abs(sidebar.right-main.left)<=1.5;});
         const layout=await page.evaluate(()=>{
           const sidebar=document.querySelector('.sidebar').getBoundingClientRect(),main=document.querySelector('.main').getBoundingClientRect();
           return {right:sidebar.right,main:main.left,navFont:parseFloat(getComputedStyle(document.querySelector('[data-nav="settings"]')).fontSize),label:getComputedStyle(document.querySelector('.brand>span')).display,field:document.querySelector('[data-select-for=appearance-density]').getBoundingClientRect().height};
@@ -99,6 +99,7 @@ module.exports=async(page,scratch)=>{
     await page.locator('.page-tabs [data-subnav="model"]').click();assert(await page.locator('#llm-url').isVisible());
     await page.setViewportSize({width:1280,height:860});await selectTab('general');
     await page.evaluate(()=>scrollTo(0,300));await page.locator('[data-nav="tasks"]').click();
+    await page.waitForFunction(()=>state.page==='tasks'&&scrollY===0);
     assert.equal(await page.evaluate(()=>scrollY),0,'new page must start at the top');
     await page.emulateMedia({reducedMotion:'reduce'});await page.locator('[data-nav="settings"]').click();await selectTab('model');
     assert.equal(await page.locator('#view').evaluate(el=>el.getAnimations().filter(a=>a.playState==='running').length),0);

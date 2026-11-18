@@ -9,6 +9,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"github.com/wailsapp/wails/v3/pkg/application"
 	"golang.org/x/sys/windows"
 	"golang.org/x/sys/windows/registry"
@@ -242,27 +243,37 @@ func unprotectLegacy(data []byte, root string) ([]byte, error) {
 func hideProcess(cmd *exec.Cmd) { cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true} }
 
 var user32 = windows.NewLazySystemDLL("user32.dll")
-var shell32 = windows.NewLazySystemDLL("shell32.dll")
 
-// The updater runs the downloaded installer through the shell so its own
-// window shows normally and Windows can prompt for elevation when needed.
-func launchInstaller(path string) error {
-	open, err := syscall.UTF16PtrFromString("open")
-	if err != nil {
-		return err
-	}
+// The updater must outlive the desktop's job, which owns collector helpers.
+func launchInstaller(path string, arguments ...string) error {
+	_, err := launchInstallerProcess(path, arguments...)
+	return err
+}
+
+func launchInstallerProcess(path string, arguments ...string) (windows.Handle, error) {
 	target, err := syscall.UTF16PtrFromString(path)
 	if err != nil {
-		return err
+		return 0, err
 	}
-	instance, _, callErr := shell32.NewProc("ShellExecuteW").Call(0, uintptr(unsafe.Pointer(open)), uintptr(unsafe.Pointer(target)), 0, 0, 1)
-	if instance <= 32 {
-		if callErr != syscall.Errno(0) {
-			return callErr
-		}
-		return errors.New("安装程序无法启动，请重新下载")
+	commandLine := `"` + path + `"`
+	for _, argument := range arguments {
+		commandLine += ` "` + strings.ReplaceAll(argument, `"`, `\"`) + `"`
 	}
-	return nil
+	command, err := syscall.UTF16PtrFromString(commandLine)
+	if err != nil {
+		return 0, err
+	}
+	startup := new(windows.StartupInfo)
+	startup.Cb = uint32(unsafe.Sizeof(*startup))
+	startup.ShowWindow = 1
+	process := new(windows.ProcessInformation)
+	if err = windows.CreateProcess(target, command, nil, nil, false,
+		windows.CREATE_BREAKAWAY_FROM_JOB|windows.CREATE_NEW_PROCESS_GROUP|windows.CREATE_UNICODE_ENVIRONMENT,
+		nil, nil, startup, process); err != nil {
+		return 0, fmt.Errorf("安装程序无法启动，请重新下载: %w", err)
+	}
+	windows.CloseHandle(process.Thread)
+	return process.Process, nil
 }
 
 func allowForegroundWindow() {

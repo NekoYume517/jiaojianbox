@@ -34,11 +34,14 @@
   let signature='', currentBox, queued=false, selectionAnimation;
   const sidebarQuery=matchMedia('(max-width:820px)');
   const sidebarKey='jjb-sidebar-mode';
+  let manualSidebarChoice = false;
   const readSidebarMode=()=>{
+    if (manualSidebarChoice && innerWidth > 820) return document.documentElement.dataset.sidebar === 'icons' ? 'icons' : 'labels';
+    if (sidebarQuery.matches) return 'icons';
     const current=document.documentElement.dataset.sidebar;
-    if(['icons','labels'].includes(current))return current;
+    if (manualSidebarChoice && ['icons','labels'].includes(current)) return current;
     const stored=localStorage.getItem(sidebarKey);
-    return ['icons','labels'].includes(stored)?stored:sidebarQuery.matches?'icons':'labels';
+    return ['icons','labels'].includes(stored) ? stored : 'labels';
   };
   const sidebarButton=document.getElementById('sidebar-toggle');
   function applySidebarMode(mode,animate=true){
@@ -60,12 +63,13 @@
     sync();
   }
   sidebarButton?.addEventListener('click',()=>{
+    manualSidebarChoice = true;
     const mode=readSidebarMode()==='icons'?'labels':'icons';
     try{localStorage.setItem(sidebarKey,mode);}catch{}
     applySidebarMode(mode);
   });
   sidebarQuery.addEventListener('change',()=>{
-    if(['icons','labels'].includes(localStorage.getItem(sidebarKey)))return;
+    if(manualSidebarChoice || ['icons','labels'].includes(localStorage.getItem(sidebarKey)))return;
     applySidebarMode(sidebarQuery.matches?'icons':'labels');
   });
   const view = document.querySelector('#view');
@@ -147,6 +151,7 @@
         const actions=node('.page-heading .actions');if(actions)actions.hidden=key==='history';
       }
       uiMotion.syncSegments();
+      window.agentUI?.fitHistory?.();
     };
     if(animate)uiMotion.swapPage(view,apply,{subsection:true});
     // The render-driven sync path must never move the viewport.

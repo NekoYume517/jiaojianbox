@@ -146,6 +146,11 @@ func Run(version string) error {
 		return fmt.Errorf("无法建立采集进程生命周期保护: %w", err)
 	}
 	d := &Desktop{root: root, resources: resourceRoot(), version: version, vault: &vault{root: filepath.Join(root, "vault-go")}, appearance: Object{"theme": "system", "density": "compact", "textSize": "normal", "palette": "magpie"}, prefs: Object{"enabled": true, "drop": true, "note": true, "files": true}, state: Object{"state": "stopped", "message": "采集未启动"}, qqConnector: "snowluma"}
+	stopInstallerExit, err := listenInstallerExit(d.resources, func() { d.app.Quit() })
+	if err != nil {
+		return fmt.Errorf("无法监听安装器退出请求: %w", err)
+	}
+	defer stopInstallerExit()
 	d.ctx, d.cancel = context.WithCancel(context.Background())
 	go d.updateLoop()
 	defer d.cancel()
@@ -217,6 +222,9 @@ func Run(version string) error {
 	d.main = d.app.Window.NewWithOptions(application.WebviewWindowOptions{Name: "main", Title: windowTitle, Width: 1280, Height: 860, MinWidth: 360, MinHeight: 520, URL: "/?desktop=1", Frameless: false, EnableFileDrop: true, Hidden: silent, Windows: chrome, BackgroundColour: background})
 	d.notifier.onResponse(d.handleNotificationResponse)
 	d.app.Event.OnApplicationEvent(events.Common.ApplicationStarted, func(*application.ApplicationEvent) {
+		if os.Getenv("JJB_PREVIEW_UI_ONLY") == "1" {
+			return
+		}
 		d.startReminders()
 		// WebView2 creation is expensive. Build the small window while the
 		// desktop is idle instead of synchronously from Explorer's OLE drag loop.
@@ -273,7 +281,9 @@ func Run(version string) error {
 	tray.OnClick(func() {
 		d.requestActivation("tray-click")
 	})
-	d.app.GlobalShortcut.Register("Ctrl+Shift+Space", d.showQuick)
+	if os.Getenv("JJB_PREVIEW_UI_ONLY") != "1" {
+		d.app.GlobalShortcut.Register("Ctrl+Shift+Space", d.showQuick)
+	}
 	appendStartupLog(root, "application run beginning")
 	runErr := d.app.Run()
 	if d.snowcat != nil {

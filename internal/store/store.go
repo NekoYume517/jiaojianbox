@@ -28,7 +28,7 @@ import (
 //go:embed schema.sql
 var schema string
 
-const schemaVersion = 1
+const schemaVersion = 2
 
 type Object = map[string]any
 type SQL interface {
@@ -133,6 +133,8 @@ func Open(root string) (*Store, error) {
 		{"attachments", "deleted_at", "ALTER TABLE attachments ADD COLUMN deleted_at TEXT"},
 		{"agent_sessions", "trigger_chat_id", "ALTER TABLE agent_sessions ADD COLUMN trigger_chat_id TEXT NOT NULL DEFAULT ''"},
 		{"agent_messages", "session_id", "ALTER TABLE agent_messages ADD COLUMN session_id TEXT NOT NULL DEFAULT ''"},
+		{"analysis_jobs", "session_id", "ALTER TABLE analysis_jobs ADD COLUMN session_id TEXT DEFAULT ''"},
+		{"analysis_jobs", "window_key", "ALTER TABLE analysis_jobs ADD COLUMN window_key TEXT DEFAULT ''"},
 	} {
 		rows, err := Query(context.Background(), db, "PRAGMA table_info("+migration.table+")")
 		if err != nil {

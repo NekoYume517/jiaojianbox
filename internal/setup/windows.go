@@ -16,6 +16,7 @@ import (
 	"time"
 	"unsafe"
 
+	"github.com/NekoYume517/jiaojianbox/internal/store"
 	"golang.org/x/sys/windows"
 	"golang.org/x/sys/windows/registry"
 )
@@ -254,6 +255,10 @@ func requestGracefulClose(pids []uint32) int {
 		if posted != 0 {
 			req.posted++
 		}
+		// Older JiaojianBox versions intercept WM_CLOSE and only hide to the
+		// tray. WM_ENDSESSION reaches the Wails application window and follows
+		// the same graceful shutdown path, releasing database and collector locks.
+		postMessage.Call(hwnd, 0x0016, 1, 0) // WM_ENDSESSION
 		return 1
 	})
 	windows.EnumWindows(callback, nil)
@@ -267,14 +272,24 @@ func stopInstalledProcesses(target string) error {
 	target = filepath.Clean(target)
 	deadline := time.Now().Add(12 * time.Second)
 	nextRequest := time.Now()
+	exitEvent, eventErr := windows.CreateEvent(nil, 0, 0, windows.StringToUTF16Ptr("Local\\JiaojianBox.installer-exit."+store.Hash(target)[:20]))
+	if eventErr == nil {
+		defer windows.CloseHandle(exitEvent)
+	}
 	for {
 		pids, err := installedMainProcessIDs(target)
 		if err != nil {
 			return err
 		}
 		if len(pids) == 0 {
+			if eventErr == nil {
+				windows.SetEvent(exitEvent)
+			}
 			time.Sleep(250 * time.Millisecond)
 			return nil
+		}
+		if eventErr == nil {
+			windows.SetEvent(exitEvent)
 		}
 		if !time.Now().Before(nextRequest) {
 			requestGracefulClose(pids)

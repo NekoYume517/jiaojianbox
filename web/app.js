@@ -34,7 +34,9 @@ const EMOJI={'微笑':'🙂','撇嘴':'😕','色':'😍','发呆':'😮','得�
 const EMOJI_RE=new RegExp('\\[(' + Object.keys(EMOJI).sort((a,b)=>b.length-a.length).map(k=>k.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')).join('|') + ')\\]','g');
 const pretty = text => String(text ?? '').replace(/[\x00-\x08\x0b-\x1f]/g,'').replace(EMOJI_RE,(m,name)=>EMOJI[name]);
 const classifications = { actionable: ['待办通知', 'green'], chatting: ['普通聊天', ''], irrelevant: ['其他信息', ''], unprocessed: ['待分析', 'orange'] };
-const state = { session: null, profile: '', page: 'inbox', snapshot: { tasks: [], messages: [], digests: [], cursor: 0 }, pending: [], selected: null, selectedDigest: null, digestMessages: [], taskId: null, contexts: new Set(), search: '', source: 'all', category: 'all', taskFilter: 'active', online: false, socket: null, sources: {}, busyAnalysis: new Set(), isRegister: false, generation: 0, firstRenderDone: false, cmdkIndex: 0 };
+const TASK_SORT_OPTIONS = ['created-desc', 'created-asc', 'due-asc', 'due-desc', 'title-asc', 'title-desc'];
+const savedTaskSort = (() => { try { return localStorage.getItem('jjb-task-sort'); } catch { return null; } })();
+const state = { session: null, profile: '', page: 'inbox', snapshot: { tasks: [], messages: [], digests: [], cursor: 0 }, pending: [], selected: null, selectedDigest: null, digestMessages: [], taskId: null, contexts: new Set(), search: '', source: 'all', category: 'all', taskFilter: 'active', taskSort: TASK_SORT_OPTIONS.includes(savedTaskSort) ? savedTaskSort : 'created-desc', online: false, socket: null, sources: {}, busyAnalysis: new Set(), isRegister: false, generation: 0, firstRenderDone: false, cmdkIndex: 0 };
 let editingUrgency = null, editingReminders = null;
 let flushRunning = false, refreshRunning = false, cacheTimer, reconnectTimer, llmSettings = null, llmCredit = null, editingVersion = 0, uploading = false, lastSeenMessageId = null, pendingUndoId = null;
 
@@ -199,7 +201,7 @@ async function refresh({ renderPage = true } = {}) {
     state.snapshot.messages.push(...previousMessages.filter(m => !latestIds.has(m.id)));
     for (const m of state.snapshot.messages) if (!knownIds.has(m.id) && state.firstRenderDone) m.isNew = true;
     online(true); cacheSoon();
-    if (renderPage && contentChanged && !uploading && !['settings', 'sources','stats','plugins','shares'].includes(state.page) && !state.page.startsWith('plugin:')) render();
+    if (renderPage && contentChanged && !uploading && !compositionActive() && !['settings', 'sources','stats','plugins','shares'].includes(state.page) && !state.page.startsWith('plugin:')) render();
     window.dispatchEvent(new CustomEvent('snapshot-updated', { detail: state.snapshot }));
     window.agentUI?.synced?.();
     window.pluginUI?.sync();
@@ -477,7 +479,7 @@ function inboxView() {
   const pendingDigest = digestableMessages().length;
   const toggle = `<div class="chart-mode" role="tablist" aria-label="通知视图"><button type="button" role="tab" data-inbox-mode="digest" class="${mode === 'digest' ? 'on' : ''}" aria-selected="${mode === 'digest'}">摘要</button><button type="button" role="tab" data-inbox-mode="all" class="${mode === 'all' ? 'on' : ''}" aria-selected="${mode === 'all'}">全部消息</button></div>`;
   const digestSection = digests.length ? `<div class="digest-list ${state.firstRenderDone ? '' : 'stagger'}">${digests.map(d => `<div class="${state.firstRenderDone ? '' : 'stagger-item'}">${digestRow(d)}</div>`).join('')}</div>` : '';
-  const messageRows = messages.length ? messages.map(m => `<article class="message-row ${state.firstRenderDone ? '' : 'stagger-item'} ${state.selected === m.id && !state.selectedDigest ? 'selected' : ''} ${m.isNew ? 'flash' : ''}" data-message="${esc(m.id)}" tabindex="0" role="button" aria-label="查看 ${esc(m.conversation_name)} 的消息"><div class="message-body"><div class="message-meta">${sourceTag(m.source)}<strong>${esc(m.conversation_name || '手动通知')}</strong><time>${formatDate(m.sent_at)}</time></div><div class="message-excerpt">${esc(pretty(m.text))}</div><div class="message-bottom">${tag(...messageClass(m))}${m.analysis ? confidenceChip(m.analysis.confidence) : ''}<span class="sender">${esc(m.sender_name || '我')}</span></div></div><div class="row-actions"><button data-row-action="message-task" data-id="${esc(m.id)}">建待办</button><button data-row-action="ignore-message" data-id="${esc(m.id)}" class="danger-hover">忽略</button><button data-row-action="delete-message" data-id="${esc(m.id)}" class="danger-hover">移入回收站</button></div></article>`).join('') : '';
+  const messageRows = messages.length ? messages.map(m => `<article class="message-row ${state.firstRenderDone ? '' : 'stagger-item'} ${state.selected === m.id && !state.selectedDigest ? 'selected' : ''} ${m.isNew ? 'flash' : ''}" data-message="${esc(m.id)}" tabindex="0" role="button" aria-label="查看 ${esc(m.conversation_name)} 的消息"><div class="message-body"><div class="message-meta">${sourceTag(m.source)}<strong>${esc(m.conversation_name || '手动通知')}</strong><time>${formatDate(m.sent_at)}</time></div><div class="message-excerpt">${esc(pretty(m.text))}</div><div class="message-bottom">${tag(...messageClass(m))}${m.analysis ? confidenceChip(m.analysis.confidence) : ''}<span class="sender">${esc(messageSender(m))}</span></div></div><div class="row-actions"><button data-row-action="message-task" data-id="${esc(m.id)}">建待办</button><button data-row-action="ignore-message" data-id="${esc(m.id)}" class="danger-hover">忽略</button><button data-row-action="delete-message" data-id="${esc(m.id)}" class="danger-hover">移入回收站</button></div></article>`).join('') : '';
   const messageSection = messageRows ? `<div class="message-list ${state.firstRenderDone ? '' : 'stagger'}">${messageRows}</div>` : '';
   const emptyState = !digests.length && !messages.length ? empty('暂无通知', state.search ? '换个关键词或筛选条件试试。' : '连接 QQ / 微信，或先粘贴一条通知。', '<button class="primary" data-action="paste">添加第一条通知</button>') : '';
   const counts = triageSummary();
@@ -510,7 +512,7 @@ function messageDetail(m) {
   const pending = !result && m.triage !== 'ignored' && !!m.analysis_pending;
   const working = busy || pending;
   const title = result?.title || pretty((m.text.split('\n').find(l=>l.trim()&&!l.trim().endsWith('：')&&!l.trim().endsWith(':')) || m.text.split('\n')[0] || '消息详情')).slice(0, 90);
-  return `<div class="panel-head"><h3>通知详情</h3><span class="helper">原文保留</span></div><div class="detail-content"><button class="link mobile-back" data-action="back-inbox">← 返回消息列表</button><div class="detail-meta">${sourceTag(m.source)}<span class="helper">${formatDate(m.sent_at)}</span></div><h2 class="detail-title">${esc(title)}</h2><div class="detail-byline">${esc(m.conversation_name)} · ${esc(m.sender_name || '我')}</div><div class="message-original">${esc(pretty(m.text))}${m.metadata?.quote ? '\n\n引用 ' + esc(m.metadata.quote.sender) + '：\n' + esc(m.metadata.quote.text) : ''}</div><div class="analysis-box"><div class="analysis-top"><h3>通知分析</h3>${working ? tag(pending && m.analysis_state === 'retrying' ? '等待重试' : '分析中', 'orange') : result ? `<small>${esc(result.model)}</small>` : m.analysis_error ? tag('分析失败', 'red') : tag('待分析', 'orange')}</div>${busy ? window.liveAnalysis?.markup('message:'+m.id)||'<p class="helper">正在结合上下文分析…</p>' : pending ? '<p class="helper" role="status">' + (m.analysis_state === 'running' ? '正在结合上下文自动分析，完成后会自动显示结果。' : m.analysis_state === 'retrying' ? '本次分析未完成，已加入自动重试队列。' : '正在自动分析，已加入队列，轮到这条消息后会立即处理。') + '</p>' : result ? `<div class="pill-row">${tag(...classifications[result.classification])}${confidenceChip(result.confidence)}${m.auto_task_id&&state.snapshot.tasks.some(t=>t.id===m.auto_task_id)?tag(result.auto_task_action==='appended'?'已追加到待办':result.auto_task_action==='matched'?'已关联待办':'已自动建待办','blue'):''}${result.stage ? tag('阶段分析', '') : ''}</div>${result.stage ? `<p class="stage-note">${result.stage_task_count > 1 ? `本阶段共识别 ${result.stage_task_count} 个任务${result.stage_task_index ? `，本条属于第 ${result.stage_task_index} 个` : ''}` : '本阶段识别 1 个任务'}${result.stage_summary ? ' · ' + esc(result.stage_summary) : ''}</p>` : ''}<p>${esc(result.summary)}</p>${result.due_at ? `<p>截止：${formatDate(result.due_at)}</p>` : ''}${result.requirements.length ? `<p>材料：${result.requirements.map(r => esc(r.label)).join('、')}</p>` : ''}<div class="analysis-reason">${esc(result.reason)}${result.notes?.length ? '<br>' + result.notes.map(esc).join('<br>') : ''}<br>使用当前聊天的会话上下文</div>${evidenceQuote(m)}${window.liveAnalysis?.performance(result)||''}` : m.analysis_error ? `<p class="error">${esc(m.analysis_error)}</p><p class="helper">请检查模型连接和配置，然后重试分析。</p>` : `<p>使用你在设置里配置的 AI，区分通知与闲聊，并提取可确认的待办草稿。</p>`}</div><div class="detail-actions"><button class="primary" data-action="analyze" ${working ? 'disabled' : ''}>${working ? '正在分析…' : m.analysis_error ? '重试分析' : result ? '重新分析' : '使用 AI 分析'}</button>${busy?'<button class="secondary" data-action="cancel-analysis">停止分析</button>':''}<button class="secondary" data-action="message-task">生成待办草稿</button><button class="plain-button" data-action="ignore-message">${m.triage === 'ignored' ? '恢复消息' : '忽略这条'}</button><button class="plain-button danger-button" data-action="delete-message">移入回收站</button></div>${related.length ? `<details class="context-list"><summary>查看同会话的最近上下文（${related.length}）</summary>${related.map(x => `<div class="context-message"><small>${esc(x.sender_name)} · ${formatDate(x.sent_at)}</small><p>${esc(x.text)}</p></div>`).join('')}</details>` : ''}</div>`;
+  return `<div class="panel-head"><h3>通知详情</h3><span class="helper">原文保留</span></div><div class="detail-content"><button class="link mobile-back" data-action="back-inbox">← 返回消息列表</button><div class="detail-meta">${sourceTag(m.source)}<span class="helper">${formatDate(m.sent_at)}</span></div><h2 class="detail-title">${esc(title)}</h2><div class="detail-byline">${esc(m.conversation_name)} · ${esc(messageSender(m))}</div><div class="message-original">${esc(pretty(m.text))}${m.metadata?.quote ? '\n\n引用 ' + esc(m.metadata.quote.sender) + '：\n' + esc(m.metadata.quote.text) : ''}</div>${messageMediaMarkup(m, true)}<div class="analysis-box"><div class="analysis-top"><h3>通知分析</h3>${working ? tag(pending && m.analysis_state === 'retrying' ? '等待重试' : '分析中', 'orange') : result ? `<small>${esc(result.model)}</small>` : m.analysis_error ? tag('分析失败', 'red') : tag('待分析', 'orange')}</div>${busy ? window.liveAnalysis?.markup('message:'+m.id)||'<p class="helper">正在结合上下文分析…</p>' : pending ? '<p class="helper" role="status">' + (m.analysis_state === 'running' ? '正在结合上下文自动分析，完成后会自动显示结果。' : m.analysis_state === 'retrying' ? '本次分析未完成，已加入自动重试队列。' : '正在自动分析，已加入队列，轮到这条消息后会立即处理。') + '</p>' : result ? `<div class="pill-row">${tag(...classifications[result.classification])}${confidenceChip(result.confidence)}${m.auto_task_id&&state.snapshot.tasks.some(t=>t.id===m.auto_task_id)?tag(result.auto_task_action==='appended'?'已追加到待办':result.auto_task_action==='matched'?'已关联待办':'已自动建待办','blue'):''}</div><p>${esc(result.summary)}</p>${result.due_at ? `<p>截止：${formatDate(result.due_at)}</p>` : ''}${result.requirements.length ? `<p>材料：${result.requirements.map(r => esc(r.label)).join('、')}</p>` : ''}<div class="analysis-reason">${result.image_analyzed ? '<span class="tag green">已读取图片</span>' : ''}${esc(result.reason)}${result.notes?.length ? '<br>' + result.notes.map(esc).join('<br>') : ''}<br>使用当前聊天的会话上下文</div>${evidenceQuote(m)}${window.liveAnalysis?.performance(result)||''}` : m.analysis_error ? `<p class="error">${esc(m.analysis_error)}</p><p class="helper">请检查模型连接和配置，然后重试分析。</p>` : `<p>使用你在设置里配置的 AI，区分通知与闲聊，并提取可确认的待办草稿。</p>`}</div><div class="detail-actions"><button class="primary" data-action="analyze" ${working ? 'disabled' : ''}>${working ? '正在分析…' : m.analysis_error ? '重试分析' : result ? '重新分析' : '使用 AI 分析'}</button>${busy?'<button class="secondary" data-action="cancel-analysis">停止分析</button>':''}<button class="secondary" data-action="message-task">生成待办草稿</button><button class="plain-button" data-action="ignore-message">${m.triage === 'ignored' ? '恢复消息' : '忽略这条'}</button><button class="plain-button danger-button" data-action="delete-message">移入回收站</button></div>${related.length ? `<details class="context-list"><summary>查看同会话的最近上下文（${related.length}）</summary>${related.map(x => `<div class="context-message"><small>${esc(x.sender_name)} · ${formatDate(x.sent_at)}</small><p>${esc(x.text)}</p></div>`).join('')}</details>` : ''}</div>`;
 }
 const startOfDay = value => { const d = new Date(value); return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime(); };
 function dueBadge(value) {
@@ -541,6 +543,30 @@ function dueUrgency(t) {
   if (hours <= 72) return 'soon';
   return '';
 }
+function taskTimestamp(value, fallback = 0) {
+  const timestamp = Date.parse(value || '');
+  return Number.isFinite(timestamp) ? timestamp : fallback;
+}
+function compareTasks(left, right, sort) {
+  const [field, direction] = sort.split('-');
+  const sign = direction === 'asc' ? 1 : -1;
+  if (field === 'title') return sign * (left.title || '').localeCompare(right.title || '', 'zh-CN', { numeric: true, sensitivity: 'base' });
+  const leftValue = left[field === 'due' ? 'due_at' : 'created_at'];
+  const rightValue = right[field === 'due' ? 'due_at' : 'created_at'];
+  if (field === 'due') {
+    const leftMissing = !leftValue || !Number.isFinite(Date.parse(leftValue));
+    const rightMissing = !rightValue || !Number.isFinite(Date.parse(rightValue));
+    if (leftMissing !== rightMissing) return leftMissing ? 1 : -1;
+    if (leftMissing) return 0;
+  }
+  const leftTime = taskTimestamp(leftValue);
+  const rightTime = taskTimestamp(rightValue);
+  return sign * (leftTime - rightTime);
+}
+function sortTasks(tasks) {
+  const originalIndex = new Map(tasks.map((task, index) => [task.id, index]));
+  return tasks.map((task, index) => ({ task, index })).sort((left, right) => compareTasks(left.task, right.task, state.taskSort) || left.index - right.index).map(item => item.task);
+}
 function tasksView() {
   if (state.taskId) {
     const task = state.snapshot.tasks.find(t => t.id === state.taskId);
@@ -548,9 +574,10 @@ function tasksView() {
     state.taskId = null;
   }
   const all = state.snapshot.tasks;
-  const list = all.filter(t => (state.taskFilter === 'all' || state.taskFilter === 'active' ? state.taskFilter === 'all' || ['collecting', 'ready'].includes(t.status) : t.status === state.taskFilter) && (!state.search || (t.title + t.description).toLowerCase().includes(state.search.toLowerCase())));
+  const list = sortTasks(all.filter(t => (state.taskFilter === 'all' || state.taskFilter === 'active' ? state.taskFilter === 'all' || ['collecting', 'ready'].includes(t.status) : t.status === state.taskFilter) && (!state.search || (t.title + t.description).toLowerCase().includes(state.search.toLowerCase()))));
+  const sortOptions = [['created-desc','创建时间 ↓'],['created-asc','创建时间 ↑'],['due-asc','截止时间 ↑'],['due-desc','截止时间 ↓'],['title-asc','名称 A-Z'],['title-desc','名称 Z-A']];
   return heading('待办', '要求、材料与提交回执，一处整理。', `<button class="plain-button" data-productivity-action="templates">模板</button><button class="plain-button" data-productivity-action="recycle">回收站</button><button class="secondary" data-action="show-archived">已归档（${all.filter(t=>t.status==='archived').length}）</button><button class="primary" data-action="new-task">${icon('plus')}新建待办</button>`) +
-    `<div class="task-summary">${[['collecting','准备材料'],['ready','待提交'],['submitted','已提交']].map(([s,label])=>`<div class="summary-cell"><strong>${all.filter(t=>t.status===s).length}</strong><span>${label}</span></div>`).join('')}</div><div class="toolbar"><div class="search"><span>${icon('search')}</span><input id="task-search" placeholder="搜索待办" value="${esc(state.search)}" aria-label="搜索待办"></div><select id="task-filter" aria-label="待办进度"><option value="active">进行中</option><option value="all">全部待办</option><option value="collecting">准备材料</option><option value="ready">待提交</option><option value="submitted">已提交</option><option value="archived">已归档</option></select></div><div class="task-grid ${state.firstRenderDone ? '' : 'stagger'}">${list.map(t => `<article class="task-card ${state.firstRenderDone ? '' : 'stagger-item'} ${dueUrgency(t) === 'overdue' ? 'card-overdue' : ''}" tabindex="0" role="button" data-task="${esc(t.id)}"><div class="pill-row">${tag(...states[t.status])}${t.pending ? tag(t.conflict ? '同步冲突' : '待同步', 'orange') : ''}${dueUrgency(t) ? `<span class="due-chip ${dueUrgency(t)}">${dueUrgency(t) === 'overdue' ? '已逾期' : dueUrgency(t) === 'today' ? '今天截止' : '3 天内截止'}</span>` : ''}</div><h3>${esc(t.title)}</h3><p>${esc(t.description || '暂无补充说明')}</p><div class="task-card-footer"><span class="${t.due_at && new Date(t.due_at) < new Date() && !['submitted', 'archived'].includes(t.status) ? 'overdue' : ''}">${dueBadge(t.due_at)}</span><span>${t.attachments.filter(f => f.kind === 'material').length} 份材料</span></div></article>`).join('')}</div>${list.length ? '' : `<div class="panel">${empty('把下一次交件安排好', '从通知生成待办，或直接创建一项。', '<button class="primary" data-action="new-task">新建待办</button>')}</div>`}`;
+    `<div class="task-summary">${[['collecting','准备材料'],['ready','待提交'],['submitted','已提交']].map(([s,label])=>`<div class="summary-cell"><strong>${all.filter(t=>t.status===s).length}</strong><span>${label}</span></div>`).join('')}</div><div class="toolbar"><div class="search"><span>${icon('search')}</span><input id="task-search" placeholder="搜索待办" value="${esc(state.search)}" aria-label="搜索待办"></div><label class="task-sort-control"><span>排序</span><select id="task-sort" aria-label="待办排序">${sortOptions.map(([value,label]) => `<option value="${value}">${label}</option>`).join('')}</select></label><select id="task-filter" aria-label="待办进度"><option value="active">进行中</option><option value="all">全部待办</option><option value="collecting">准备材料</option><option value="ready">待提交</option><option value="submitted">已提交</option><option value="archived">已归档</option></select></div><div class="task-grid ${state.firstRenderDone ? '' : 'stagger'}">${list.map(t => `<article class="task-card ${state.firstRenderDone ? '' : 'stagger-item'} ${dueUrgency(t) === 'overdue' ? 'card-overdue' : ''}" tabindex="0" role="button" data-task="${esc(t.id)}"><div class="pill-row">${tag(...states[t.status])}${t.pending ? tag(t.conflict ? '同步冲突' : '待同步', 'orange') : ''}${dueUrgency(t) ? `<span class="due-chip ${dueUrgency(t)}">${dueUrgency(t) === 'overdue' ? '已逾期' : dueUrgency(t) === 'today' ? '今天截止' : '3 天内截止'}</span>` : ''}</div><h3>${esc(t.title)}</h3><p>${esc(t.description || '暂无补充说明')}</p><div class="task-card-footer"><span class="${t.due_at && new Date(t.due_at) < new Date() && !['submitted', 'archived'].includes(t.status) ? 'overdue' : ''}">${dueBadge(t.due_at)}</span><span>${t.attachments.filter(f => f.kind === 'material').length} 份材料</span></div></article>`).join('')}</div>${list.length ? '' : `<div class="panel">${empty('把下一次交件安排好', '从通知生成待办，或直接创建一项。', '<button class="primary" data-action="new-task">新建待办</button>')}</div>`}`;
 }
 function fileRow(f, task) { const ext = f.name.split('.').pop().toLowerCase().slice(0, 5); return `<div class="file-row"><span class="file-icon" data-ext="${esc(ext)}">${esc(ext)}</span><span class="file-info"><strong>${esc(f.name)}</strong><small>${bytes(f.size)}</small></span><button class="plain-button file-kind-button" data-change-kind="${esc(f.id)}" data-next-kind="${f.kind==='receipt'?'material':'receipt'}" data-version="${task.version}" ${task.pending?'disabled':''} title="${f.kind==='receipt'?'移动到待办材料，参与材料核对':'移动到提交回执'}">${f.kind==='receipt'?'转为材料':'转为回执'}</button><button class="icon-button" data-preview-file="${esc(f.id)}" data-name="${esc(f.name)}" title="预览" aria-label="预览 ${esc(f.name)}">${icon('preview')}</button><button class="icon-button" data-rename-file="${esc(f.id)}" data-name="${esc(f.name)}" data-version="${task.version}" title="重命名" aria-label="重命名 ${esc(f.name)}">${icon('edit')}</button><button class="icon-button" data-download="${esc(f.id)}" data-name="${esc(f.name)}" title="下载" aria-label="下载 ${esc(f.name)}">${icon('download')}</button><button class="icon-button" data-delete-file="${esc(f.id)}" data-version="${task.version}" title="移入回收站" aria-label="移入回收站 ${esc(f.name)}">${icon('trash')}</button></div>`; }
 function urgencySwitch(t) {
@@ -582,7 +609,7 @@ function taskDetail(t) {
     `<div class="task-detail-grid"><section class="panel"><div class="panel-head"><h3>待办内容</h3></div><div class="task-main-content">${statusSwitch}<div class="task-description">${esc(t.description || '暂无说明')}</div>${t.conflict ? '<button class="secondary" data-action="discard-conflict">放弃本机草稿，使用云端版本</button>' : ''}<div class="section-heading"><h3>待办材料</h3><small class="helper">${t.attachments.filter(f => f.kind === 'material').length} 个文件</small></div>${t.attachments.filter(f => f.kind === 'material').map(f => fileRow(f, t)).join('')}<label class="drop-zone">点击或拖入文件添加材料<input id="material-upload" type="file" multiple ${t.pending ? 'disabled' : ''} aria-label="上传待办材料"></label><div class="section-heading"><h3>提交回执</h3><small class="helper">成功截图、确认邮件或回执文件</small></div>${t.attachments.filter(f => f.kind === 'receipt').map(f => fileRow(f, t)).join('')}<label class="drop-zone">添加提交凭证<input id="receipt-upload" type="file" multiple ${t.pending ? 'disabled' : ''} aria-label="上传提交回执"></label>${sourceHistory}${window.shares?.taskActions(t)||""}<div class="section-heading"><h3>待办管理</h3></div><div class="small-actions"><button class="plain-button" data-action="${t.status==='archived'?'restore-task':'archive-task'}" ${t.pending ? 'disabled' : ''}>${t.status==='archived'?'恢复待办':'归档待办'}</button><button class="plain-button danger-button" data-action="delete-task" ${t.pending ? 'disabled' : ''}>删除待办</button></div></div></section><aside><section class="panel task-side"><div class="info-label">紧急度</div><div class="urgency-switch" role="group" aria-label="紧急度">${urgencySwitch(t)}</div><div class="info-label">截止时间</div><div class="info-value">${formatDate(t.due_at)}</div><div class="info-label">提醒</div><div class="info-value reminders-block">${reminderList || '<p class="helper">暂无提醒</p>'}${reminderAdd}</div><div class="info-label">文件命名</div><div class="info-value">${esc(t.naming_hint || t.filename_pattern || '未设置命名要求')}</div><div class="info-label">提交入口</div><div class="info-value">${t.submit_url ? `<button class="link" data-external="${esc(t.submit_url)}">打开提交页面 ↗</button>` : '未填写'}</div><div class="section-heading"><h3>材料核对</h3><button class="link" data-action="check-task">重新核对</button></div><div id="task-check">${t.requirements.length ? t.requirements.map(r => `<div class="check-row"><span class="check-symbol manual">○</span><div><strong>${esc(r.label)}</strong><small>${esc(r.extensions.join(' / ') || '任意格式')} · 至少 ${r.min_count} 份</small></div></div>`).join('') : '<p class="helper">未设置材料清单，可在编辑待办中添加。</p>'}</div></section></aside></div>`;
 }
 function settingsView() {
-  return heading('设置', '选择服务器提供的 AI，或连接自己的模型接口。') + `<div id="model-settings"><div class="service-toolbar"><div class="chart-mode" id="llm-mode" hidden role="tablist" aria-label="模型使用方式"><button type="button" role="tab" data-llm-mode="managed">默认</button><button type="button" role="tab" data-llm-mode="custom">自定义</button></div><span id="llm-mode-status" class="helper" role="status"></span></div><div id="llm-managed-panel" hidden><div class="managed-overview"><section class="panel credit-panel"><span class="helper">可用积分</span><strong id="llm-credit-balance">—</strong><p id="llm-credit-note" class="helper"></p><p id="llm-managed-vision" class="helper"></p><p id="llm-managed-context" class="helper"></p><span class="service-badge">服务器提供 · 免配置</span></section><section class="panel checkin-panel" id="llm-checkin-card" hidden><div><h3>每日签到</h3><p id="llm-checkin-note" class="helper"></p></div><strong id="llm-checkin-state">—</strong><button type="button" class="secondary" data-credit-checkin hidden>立即签到</button></section></div></div><div class="settings-grid" id="llm-custom-panel" data-motion-key="model-preferences"><form id="llm-form" class="panel settings-panel"><div id="llm-provider-fields"><h3>自定义接口</h3><p class="helper">支持兼容 Chat Completions 的接口。配置按账号保存，电脑和手机共用。</p><p id="llm-managed-note" class="helper" hidden></p><label>API 地址<input id="llm-url" type="url" placeholder="https://api.example.com/v1" required></label><label>API Key<input id="llm-key" type="password" autocomplete="new-password" placeholder="留空保留已保存的 Key"><span id="llm-key-note" class="helper"></span></label><div class="form-grid"><label>模型<input id="llm-model" list="model-options" required placeholder="填写模型名称"><datalist id="model-options"></datalist></label><label>上下文窗口<input id="llm-context-window" type="number" min="8192" max="2000000" step="1024" placeholder="默认 256K"><span class="helper">单位 tokens，留空使用 256K</span></label></div></div><h3>分析偏好</h3><label id="llm-vision-setting" class="switch-line"><input id="llm-vision" type="checkbox"><span><strong>模型支持图片分析</strong><small>启用后，图片会发送实际图像给模型，判断截图内容和提交状态；纯文本模型请关闭。</small></span></label><label class="switch-line"><input id="llm-local-triage" type="checkbox"><span><strong>先做本地筛选</strong><small>用规则先丢掉表情、简短应答和群系统消息，这部分完全不消耗 token。</small></span></label><label class="switch-line"><input id="llm-batch-triage" type="checkbox"><span><strong>批量预分诊</strong><small>把拿不准的消息攒成一批，一次轻量调用判断是否值得深度分析；只有可能是待办的才会继续。</small></span></label><label class="switch-line"><input id="llm-auto" type="checkbox"><span><strong>自动分析新消息</strong><small>仅处理桌面端所选会话同步的新消息。关闭后，可在通知页手动分析。</small></span></label><div class="form-grid"><label>只自动分析含这些词的消息<input id="llm-include" placeholder="提交,报名,截止（留空处理全部）"></label><label>跳过含这些词的消息<input id="llm-exclude" placeholder="签到成功,红包（英文逗号分隔）"></label></div><label>分类偏好<textarea id="llm-instruction" rows="3" placeholder="例如：重点关注课程作业与比赛报名，日常约饭视为普通聊天。"></textarea></label><div class="detail-actions"><button type="submit" class="primary">保存设置</button><button type="button" class="secondary" data-custom-action data-action="test-llm">保存并读取模型</button><button type="button" class="plain-button" data-custom-action data-action="clear-llm-key">清除 Key</button></div><div id="llm-status" class="settings-status" role="status"></div><div id="models-output" class="models-output" hidden></div></form><aside class="settings-side"><h3>分析如何进行</h3><ol><li>采集端同步你选择的联系人和群聊。</li><li>模型结合上下文，区分待办通知、普通聊天和其他信息。</li><li>同一群聊在静默 2 分钟后的这段时间消息合并成一次分析，AI 直接给出这段时间产生了几个任务。</li></ol><div class="divider"></div><p>群聊或私聊停止发言约 2 分钟后，把这段时间的连续消息打包给 AI；跨消息反复讨论的同一件事只算一个任务。</p><p>API Key 加密保存在服务端。留空保存会沿用已有 Key。</p></aside></div></div>`;
+  return heading('设置', '选择服务器提供的 AI，或连接自己的模型接口。') + `<div id="model-settings"><div class="service-toolbar"><div class="chart-mode" id="llm-mode" hidden role="tablist" aria-label="模型使用方式"><button type="button" role="tab" data-llm-mode="managed">默认</button><button type="button" role="tab" data-llm-mode="custom">自定义</button></div><span id="llm-mode-status" class="helper" role="status"></span></div><div id="llm-managed-panel" hidden><div class="managed-overview"><section class="panel credit-panel"><span class="helper">可用积分</span><strong id="llm-credit-balance">—</strong><p id="llm-credit-note" class="helper"></p><p id="llm-managed-vision" class="helper"></p><p id="llm-managed-context" class="helper"></p><span class="service-badge">服务器提供 · 免配置</span></section><section class="panel checkin-panel" id="llm-checkin-card" hidden><div><h3>每日签到</h3><p id="llm-checkin-note" class="helper"></p></div><strong id="llm-checkin-state">—</strong><button type="button" class="secondary" data-credit-checkin hidden>立即签到</button></section></div></div><div class="settings-grid" id="llm-custom-panel" data-motion-key="model-preferences"><form id="llm-form" class="panel settings-panel"><div id="llm-provider-fields"><h3>自定义接口</h3><p class="helper">支持兼容 Chat Completions 的接口。配置按账号保存，电脑和手机共用。</p><p id="llm-managed-note" class="helper" hidden></p><label>API 地址<input id="llm-url" type="url" placeholder="https://api.example.com/v1" required></label><label>API Key<input id="llm-key" type="password" autocomplete="new-password" placeholder="留空保留已保存的 Key"><span id="llm-key-note" class="helper"></span></label><div class="form-grid"><label>模型<input id="llm-model" list="model-options" required placeholder="填写模型名称"><datalist id="model-options"></datalist></label><label>上下文窗口<input id="llm-context-window" type="number" min="8192" max="2000000" step="1024" placeholder="默认 256K"><span class="helper">单位 tokens，留空使用 256K</span></label></div></div><h3>分析偏好</h3><label id="llm-vision-setting" class="switch-line"><input id="llm-vision" type="checkbox"><span><strong>模型支持图片分析</strong><small>启用后，图片会发送实际图像给模型，判断截图内容和提交状态；纯文本模型请关闭。</small></span></label><label class="switch-line"><input id="llm-local-triage" type="checkbox"><span><strong>先做本地筛选</strong><small>用规则先丢掉表情、简短应答和群系统消息，这部分完全不消耗 token。</small></span></label><label class="switch-line"><input id="llm-batch-triage" type="checkbox"><span><strong>批量预分诊</strong><small>把拿不准的消息攒成一批，一次轻量调用判断是否值得深度分析；只有可能是待办的才会继续。</small></span></label><label class="switch-line"><input id="llm-auto" type="checkbox"><span><strong>自动分析新消息</strong><small>仅处理桌面端所选会话同步的新消息。关闭后，可在通知页手动分析。</small></span></label><div class="form-grid"><label>只自动分析含这些词的消息<input id="llm-include" placeholder="提交,报名,截止（留空处理全部）"></label><label>跳过含这些词的消息<input id="llm-exclude" placeholder="签到成功,红包（英文逗号分隔）"></label></div><label>分类偏好<textarea id="llm-instruction" rows="3" placeholder="例如：重点关注课程作业与比赛报名，日常约饭视为普通聊天。"></textarea></label><div class="detail-actions"><button type="submit" class="primary">保存设置</button><button type="button" class="secondary" data-custom-action data-action="test-llm">保存并读取模型</button><button type="button" class="plain-button" data-custom-action data-action="clear-llm-key">清除 Key</button></div><div id="llm-status" class="settings-status" role="status"></div><div id="models-output" class="models-output" hidden></div></form><aside class="settings-side"><h3>分析如何进行</h3><ol><li>采集端同步你选择的联系人和群聊。</li><li>模型结合上下文，区分待办通知、普通聊天和其他信息。</li><li>同一群聊或私聊共用一段会话，可在触发历史中继续处理。</li></ol><div class="divider"></div><p>消息在对应聊天的持续会话中处理，上下文接近窗口上限时自动压缩。</p><p>API Key 加密保存在服务端。留空保存会沿用已有 Key。</p></aside></div></div>`;
 }
 function applyLlmMode(mode, animate = false) {
   if (animate) return uiMotion.relayout($('#model-settings'), () => applyLlmMode(mode));
@@ -654,6 +681,7 @@ function syncLocationHash() {
 }
 function render() {
   const active = document.activeElement;
+  if (active?.isComposing || compositionActive()) return;
   const focus = active?.id;
   const selection = active?.selectionStart;
   const viewKey = state.page + ':' + (state.taskId || '');
@@ -670,6 +698,7 @@ function render() {
   window.statistics?.unmount();
   $('#view').innerHTML = state.page.startsWith('plugin:') ? '<div id=plugin-page></div>' : state.page === 'sources' && window.experience ? experience.sourcesView() : ({ files:()=>window.shelf?.page()||'', inbox: inboxView, tasks: tasksView, shares:()=>window.shares?.page()||'', sources: sourcesView, settings: settingsView,plugins:()=>window.pluginUI?.page()||'',stats:()=>window.statistics.page() })[state.page]();
   hydrateIcons(); updateCounts(); syncLocationHash();
+  loadMessageImages($('#view'));
   $('#view').dataset.viewKey = viewKey;
   $('#view').scrollTop = scrollTop;
   uiMotion.syncNavigation();
@@ -688,6 +717,7 @@ function render() {
   if ($('#source-filter')) $('#source-filter').value = state.source;
   if ($('#category-filter')) $('#category-filter').value = state.category;
   if ($('#task-filter')) $('#task-filter').value = state.taskFilter;
+  if ($('#task-sort')) $('#task-sort').value = state.taskSort;
   if (focus && document.getElementById(focus)) {
     document.getElementById(focus).focus({preventScroll:true});
     if (selection != null && ['text', 'search'].includes(document.getElementById(focus).type)) document.getElementById(focus).setSelectionRange(selection, selection);
@@ -701,6 +731,7 @@ function renderDetailOnly(messageId) {
   const message = state.snapshot.messages.find(m => m.id === messageId);
   holder.innerHTML = message ? messageDetail(message) : empty('先选一条消息', '通知原文、上下文和分析结果会显示在这里。');
   hydrateIcons();
+  loadMessageImages(holder);
 }
 async function navigate(page) {
   if(state.page==='sources'&&page!=='sources'&&!window.experience?.confirmLeaveSources())return false;
@@ -906,24 +937,8 @@ function readSourcesForm() {
   }
   return c;
 }
-const SOURCE_STATE_LABEL = { connected: '已连接', starting: '连接中', reconnecting: '重连中', warning: '部分可用', error: '读取失败', unauthorized: '登录过期', offline: '离线', pending: '等待上传', stopped: '未启动' };
-function paintSourceBadges(value) {
-  const sources = value?.sources || {};
-  for (const name of ['qq', 'wechat']) {
-    const badge = $('#source-' + name);
-    if (!badge) continue;
-    if (!window.desktop) { badge.hidden = true; continue; }
-    const info = sources[name] || {};
-    const state = info.state || (value?.source === name ? value.state : '') || 'stopped';
-    badge.hidden = false;
-    badge.dataset.state = state;
-    const label = SOURCE_STATE_LABEL[state] || state;
-    badge.title = `${name === 'qq' ? 'QQ' : '微信'}采集：${label}${info.message ? ' · ' + info.message : ''}`;
-  }
-}
 function showCollectorState(value) {
   value={...value,message:String(value.message||'').replace(/^Error invoking remote method '[^']+': (?:Error: )?/,'')};
-  paintSourceBadges(value);
   const el = $('#collector-status');
   const problems = Object.values(value.sources || {}).filter(x => ['error','unauthorized','offline','reconnecting','warning'].includes(x.state));
   if (el) el.textContent = problems.length ? problems.map(x => x.message).join('；') : value.source === 'queue' ? `采集运行中 · ${value.count} 条消息等待上传` : value.message || ({ starting: '正在连接…', connected: '已连接，正在同步所选会话的新消息', stopped: '采集已停止' }[value.state] || value.state);
@@ -1200,15 +1215,19 @@ function cmdkRender() {
 }
 function syncCommandPaletteBounds() {
   if (innerWidth > 620) return;
-  const topbar = $('.main .topbar'), nav = $('.workspace > .sidebar');
+  const topbar = $('#workspace .main .topbar'), nav = $('#workspace > .sidebar');
   const viewport = window.visualViewport;
   const height = Math.round(viewport?.height || innerHeight || 0);
   const offsetTop = Math.round(viewport?.offsetTop || 0);
   const root = document.documentElement.style;
   if (height > 0) root.setProperty('--jjb-viewport-height', height + 'px');
   root.setProperty('--jjb-viewport-offset-top', offsetTop + 'px');
-  if (topbar) root.setProperty('--jjb-mobile-topbar-bottom', Math.ceil(topbar.getBoundingClientRect().bottom) + 'px');
-  if (nav) root.setProperty('--jjb-mobile-nav-offset', Math.ceil(innerHeight - nav.getBoundingClientRect().top) + 'px');
+  const topbarBottom = topbar ? Math.ceil(topbar.getBoundingClientRect().bottom - offsetTop) : 0;
+  root.setProperty('--jjb-mobile-topbar-bottom', Math.min(Math.max(topbarBottom, 0), height) + 'px');
+  if (nav) {
+    const navOffset = Math.ceil(nav.getBoundingClientRect().height);
+    root.setProperty('--jjb-mobile-nav-offset', Math.min(Math.max(navOffset, 0), height) + 'px');
+  }
 }
 function cmdkShow() {
   if (!state.session || cmdkOpen || document.querySelector('dialog[open]')) return;
@@ -1216,10 +1235,10 @@ function cmdkShow() {
   cmdkReturnFocus=document.activeElement;
   $('#workspace').inert=true;document.body.classList.add('cmdk-open');
   cmdkOpen = true; state.cmdkIndex = 0; cmdkItems = cmdkFilter('');
-  syncCommandPaletteBounds();
   const backdrop = $('#cmdk-backdrop');
   const panel = backdrop.querySelector('.cmdk');
   backdrop.hidden = false;
+  syncCommandPaletteBounds();
   $('#cmdk-input').value = ''; cmdkRender(); $('#cmdk-input').focus();
   if (window.uiMotion) return uiMotion.openSurface(panel, backdrop);
   backdrop.classList.add('show');
@@ -1331,14 +1350,38 @@ window.jjbOpenTask = async id => {
   }
 };
 window.addEventListener('hashchange', () => applyHashRoute());
+let searchComposition = null;
+function isSearchInput(target) {
+  return target instanceof HTMLInputElement && ['inbox-search', 'task-search'].includes(target.id);
+}
+function compositionActive() {
+  return Boolean(searchComposition?.isConnected || document.activeElement?.isComposing);
+}
+document.addEventListener('compositionstart', event => {
+  if (isSearchInput(event.target)) searchComposition = event.target;
+});
+document.addEventListener('compositionend', event => {
+  if (searchComposition !== event.target) return;
+  searchComposition = null;
+  state.search = event.target.value;
+  render();
+});
+document.addEventListener('compositioncancel', event => {
+  if (searchComposition === event.target) searchComposition = null;
+});
 document.addEventListener('input', event => {
-  if (['inbox-search', 'task-search'].includes(event.target.id)) { state.search = event.target.value; render(); }
+  if (isSearchInput(event.target) && !searchComposition && !event.isComposing) { state.search = event.target.value; render(); }
 });
 document.addEventListener('change', async event => {
   try {
     if (event.target.id === 'source-filter') { state.source = event.target.value; render(); }
     if (event.target.id === 'category-filter') { state.category = event.target.value; render(); }
     if (event.target.id === 'task-filter') { state.taskFilter = event.target.value; render(); }
+    if (event.target.id === 'task-sort') {
+      state.taskSort = TASK_SORT_OPTIONS.includes(event.target.value) ? event.target.value : 'created-desc';
+      try { localStorage.setItem('jjb-task-sort', state.taskSort); } catch {}
+      render();
+    }
     if (event.target.dataset.context) { if (event.target.checked) state.contexts.add(event.target.dataset.context); else state.contexts.delete(event.target.dataset.context); render(); }
     if (event.target.id === 'reminder-preset') {
       const task = state.snapshot.tasks.find(t => t.id === state.taskId); if (!task) return;
@@ -1406,7 +1449,6 @@ $('#logout').addEventListener('click', async () => {
   state.generation++;window.liveAnalysis?.cancelAll();window.statistics?.unmount();window.shelf?.reset();clearTimeout(reconnectTimer); clearTimeout(cacheTimer); state.socket?.close();
   if (window.desktop) { await desktop.stopCollector(); await desktop.remove('session'); } else localStorage.removeItem('jjb-session');
   window.pluginUI?.stop();state.session = null; state.selected = null; state.contexts.clear(); state.pending = []; state.snapshot = { tasks: [], messages: [], cursor: 0 };
-  for (const name of ['qq','wechat']) { const badge = $('#source-' + name); if (badge) badge.hidden = true; }
   $('#workspace').hidden = true; $('#auth').hidden = false;
   if (window.mobile) await mobile.logout();
 });
@@ -1414,7 +1456,6 @@ $('#refresh').addEventListener('click', () => { refresh(); flushOutbox(); });
 window.addEventListener('online', () => { refresh(); flushOutbox(); if (!state.socket || state.socket.readyState > 1) syncSocket(); });
 window.addEventListener('offline', () => online(false));
 window.desktop?.onCollector(showCollectorState);
-window.desktop?.collectorState().then(showCollectorState).catch(() => {});
 setInterval(() => { if (state.session) { refresh({ renderPage: false }); if (state.pending.length) flushOutbox(); } }, 30000);
 (async () => {
   hydrateIcons();

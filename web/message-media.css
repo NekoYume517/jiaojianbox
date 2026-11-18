@@ -1,0 +1,6 @@
+.message-media{display:flex;align-items:flex-start;gap:10px;margin:0 0 20px;padding:12px;background:var(--surface);border:1px solid var(--soft-line);border-radius:8px;max-width:100%;overflow:hidden}
+.message-media img{display:block;max-width:min(100%,560px);max-height:420px;width:auto;height:auto;object-fit:contain;border-radius:6px;cursor:zoom-in}
+.message-media.missing{color:var(--muted);font-size:.857rem;line-height:1.6}
+.message-media.missing svg{flex:none;width:18px;height:18px}
+@media(max-width:620px){.message-media img{max-height:360px}}
+label:has(> #llm-batch-triage){display:none!important}

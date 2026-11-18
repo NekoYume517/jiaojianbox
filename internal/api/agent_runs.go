@@ -28,7 +28,7 @@ func (s *Server) queueAgentRun(ctx context.Context, db store.SQL, user, id, sess
 }
 
 func (s *Server) trackAgentRun(ctx context.Context, user, id, session, messageID string, jsonOutput, automatic bool, p progress) (context.Context, progress, func(bool)) {
-	s.transaction(ctx, func(db store.SQL) any {
+	s.batchTransaction(ctx, func(db store.SQL) any {
 		s.queueAgentRun(ctx, db, user, id, session, messageID)
 		state := str(one(ctx, db, "SELECT state FROM agent_runs WHERE id=? AND user_id=?", id, user), "state")
 		if state == "cancelled" && automatic {
@@ -93,7 +93,7 @@ func (s *Server) trackAgentRun(ctx context.Context, user, id, session, messageID
 		safe, stop := context.WithTimeout(context.WithoutCancel(child), 3*time.Second)
 		defer stop()
 		attempt(func() any {
-			s.transaction(safe, func(db store.SQL) any {
+			s.batchTransaction(safe, func(db store.SQL) any {
 				exec(safe, db, "UPDATE agent_runs SET state=?,payload=?,updated_at=? WHERE id=? AND user_id=? AND state IN ('queued','running')", live.payload["state"], store.JSON(live.payload), store.Now(), id, user)
 				if stage != "receiving" {
 					event(safe, db, user, "agent.run.upsert", session)
@@ -118,7 +118,7 @@ func (s *Server) trackAgentRun(ctx context.Context, user, id, session, messageID
 		defer live.mu.Unlock()
 		live.payload["state"] = state
 		attempt(func() any {
-			s.transaction(safe, func(db store.SQL) any {
+			s.batchTransaction(safe, func(db store.SQL) any {
 				exec(safe, db, "UPDATE agent_runs SET state=?,payload=?,updated_at=? WHERE id=? AND user_id=? AND state IN ('queued','running')", state, store.JSON(live.payload), store.Now(), id, user)
 				event(safe, db, user, "agent.run.upsert", session)
 				return nil
@@ -130,44 +130,48 @@ func (s *Server) trackAgentRun(ctx context.Context, user, id, session, messageID
 	return child, callback, finish
 }
 
-// A notification classifier streams JSON. Expose the summary progressively,
+// A notification classifier streams JSON. Expose summaries progressively,
 // while keeping structural JSON and incomplete escapes out of the conversation.
 func analysisLiveSummary(raw string) string {
-	start := strings.Index(raw, `"summary"`)
-	if start < 0 {
-		return ""
-	}
-	raw = raw[start+9:]
-	colon := strings.Index(raw, ":")
-	if colon < 0 {
-		return ""
-	}
-	raw = strings.TrimSpace(raw[colon+1:])
-	if !strings.HasPrefix(raw, `"`) {
-		return ""
-	}
-	end := 1
-	escaped := false
-	for end < len(raw) {
-		if !escaped && raw[end] == '"' {
+	var summaries []string
+	for start := strings.Index(raw, `"summary"`); start >= 0; start = strings.Index(raw, `"summary"`) {
+		raw = raw[start+9:]
+		colon := strings.Index(raw, ":")
+		if colon < 0 {
 			break
 		}
-		if !escaped && raw[end] == '\\' {
-			escaped = true
-		} else {
-			escaped = false
+		raw = strings.TrimSpace(raw[colon+1:])
+		if !strings.HasPrefix(raw, `"`) {
+			break
 		}
-		end++
-	}
-	fragment := raw[:end]
-	for attempts := 0; attempts < 12 && len(fragment) > 0; attempts++ {
-		var text string
-		if json.Unmarshal([]byte(fragment+`"`), &text) == nil {
-			return text
+		end := 1
+		escaped := false
+		for end < len(raw) {
+			if !escaped && raw[end] == '"' {
+				break
+			}
+			if !escaped && raw[end] == '\\' {
+				escaped = true
+			} else {
+				escaped = false
+			}
+			end++
 		}
-		fragment = fragment[:len(fragment)-1]
+		fragment := raw[:end]
+		for attempts := 0; attempts < 12 && len(fragment) > 0; attempts++ {
+			var text string
+			if json.Unmarshal([]byte(fragment+`"`), &text) == nil {
+				summaries = append(summaries, text)
+				break
+			}
+			fragment = fragment[:len(fragment)-1]
+		}
+		if end >= len(raw) {
+			break
+		}
+		raw = raw[end:]
 	}
-	return ""
+	return strings.Join(summaries, "\n")
 }
 
 func (s *Server) liveSessionRuns(ctx context.Context, user, session string, history bool) []Object {
@@ -210,6 +214,10 @@ func (s *Server) stopAgentRun(ctx context.Context, user, session, runID string) 
 		exec(ctx, db, "UPDATE agent_runs SET state='cancelled',payload=?,updated_at=? WHERE id=? AND user_id=?", store.JSON(payload), store.Now(), selected["id"], user)
 		if mid := str(selected, "source_message_id"); mid != "" {
 			exec(ctx, db, "UPDATE analysis_jobs SET state='cancelled',error='',next_at=0 WHERE user_id=? AND message_id=?", user, mid)
+		}
+		if batchKey := strings.TrimPrefix(str(selected, "id"), "notification-batch-"); batchKey != str(selected, "id") {
+			exec(ctx, db, "UPDATE analysis_jobs SET state='cancelled',error='',next_at=0 WHERE user_id=? AND window_key=?", user, batchKey)
+			exec(ctx, db, "UPDATE analysis_batches SET state='cancelled',updated_at=? WHERE id=? AND user_id=?", store.Now(), batchKey, user)
 		}
 		event(ctx, db, user, "agent.run.upsert", session)
 		return nil

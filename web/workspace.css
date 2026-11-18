@@ -462,6 +462,15 @@ select.segment-source{position:absolute!important;width:1px!important;height:1px
 /* Sidebar hover is text-only, Magpie style; the selected row keeps the single moving surface. */
 .sidebar nav button:hover:not(.active),.sidebar-bottom [data-nav]:hover:not(.active){background:transparent;color:var(--ink)}
 
+/* One concentric focus surface for text fields; no competing outline and halo. */
+:is(input:not([type=checkbox],[type=radio],[type=file],[type=hidden],[type=range],[type=color],[type=button],[type=submit],[type=reset]),textarea,select):focus,
+:is(input:not([type=checkbox],[type=radio],[type=file],[type=hidden],[type=range],[type=color],[type=button],[type=submit],[type=reset]),textarea,select):focus-visible{outline:1px solid var(--focus);outline-offset:1px;box-shadow:none;border-color:var(--focus)}
+.search:focus-within{outline:1px solid var(--focus);outline-offset:1px}
+.search :is(input,input:focus,input:focus-visible){outline:0;outline-offset:0;box-shadow:none}
+.task-sort-control{display:flex;align-items:center;gap:7px;margin:0;color:var(--muted);font-size:.857143rem;white-space:nowrap}
+.task-sort-control select{margin:0;min-width:132px}
+@media(max-width:620px){.task-sort-control{flex:1;min-width:0}.task-sort-control>span{flex:none}.task-sort-control select{flex:1;min-width:0}}
+
 /* Android top-layer dialogs: no source clipping; header/footer remain visible. */
 :root[data-platform=android] dialog.motion-dialog[open]{display:flex;flex-direction:column;max-height:calc(var(--jjb-viewport-height,800px) - 24px)!important;overflow:hidden;clip-path:none!important}
 :root[data-platform=android] dialog.motion-dialog>form{display:flex;flex-direction:column;min-height:0;max-height:inherit;margin:0}

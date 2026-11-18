@@ -1,10 +1,12 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -15,8 +17,6 @@ import (
 // Exercise the real ingestion queue with the first LLM request deliberately held
 // open while a follow-up link arrives, both with and without automatic writes.
 func TestFollowupTriggerQueueAndSettings(t *testing.T) {
-	// 自动分析是阶段化的：同一会话窗口的两条消息合并成一次模型调用，
-	// 模型直接给出本阶段的任务。auto_task 决定是否把任务落成待办。
 	for _, autoTask := range []bool{false, true} {
 		name := "analysis_only"
 		if autoTask {
@@ -25,46 +25,51 @@ func TestFollowupTriggerQueueAndSettings(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			s := testServer(t)
 			token, _ := login(t, s, "followup-queue")
+			started := make(chan struct{}, 1)
+			release := make(chan struct{})
+			var once sync.Once
+			unblock := func() { once.Do(func() { close(release) }) }
 			var requests atomic.Int32
-			var sawFirstMessage atomic.Bool
+			var sawFirstTask, sawFirstMessage atomic.Bool
 			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				var body Object
 				if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 					w.WriteHeader(400)
 					return
 				}
-				requests.Add(1)
-				messages := objects(body["messages"])
-				input := decodeObject(str(messages[len(messages)-1], "content"))
-				stage := object(input["STAGE"])
-				stageMessages := objects(stage["messages"])
-				ids := []any{}
-				for _, m := range stageMessages {
-					if strings.Contains(str(m, "text"), "纸质版下周二图像处理课前收") {
-						sawFirstMessage.Store(true)
+				n := requests.Add(1)
+				if n == 1 {
+					started <- struct{}{}
+					select {
+					case <-release:
+					case <-r.Context().Done():
+						return
 					}
-					ids = append(ids, str(m, "id"))
 				}
-				// 阶段响应：两条消息共同指向同一个任务，补充了提交链接。
-				result := Object{
-					"summary": "3D建模电子版作业的提交要求与链接",
-					"tasks": []any{Object{
-						"title":         "3D建模电子版作业",
-						"summary":       "周五中午12点前提交电子版，纸质版下周二课前收",
-						"message_ids":   ids,
-						"confidence":    .96,
-						"due_at":        "2026-11-13T12:00:00+08:00",
-						"urgency":       "high",
-						"requirements":  []any{},
-						"reason":        "通知含明确任务",
-						"submit_url":    "https://upload.bansonic.top/ITrGTlKl",
-						"evidence":      []any{"周五中午12点前提交3D建模电子版作业"},
-					}},
-					"no_task_messages": []any{},
+				messages := objects(body["messages"])
+				parts := objects(object(messages[len(messages)-1])["content"])
+				input := decodeObject(str(object(parts[0]), "text"))
+				original := first(objects(input["MESSAGES"]))
+				result := Object{"id": original["id"], "classification": "actionable", "confidence": .96, "title": "3D建模电子版作业", "summary": "周五中午12点前提交电子版，纸质版下周二课前收", "due_at": "2026-11-13T12:00:00+08:00", "urgency": "high", "requirements": []any{}, "reason": "通知含明确任务"}
+				if n > 1 {
+					tasks := objects(input["USER_TASKS"])
+					if len(tasks) > 0 {
+						sawFirstTask.Store(true)
+						result["duplicate"] = true
+						result["duplicate_of"] = str(tasks[0], "id")
+					}
+					for _, m := range messages[1:] {
+						if strings.Contains(str(m, "content"), "纸质版下周二图像处理课前收") {
+							sawFirstMessage.Store(true)
+						}
+					}
+					result["submit_url"] = "https://upload.bansonic.top/ITrGTlKl"
+					result["summary"] = "补充已有3D建模作业的提交链接"
 				}
-				writeJSON(w, 200, textCompletion(store.JSON(result)))
+				writeJSON(w, 200, textCompletion(store.JSON(Object{"items": []any{result}})))
 			}))
 			defer upstream.Close()
+			defer unblock()
 			if code, out := call(t, s, "PUT", "/api/settings/llm", token, Object{"base_url": upstream.URL, "model": "queue-fixture", "auto_analyze": true, "auto_task": autoTask}); code != 200 {
 				t.Fatal(out)
 			}
@@ -75,8 +80,9 @@ func TestFollowupTriggerQueueAndSettings(t *testing.T) {
 				}
 				return m
 			}
-			ingest("requirements", "请大家于本周五中午12点前提交3D建模电子版作业，纸质版下周二图像处理课前收", "2026-11-12T10:39:00+08:00")
-			ingest("link", "三维建模期中过程性考核1收集\nhttps://upload.bansonic.top/ITrGTlKl", "2026-11-12T10:42:00+08:00")
+			first := ingest("requirements", "请大家于本周五中午12点前提交3D建模电子版作业，纸质版下周二图像处理课前收", "2026-11-12T10:39:00+08:00")
+			exec(context.Background(), s.Store.DB, "UPDATE analysis_batches SET ready_at=0 WHERE id=?", first["analysis_batch_id"])
+			s.wakeNotificationWorker()
 			permission := "restricted"
 			if autoTask {
 				permission = "full"
@@ -86,32 +92,50 @@ func TestFollowupTriggerQueueAndSettings(t *testing.T) {
 			if code, value := call(t, s, "PATCH", "/api/agent/sessions/"+sessionID, token, Object{"permission": permission}); code != 200 {
 				t.Fatal(value)
 			}
-			deadline := time.Now().Add(8 * time.Second)
+			select {
+			case <-started:
+			case <-time.After(5 * time.Second):
+				t.Fatal("first analysis did not start")
+			}
+			second := ingest("link", "三维建模期中过程性考核1收集\nhttps://upload.bansonic.top/ITrGTlKl", "2026-11-12T10:42:00+08:00")
+			exec(context.Background(), s.Store.DB, "UPDATE analysis_batches SET ready_at=0 WHERE id=?", second["analysis_batch_id"])
+			s.wakeNotificationWorker()
+			time.Sleep(600 * time.Millisecond)
+			if requests.Load() != 1 {
+				t.Fatal("followup ran before first completed", requests.Load())
+			}
+			_, snap := call(t, s, "GET", "/api/snapshot", token, nil)
+			states := map[string]string{}
+			for _, m := range objects(snap["messages"]) {
+				states[str(m, "id")] = str(m, "analysis_state")
+			}
+			if states[str(first, "id")] != "running" || states[str(second, "id")] != "queued" {
+				t.Fatal(states)
+			}
+			unblock()
+			deadline := time.Now().Add(6 * time.Second)
 			done := false
-			var snap Object
 			for time.Now().Before(deadline) {
 				_, snap = call(t, s, "GET", "/api/snapshot", token, nil)
-				finished := 0
 				for _, m := range objects(snap["messages"]) {
-					if len(object(m["analysis"])) > 0 {
-						finished++
+					if str(m, "id") == str(second, "id") && len(object(m["analysis"])) > 0 {
+						done = true
 					}
 				}
-				if finished >= 2 {
-					done = true
+				if done {
 					break
 				}
 				time.Sleep(30 * time.Millisecond)
 			}
-			if !done || requests.Load() != 1 || !sawFirstMessage.Load() {
-				t.Fatal("stage window did not pack both messages into one call", requests.Load(), sawFirstMessage.Load(), snap)
+			if !done || requests.Load() != 2 || !sawFirstMessage.Load() {
+				t.Fatal("followup did not finish with previous message context", requests.Load(), snap)
 			}
 			tasks := objects(snap["tasks"])
 			if autoTask {
-				if len(tasks) != 1 || str(tasks[0], "submit_url") != "https://upload.bansonic.top/ITrGTlKl" || len(objects(tasks[0]["source_messages"])) != 2 {
-					t.Fatal("stage task missing merged link or sources", tasks)
+				if len(tasks) != 1 || !sawFirstTask.Load() || str(tasks[0], "submit_url") != "https://upload.bansonic.top/ITrGTlKl" || len(objects(tasks[0]["source_messages"])) != 2 {
+					t.Fatal("followup failed to update first task", tasks)
 				}
-			} else if len(tasks) != 0 {
+			} else if len(tasks) != 0 || sawFirstTask.Load() {
 				t.Fatal("analysis-only mode wrote tasks", tasks)
 			}
 			_, out := call(t, s, "GET", "/api/agent/sessions", token, nil)
@@ -119,7 +143,7 @@ func TestFollowupTriggerQueueAndSettings(t *testing.T) {
 			if len(sessions) != 1 || num(sessions[0], "message_count") != 4 || str(sessions[0], "origin_label") != "微信触发器" {
 				t.Fatal("expected one ongoing chat session", sessions)
 			}
-			t.Logf("auto_task=%v: one stage call; tasks=%d; one session, four messages", autoTask, len(tasks))
+			t.Logf("auto_task=%v: running + queued; two requests completed in order; tasks=%d; one session, four messages", autoTask, len(tasks))
 		})
 	}
 }

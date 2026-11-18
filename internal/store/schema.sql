@@ -8,12 +8,17 @@
         CREATE TABLE IF NOT EXISTS events(seq INTEGER PRIMARY KEY AUTOINCREMENT, user_id TEXT REFERENCES users(id), kind TEXT, entity_id TEXT, at TEXT);
         CREATE INDEX IF NOT EXISTS ix_events_owner ON events(user_id,seq);
         CREATE INDEX IF NOT EXISTS ix_messages_owner ON messages(user_id,created_at);
+CREATE TABLE IF NOT EXISTS message_media(id TEXT PRIMARY KEY,user_id TEXT NOT NULL REFERENCES users(id),message_id TEXT NOT NULL REFERENCES messages(id),name TEXT NOT NULL,mime TEXT NOT NULL,size INTEGER NOT NULL,sha256 TEXT NOT NULL,created_at TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS ix_message_media_owner ON message_media(user_id,message_id);
+CREATE TABLE IF NOT EXISTS analysis_batches(id TEXT PRIMARY KEY,user_id TEXT NOT NULL,source TEXT NOT NULL,account_id TEXT NOT NULL,conversation_id TEXT NOT NULL,session_id TEXT NOT NULL,state TEXT NOT NULL DEFAULT 'collecting',latest_at TEXT NOT NULL,ready_at REAL NOT NULL,error TEXT NOT NULL DEFAULT '',attempts INTEGER NOT NULL DEFAULT 0,created_at TEXT NOT NULL,updated_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS analysis_batch_items(batch_id TEXT NOT NULL REFERENCES analysis_batches(id),message_id TEXT NOT NULL REFERENCES messages(id),PRIMARY KEY(batch_id,message_id));
+CREATE INDEX IF NOT EXISTS ix_analysis_batches_ready ON analysis_batches(state,ready_at);
         CREATE INDEX IF NOT EXISTS ix_tasks_owner ON tasks(user_id);
         CREATE INDEX IF NOT EXISTS ix_files_task ON attachments(user_id,task_id);
         CREATE TABLE IF NOT EXISTS llm_settings(user_id TEXT PRIMARY KEY REFERENCES users(id), payload TEXT, secret TEXT);
         CREATE TABLE IF NOT EXISTS llm_calls(id TEXT PRIMARY KEY,user_id TEXT REFERENCES users(id),kind TEXT,model TEXT,status TEXT,started_at TEXT,duration_ms REAL,first_token_ms REAL,prompt_tokens INTEGER,completion_tokens INTEGER,total_tokens INTEGER,http_status INTEGER,usage_reported INTEGER,streamed INTEGER);
         CREATE INDEX IF NOT EXISTS llm_calls_owner_time ON llm_calls(user_id,started_at);
-        CREATE TABLE IF NOT EXISTS analysis_jobs(id INTEGER PRIMARY KEY AUTOINCREMENT, user_id TEXT, message_id TEXT UNIQUE, state TEXT DEFAULT 'queued', attempts INTEGER DEFAULT 0, next_at REAL DEFAULT 0, error TEXT DEFAULT '');
+        CREATE TABLE IF NOT EXISTS analysis_jobs(id INTEGER PRIMARY KEY AUTOINCREMENT, user_id TEXT, message_id TEXT UNIQUE, state TEXT DEFAULT 'queued', attempts INTEGER DEFAULT 0, next_at REAL DEFAULT 0, error TEXT DEFAULT '', session_id TEXT DEFAULT '', window_key TEXT DEFAULT '');
         CREATE TABLE IF NOT EXISTS device_auth(device_hash TEXT PRIMARY KEY, user_code TEXT UNIQUE, expires REAL, state TEXT DEFAULT 'pending', user_id TEXT, token TEXT);
         CREATE TABLE IF NOT EXISTS shelf_meta(file_id TEXT PRIMARY KEY REFERENCES attachments(id) ON DELETE CASCADE, user_id TEXT REFERENCES users(id), category TEXT, suggestion TEXT, created_at TEXT, version INTEGER DEFAULT 1);
 

@@ -17,10 +17,12 @@ import traceback
 import time
 from pathlib import Path
 
+import base64
+import binascii
 import httpx
 import websockets
 
-from .normalize import qq, wechat
+from .normalize import analysis_eligible, qq, wechat
 
 logger = logging.getLogger(__name__)
 
@@ -148,6 +150,10 @@ def prefetch_names(db, ids):
         logger.debug("批量昵称预取失败", exc_info=True)
 
 
+def analysis_eligible_payload(payload):
+    return analysis_eligible(payload)
+
+
 def list_wechat(config):
     with contextlib.redirect_stdout(sys.stderr):
         db = wechat_database(config)
@@ -193,6 +199,11 @@ def wechat_loop(config, queue, stop):
             with contextlib.redirect_stdout(sys.stderr):
                 db = wechat_database(config)
             backend = getattr(db, "backend", "legacy")
+            from .wechat_media import LocalImageReader
+            image_reader = LocalImageReader(db, Path(config["_wechat_cache_root"]) / "media")
+            media_db = db
+            media_reader = image_reader
+            self_id = getattr(db, "wxid", db.account)
             if config.get("wechat_account") and db.account != config["wechat_account"]:
                 raise ValueError("微信登录账号发生变化")
             names = {}
@@ -207,7 +218,7 @@ def wechat_loop(config, queue, stop):
                     prefetch_names(db, [row.get("sender_username") for row in latest])
                     for row in latest:
                         if int(row["sort_seq"]) == start:
-                            queue.seed(wechat(row, db.account, chat, names[chat]))
+                            queue.seed(wechat(row, db.account, chat, names[chat], self_id=self_id))
                     queue.cursor(key, start)
             emit(source="wechat", state="connected", account=db.account, backend=backend,
                  message="微信会话已连接，正在监听新消息")
@@ -227,8 +238,31 @@ def wechat_loop(config, queue, stop):
                     for row in rows:
                         sender = row.get("sender_username") or ""
                         name = db.get_nickname(sender) if sender else ""
-                        payload = wechat(row, db.account, chat, names[chat], name)
+                        media = None
+                        if str(row.get("type")) == "图片" and config.get("wechat_images", True):
+                            try:
+                                if backend == "wcdb":
+                                    if media_db is db:
+                                        from .wechat_reader import open_database
+                                        media_db = open_database(config)
+                                        media_reader = LocalImageReader(media_db, Path(config["_wechat_cache_root"]) / "media")
+                                    original = media_db.get_message_row(chat, row["local_id"], shard=row.get("shard") or None)
+                                    if original:
+                                        row["packed_info"] = original.get("packed_info")
+                                elif not row.get("packed_info"):
+                                    original = db.get_message_row(chat, row["local_id"], shard=row.get("shard") or None)
+                                    if original:
+                                        row["packed_info"] = original.get("packed_info")
+                                media = media_reader.read(row, chat)
+                            except Exception:
+                                logger.debug("本机图片暂不可读取", exc_info=True)
+                                media = {"kind": "image", "status": "decrypt_failed"}
+                        payload = wechat(row, db.account, chat, names[chat], name, self_id, media)
                         keywords = [s.strip() for s in config.get("capture_keywords", "").split(",") if s.strip()]
+                        if not analysis_eligible_payload(payload):
+                            queue.seed(payload)
+                            queue.advance(key, int(row["sort_seq"]))
+                            continue
                         if keywords and not any(word in payload["text"] for word in keywords):
                             queue.seed(payload)
                             queue.advance(key, int(row["sort_seq"]))
@@ -244,6 +278,7 @@ def wechat_loop(config, queue, stop):
             from .wechat_reader import record_error
             diagnostic=record_error(config,exc,stage)
             if db and hasattr(db,"close"):db.close()
+            if 'media_db' in locals() and media_db is not db and hasattr(media_db,"close"):media_db.close()
             import gc
             gc.collect()
             detail="解密缓存被占用或无写入权限" if isinstance(exc,PermissionError) and diagnostic.get("file") and "wechat-cache" in diagnostic["file"] else "微信读取权限不足" if isinstance(exc,PermissionError) else "微信读取暂不可用"
@@ -304,6 +339,9 @@ async def qq_loop(config, queue, stopped):
                 emit(source="qq", state="warning", message="QQ 积压超过本轮补读上限，下次连接将继续补读")
 
     def accept(payload):
+        if not analysis_eligible_payload(payload):
+            queue.seed(payload)
+            return
         keywords = [s.strip() for s in config.get("capture_keywords", "").split(",") if s.strip()]
         if not keywords or any(word in payload["text"] for word in keywords):
             queue.add(payload)
@@ -341,7 +379,21 @@ async def uploader(config, queue, stopped):
             rows = queue.pending()
             try:
                 for identity, body in rows:
-                    result = await client.post(base + "/api/messages", content=body.encode(), headers={"Content-Type": "application/json"})
+                    packet = json.loads(body)
+                    media = packet.pop("media", None)
+                    if isinstance(media, dict) and media.get("data"):
+                        try:
+                            image = base64.b64decode(media.pop("data"), validate=True)
+                            packet["media"] = media
+                            result = await client.post(base + "/api/messages", data={"payload": json.dumps(packet, ensure_ascii=False)},
+                                files={"media": ("wechat-image." + media.get("extension", "jpg"), image, media.get("mime", "image/jpeg"))})
+                        except (ValueError, binascii.Error):
+                            packet["media"] = {"kind": "image", "status": "decrypt_failed"}
+                            result = await client.post(base + "/api/messages", json=packet)
+                    else:
+                        if media:
+                            packet["media"] = media
+                        result = await client.post(base + "/api/messages", json=packet)
                     if result.status_code in (200, 201):
                         queue.acknowledge(identity)
                     elif result.status_code == 401:
@@ -429,14 +481,17 @@ def main():
         import sqlite3
         import psutil
         import zstandard
+        import imageio_ffmpeg
+        from wechatauto.media import MediaDownloader
         from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
         from wechatauto.db import WeChatDB
         db = sqlite3.connect(":memory:")
         assert db.execute("select 1").fetchone() == (1,)
         db.close()
         Cipher(algorithms.AES(bytes(32)), modes.CBC(bytes(16))).encryptor().finalize()
-        assert psutil.Process().pid > 0 and WeChatDB
-        emit(state="ready", dependencies="ok", zstd=zstandard.__version__, bundled=bool(getattr(sys, "frozen", False)))
+        assert psutil.Process().pid > 0 and WeChatDB and MediaDownloader
+        assert Path(imageio_ffmpeg.get_ffmpeg_exe()).is_file()
+        emit(state="ready", dependencies="ok", zstd=zstandard.__version__, bundled=bool(getattr(sys, "frozen", False)), media=True, ffmpeg=True)
         return
     try:
         config = read_config(sys.stdin)

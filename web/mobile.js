@@ -13,8 +13,17 @@
   function syncChromeMetrics() {
     const topbar = document.querySelector('.main .topbar');
     const nav = document.querySelector('.workspace > .sidebar');
-    if (topbar) root.style.setProperty('--jjb-mobile-topbar-bottom', Math.ceil(topbar.getBoundingClientRect().bottom) + 'px');
-    if (nav) root.style.setProperty('--jjb-mobile-nav-offset', Math.ceil(window.innerHeight - nav.getBoundingClientRect().top) + 'px');
+    const viewport = window.visualViewport;
+    const height = Math.round(viewport?.height || window.innerHeight || 0);
+    const offsetTop = Math.round(viewport?.offsetTop || 0);
+    if (topbar) {
+      const bottom = Math.ceil(topbar.getBoundingClientRect().bottom - offsetTop);
+      root.style.setProperty('--jjb-mobile-topbar-bottom', Math.min(Math.max(bottom, 0), height) + 'px');
+    }
+    if (nav) {
+      const navHeight = Math.ceil(nav.getBoundingClientRect().height);
+      root.style.setProperty('--jjb-mobile-nav-offset', Math.min(Math.max(navHeight, 0), height) + 'px');
+    }
   }
   syncViewport();
   window.visualViewport?.addEventListener('resize', syncViewport);

@@ -307,13 +307,22 @@ func (s *Server) runAgentSessionChat(ctx context.Context, user, sessionID, conte
 			}
 			toolEvent["duration_ms"] = time.Since(toolStart).Milliseconds()
 			toolEvent["result_preview"] = clip(store.JSON(result), 12000)
+			if image := object(result["image"]); len(image) > 0 {
+				toolEvent["result_preview"] = `{"image":"actual-image-attached"}`
+			}
 			toolEvents = append(toolEvents, toolEvent)
 			notify(p, Object{"stage": "tool", "tool": toolEvent})
 			raw := store.JSON(result)
 			if len(raw) > 80000 {
 				raw = store.JSON(Object{"error": "工具结果过长，已截断", "preview": clip(raw, 76000)})
 			}
-			conversation = append(conversation, Object{"role": "tool", "tool_call_id": callItem["id"], "content": raw})
+			if image := object(result["image"]); len(image) > 0 {
+				conversation = append(conversation, Object{"role": "tool", "tool_call_id": callItem["id"], "content": []any{
+					Object{"type": "text", "text": store.JSON(Object{"message_id": result["message_id"], "image": "actual-image-attached"})}, image,
+				}})
+			} else {
+				conversation = append(conversation, Object{"role": "tool", "tool_call_id": callItem["id"], "content": raw})
+			}
 		}
 	}
 	if finalText == "" {
@@ -455,6 +464,9 @@ func agentToolSchemas(permission string) []Object {
 			"query": Object{"type": "string"},
 			"limit": Object{"type": "integer", "minimum": 1, "maximum": 50},
 		}, "query"),
+		toolFunction("get_message_image", "读取某条通知中的实际图片。先通过 search_messages 获取带图片的消息 ID。", Object{
+			"message_id": Object{"type": "string"},
+		}, "message_id"),
 		toolFunction("list_files", "列出文件收纳中的数据。", Object{
 			"limit": Object{"type": "integer", "minimum": 1, "maximum": 100},
 		}),
@@ -529,6 +541,7 @@ func (s *Server) runAgentToolSafe(ctx context.Context, user, permission, name st
 }
 
 func (s *Server) runAgentTool(ctx context.Context, user, permission, name string, args Object) Object {
+	config, _ := s.resolveLLM(ctx, user)
 	switch name {
 	case "list_tasks":
 		return s.agentListTasks(ctx, user, args)
@@ -551,6 +564,17 @@ func (s *Server) runAgentTool(ctx context.Context, user, permission, name string
 			AND (json_extract(payload,'$.text') LIKE ? OR json_extract(payload,'$.conversation_name') LIKE ?)
 			ORDER BY rowid DESC LIMIT ?`, user, queryText, queryText, limit)
 		return Object{"messages": s.messages(ctx, s.Store.DB, rows)}
+	case "get_message_image":
+		if !boolean(config, "vision_enabled") {
+			return Object{"error": "当前模型未开启图片分析，图片不会发送给模型"}
+		}
+		message := store.Payload(one(ctx, s.Store.DB, "SELECT payload FROM messages WHERE id=? AND user_id=? AND deleted_at IS NULL", str(args, "message_id"), user))
+		media := s.messageMedia(ctx, s.Store.DB, user, str(message, "id"))
+		if media == nil {
+			return Object{"error": "这条消息没有已保存的图片", "media": message["media"]}
+		}
+		image, _ := prepareImage(s.blob(str(media, "id")))
+		return Object{"message_id": message["id"], "image": image}
 	case "list_files":
 		limit := int(num(args, "limit"))
 		if limit < 1 {

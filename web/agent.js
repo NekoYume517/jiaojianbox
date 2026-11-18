@@ -351,7 +351,7 @@
 
   function fitHistory() {
     const panel = document.querySelector('[data-trigger-history]');
-    if (!panel || !panel.getClientRects().length) return;
+    if (!panel || !panel.getClientRects().length || !panel.checkVisibility()) return;
     const viewport = window.visualViewport;
     let bottom = (viewport?.height || innerHeight) + (viewport?.offsetTop || 0) - 16;
     const nav = document.querySelector('.sidebar');
@@ -361,6 +361,7 @@
   }
   window.addEventListener('resize', fitHistory);
   window.visualViewport?.addEventListener('resize', fitHistory);
+  window.addEventListener('workspace-render', () => requestAnimationFrame(fitHistory));
 
   function mount() {
     activePage = true;
@@ -624,15 +625,6 @@
     render();
   });
 
-  document.addEventListener('pointerover', event => {
-    const peek = event.target.closest('.agent-context-peek');
-    if (peek && event.pointerType === 'mouse') peek.open = true;
-  });
-  document.addEventListener('pointerout', event => {
-    const peek = event.target.closest('.agent-context-peek');
-    if (peek && event.pointerType === 'mouse' && !peek.contains(event.relatedTarget)) peek.open = false;
-  });
-
   document.addEventListener('submit', event => {
     if (!event.target.matches('[data-agent-form]')) return;
     event.preventDefault();
@@ -660,6 +652,7 @@
     historyPanel,
     mount,
     unmount,
+    fitHistory,
     reload: loadSessions,
     synced() {
       if (!activePage || (streaming && localStreamSession===activeSessionID) || !document.querySelector('[data-trigger-history]')) return;

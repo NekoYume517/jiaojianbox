@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -13,9 +14,17 @@ import (
 	"github.com/NekoYume517/jiaojianbox/internal/store"
 )
 
+func TestAnalysisLiveSummarySupportsNotificationWindows(t *testing.T) {
+	raw := `{"items":[{"id":"first","summary":"正在检查截图材料，"},{"id":"second","summary":"补充提交入口"}]}`
+	if got := analysisLiveSummary(raw); got != "正在检查截图材料，\n补充提交入口" {
+		t.Fatalf("unexpected window summary: %q", got)
+	}
+	if got := analysisLiveSummary(`{"summary":"旧格式保留"}`); got != "旧格式保留" {
+		t.Fatalf("legacy summary regressed: %q", got)
+	}
+}
+
 func TestTriggerLiveOutputStopAndQueueIsolation(t *testing.T) {
-	// 自动分析已改为阶段化（整窗一次模型调用，无逐条 SSE）。实时流式输出
-	// 与 stop/cancel 能力仍由手动单条分析路径提供，本测试改为验证该路径。
 	s := testServer(t)
 	token, user := login(t, s, "live-stop")
 	var calls atomic.Int32
@@ -23,7 +32,16 @@ func TestTriggerLiveOutputStopAndQueueIsolation(t *testing.T) {
 	cancelled := make(chan struct{}, 1)
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if calls.Add(1) > 1 {
-			writeJSON(w, 200, textCompletion(store.JSON(Object{"classification": "actionable", "confidence": .95, "summary": "第二条正常完成", "title": "第二项待办", "requirements": []any{}})))
+			var body Object
+			json.NewDecoder(r.Body).Decode(&body)
+			messages := objects(body["messages"])
+			parts := objects(object(messages[len(messages)-1])["content"])
+			packet := decodeObject(str(object(parts[0]), "text"))
+			items := []Object{}
+			for _, message := range objects(packet["MESSAGES"]) {
+				items = append(items, Object{"id": message["id"], "classification": "actionable", "confidence": .95, "summary": "第二条正常完成", "title": "第二项待办", "requirements": []any{}})
+			}
+			writeJSON(w, 200, textCompletion(store.JSON(Object{"items": items})))
 			return
 		}
 		w.Header().Set("Content-Type", "text/event-stream")
@@ -34,18 +52,17 @@ func TestTriggerLiveOutputStopAndQueueIsolation(t *testing.T) {
 		cancelled <- struct{}{}
 	}))
 	defer upstream.Close()
-	// 关闭自动分析，避免阶段 worker 抢先消费第一条消息。
-	call(t, s, "PUT", "/api/settings/llm", token, Object{"base_url": upstream.URL, "model": "live-fixture", "auto_analyze": false})
-	code, m := call(t, s, "POST", "/api/messages", token, Object{"source": "wechat", "account_id": "wx", "conversation_id": "group", "conversation_name": "实时测试群", "external_id": "one", "text": "提交任务 one", "sent_at": "2026-11-12T12:00:00+08:00"})
-	if code != 201 {
-		t.Fatal(m)
+	call(t, s, "PUT", "/api/settings/llm", token, Object{"base_url": upstream.URL, "model": "live-fixture", "auto_analyze": true})
+	ingest := func(ext string) Object {
+		code, m := call(t, s, "POST", "/api/messages", token, Object{"source": "wechat", "account_id": "wx", "conversation_id": "group", "conversation_name": "实时测试群", "external_id": ext, "text": "提交任务 " + ext, "sent_at": "2026-11-12T12:00:00+08:00"})
+		if code != 201 {
+			t.Fatal(m)
+		}
+		return m
 	}
-	first := m
-	analyzeDone := make(chan struct{})
-	go func() {
-		defer close(analyzeDone)
-		call(t, s, "POST", "/api/analyze?stream=true", token, Object{"message_id": str(first, "id")})
-	}()
+	first := ingest("one")
+	exec(context.Background(), s.Store.DB, "UPDATE analysis_batches SET ready_at=0 WHERE id=?", first["analysis_batch_id"])
+	s.wakeNotificationWorker()
 	select {
 	case <-started:
 	case <-time.After(5 * time.Second):
@@ -70,7 +87,11 @@ func TestTriggerLiveOutputStopAndQueueIsolation(t *testing.T) {
 	if len(runs) == 0 || !strings.Contains(str(runs[0], "text"), "正在检查材料") {
 		t.Fatal("no live model text", runs)
 	}
-	runID := "notification-" + str(first, "id")
+	second := ingest("two")
+	if calls.Load() != 1 {
+		t.Fatal("queued turn interrupted running turn")
+	}
+	runID := "notification-batch-" + str(first, "analysis_batch_id")
 	code, stopped := call(t, s, "POST", "/api/agent/sessions/"+sid+"/stop", token, Object{"run_id": runID})
 	if code != 200 || !boolean(stopped, "stopped") {
 		t.Fatal(code, stopped)
@@ -80,20 +101,33 @@ func TestTriggerLiveOutputStopAndQueueIsolation(t *testing.T) {
 	case <-time.After(3 * time.Second):
 		t.Fatal("stop did not cancel actual upstream request")
 	}
-	select {
-	case <-analyzeDone:
-	case <-time.After(3 * time.Second):
-		t.Fatal("streamed analysis did not return after stop")
+	exec(context.Background(), s.Store.DB, "UPDATE analysis_batches SET ready_at=0 WHERE id=?", second["analysis_batch_id"])
+	s.wakeNotificationWorker()
+	deadline = time.Now().Add(5 * time.Second)
+	done := false
+	for time.Now().Before(deadline) {
+		_, snap := call(t, s, "GET", "/api/snapshot", token, nil)
+		for _, m := range objects(snap["messages"]) {
+			if str(m, "id") == str(second, "id") && len(object(m["analysis"])) > 0 {
+				done = true
+			}
+		}
+		if done {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if !done || calls.Load() != 2 {
+		t.Fatal("stopping first affected queued second", calls.Load())
+	}
+	time.Sleep(600 * time.Millisecond)
+	job := firstRow(t, s, "SELECT state FROM analysis_jobs WHERE message_id=?", str(first, "id"))
+	if str(job, "state") != "cancelled" || calls.Load() != 2 {
+		t.Fatal("stopped run was retried", job, calls.Load())
 	}
 	run := one(context.Background(), s.Store.DB, "SELECT * FROM agent_runs WHERE id=? AND user_id=?", runID, user)
 	if str(run, "state") != "cancelled" || !strings.Contains(str(store.Payload(run), "text"), "检查材料") {
 		t.Fatal("stop lost partial output", run)
-	}
-	// 手动分析路径不经过自动分析 job 队列，stop 直接作用于 agent run。
-	// 停止后再次手动分析可正常完成。
-	code, again := call(t, s, "POST", "/api/analyze", token, Object{"message_id": str(first, "id")})
-	if code != 200 || calls.Load() != 2 {
-		t.Fatal("retry after stop failed", code, again, calls.Load())
 	}
 }
 

@@ -124,6 +124,10 @@ class MessageInput(BaseModel):
     text: str = Field(default="", max_length=30000)
     sent_at: str
     message_type: str = Field(default="text", max_length=50)
+    message_type_label: str = Field(default="", max_length=50)
+    message_type_code: str = Field(default="", max_length=50)
+    direction: Literal["self", "other", "system", "unknown"] = "unknown"
+    is_self: bool | None = None
     metadata: dict = Field(default_factory=dict)
 
     @field_validator("sent_at")
