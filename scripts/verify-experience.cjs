@@ -59,7 +59,7 @@ module.exports=async(page,scratch)=>{
       await page.evaluate(density=>appearance.update({density}),density);
       for(const width of [1280,1100,850,820,700,621,620,390,360]){
         await page.setViewportSize({width,height:860});
-        if(width>620){await page.waitForFunction(mode=>document.documentElement.dataset.sidebar===mode,width>820?'labels':'icons');}if(width>620)await page.waitForFunction(()=>{const sidebar=document.querySelector('.sidebar').getBoundingClientRect(),main=document.querySelector('.main').getBoundingClientRect();return Math.abs(sidebar.right-main.left)<=1.5;});
+        if(width>820){await page.waitForFunction(()=>document.documentElement.dataset.sidebar==='labels');await page.locator('.nav-sub:not(.leaving) [data-subnav="general"]').waitFor({state:'visible'});}else if(width>620){await page.waitForFunction(()=>document.documentElement.dataset.sidebar==='icons');await page.locator('.page-tabs [data-subnav="general"]').waitFor({state:'visible'});}if(width>620)await page.waitForFunction(()=>{const sidebar=document.querySelector('.sidebar').getBoundingClientRect(),main=document.querySelector('.main').getBoundingClientRect();return Math.abs(sidebar.right-main.left)<=1.5;});
         const layout=await page.evaluate(()=>{
           const sidebar=document.querySelector('.sidebar').getBoundingClientRect(),main=document.querySelector('.main').getBoundingClientRect();
           return {right:sidebar.right,main:main.left,navFont:parseFloat(getComputedStyle(document.querySelector('[data-nav="settings"]')).fontSize),label:getComputedStyle(document.querySelector('.brand>span')).display,field:document.querySelector('[data-select-for=appearance-density]').getBoundingClientRect().height};
