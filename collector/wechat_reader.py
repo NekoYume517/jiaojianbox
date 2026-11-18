@@ -8,13 +8,25 @@ import json
 import hashlib
 import os
 import re
+import sys
 import shutil
 import tempfile
 import time
 from pathlib import Path
 
 
+def _vendor_path() -> str:
+    """源码运行时装包时把 wechatauto 的 vendor 副本加入 sys.path。"""
+    root = Path(__file__).resolve().parents[1]
+    for candidate in (root / "runtime-vendor" / "wechatauto-replica", root / "runtime-vendor"):
+        if (candidate / "wechatauto").exists() and str(candidate) not in sys.path:
+            sys.path.insert(0, str(candidate))
+            return str(candidate)
+    return ""
+
+
 def open_database(config):
+    _vendor_path()
     from wechatauto.db import WeChatDB, auto_detect_db_dir
     import psutil
     directory = config.get('wechat_db_dir') or auto_detect_db_dir()
@@ -117,3 +129,75 @@ def record_error(config, exc, stage):
     except OSError:
         pass
     return record
+
+
+def _file_version(path):
+    """读取 PE 文件版本字符串（如 4.2.0.13），读不到返回空串。
+
+    先取文件版本资源大小，再用 VerQueryValueW 查根块
+    VS_FIXEDFILEINFO，其偏移 8/12 为 dwFileVersionMS/LS。
+    """
+    try:
+        import ctypes
+        import struct
+        from ctypes import wintypes
+
+        size = ctypes.windll.version.GetFileVersionInfoSizeW(path, None)
+        if size <= 0:
+            return ""
+        buf = ctypes.create_string_buffer(size)
+        if not ctypes.windll.version.GetFileVersionInfoW(path, 0, size, buf):
+            return ""
+        info = ctypes.c_void_p()
+        info_len = wintypes.UINT()
+        if not ctypes.windll.version.VerQueryValueW(
+            buf, "\\", ctypes.byref(info), ctypes.byref(info_len)
+        ):
+            return ""
+        fixed = ctypes.string_at(info, info_len.value)
+        ms, ls = struct.unpack_from("<II", fixed, 8)
+        return "%d.%d.%d.%d" % (ms >> 16, ms & 0xFFFF, ls >> 16, ls & 0xFFFF)
+    except Exception:
+        return ""
+
+
+def detect_wechat_version():
+    """返回正在使用的微信 4.x 文件版本（如 4.2.0.13），找不到返回空串。
+
+    微信 4.x 把数据目录放到 D 盘后，主程序仍在安装目录；注册表
+    HKCU\\Software\\Tencent\\Weixin 记录 InstallPath。
+    """
+    candidates = []
+    try:
+        import winreg
+        key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Tencent\Weixin")
+        try:
+            install, _ = winreg.QueryValueEx(key, "InstallPath")
+            if install:
+                candidates.append(os.path.join(install, "Weixin.exe"))
+        finally:
+            winreg.CloseKey(key)
+    except OSError:
+        pass
+    candidates += [
+        os.path.expandvars(r"%ProgramFiles%\Tencent\Weixin\Weixin.exe"),
+        os.path.expandvars(r"%ProgramFiles(x86)%\Tencent\Weixin\Weixin.exe"),
+        os.path.expandvars(r"%LOCALAPPDATA%\Programs\Tencent\Weixin\Weixin.exe"),
+    ]
+    for path in candidates:
+        if os.path.isfile(path):
+            version = _file_version(path)
+            if version:
+                return version
+    return ""
+
+
+def _version_at_least(version, major, minor):
+    """判断版本号是否 >= major.minor；解析失败返回 False。"""
+    try:
+        parts = [int(p) for p in str(version).split(".")]
+    except (TypeError, ValueError):
+        return False
+    if len(parts) < 2:
+        return False
+    return (parts[0], parts[1]) >= (major, minor)

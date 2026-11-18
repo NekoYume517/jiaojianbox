@@ -25,6 +25,22 @@ def timestamp(value):
     return datetime.fromtimestamp(float(value or 0), timezone.utc).isoformat()
 
 
+def _self_usernames(account):
+    """账号目录名可能带 _<hash> 后缀（wxid_xxx_9353），自己消息的
+    sender_username 往往是没有后缀的 wxid；两种都算自己。
+
+    注意 wxid 本身含下划线，只能去掉最后一段形如 9353/5420 的数字后缀。
+    """
+    account = str(account or "")
+    if not account:
+        return set()
+    ids = {account}
+    head, _, tail = account.rpartition("_")
+    if head.startswith("wxid_") and 3 <= len(tail) <= 10 and re.fullmatch(r"[0-9a-fA-F]+", tail):
+        ids.add(head)
+    return ids
+
+
 def wechat(row, account, chat, chat_name="", sender_name="", self_id="", media=None):
     raw = row.get("content") or ""
     if isinstance(raw, bytes):
@@ -35,6 +51,12 @@ def wechat(row, account, chat, chat_name="", sender_name="", self_id="", media=N
     if chat.endswith("@chatroom") and match:
         sender = sender or match[1]
         raw = raw[match.end():]
+    self_ids = _self_usernames(account)
+    if self_id:
+        self_ids.add(str(self_id))
+    from_self = bool(row.get("is_send") in (1, "1", True)) or row.get("is_self") is True or sender in self_ids
+    if from_self:
+        sender_name = "我"
     text = raw
     label = str(row.get("type", "文本"))
     message_type = TYPE_NAMES.get(label, "other")
@@ -69,7 +91,7 @@ def wechat(row, account, chat, chat_name="", sender_name="", self_id="", media=N
             text = "" if message_type in ("image", "voice", "video", "sticker") else "[" + label + "]"
     if message_type == "system" and not sender:
         direction = "system"
-    elif row.get("is_self") is True or (sender and sender in (str(account), str(self_id))):
+    elif from_self:
         direction = "self"
     elif sender:
         direction = "other"
@@ -78,9 +100,11 @@ def wechat(row, account, chat, chat_name="", sender_name="", self_id="", media=N
     if not text:
         text = "图片消息" if message_type == "image" else "[" + label + "]"
     external = f"{row.get('shard', '')}:{row.get('local_id', 0)}:{row.get('sort_seq', 0)}"
-    return {"source": "wechat", "account_id": str(account), "conversation_id": chat,
+    result = {"source": "wechat", "account_id": str(account), "conversation_id": chat,
             "conversation_name": chat_name or chat, "external_id": external,
-            "sender_id": sender, "sender_name": sender_name or sender or ("系统" if direction == "system" else ""),
+            "sender_id": sender,
+            "sender_name": sender_name or sender or ("系统" if direction == "system" else ""),
+            "from_self": from_self,
             "text": text[:30000], "sent_at": timestamp(row.get("create_time")),
             "message_type": message_type, "message_type_label": label,
             "message_type_code": str(row.get("type_code") or ""),

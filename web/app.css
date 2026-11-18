@@ -616,3 +616,17 @@ body.cmdk-open{overflow:hidden}
 .digest-originals{margin-top:6px;display:flex;flex-direction:column;gap:2px}
 .triage-note{white-space:nowrap;font-variant-numeric:tabular-nums}
 @media(prefers-reduced-motion:reduce){.digest-topic summary::before{transition:none}}
+
+.source-state{display:inline-flex;align-items:center;gap:5px;font-size:0.78rem;color:var(--muted);padding:2px 7px;border:1px solid var(--border);border-radius:10px;cursor:default}
+.source-state b{font-weight:600;font-size:0.72rem;line-height:1}
+.source-state i{width:6px;height:6px;border-radius:50%;background:var(--muted);flex:none}
+.source-state[data-state="connected"]{color:var(--text-2);border-color:var(--border)}
+.source-state[data-state="connected"] i{background:var(--green)}
+.source-state[data-state="starting"],.source-state[data-state="reconnecting"],.source-state[data-state="warning"],.source-state[data-state="pending"]{color:var(--orange-text)}
+.source-state[data-state="starting"] i,.source-state[data-state="reconnecting"] i,.source-state[data-state="warning"] i,.source-state[data-state="pending"] i{background:var(--orange-text)}
+.source-state[data-state="error"],.source-state[data-state="unauthorized"],.source-state[data-state="offline"]{color:var(--red-text,var(--orange-text))}
+.source-state[data-state="error"] i,.source-state[data-state="unauthorized"] i,.source-state[data-state="offline"] i{background:var(--red-text,var(--orange-text))}
+@media(prefers-reduced-motion:reduce){.source-state{transition:none}}
+
+/* 阶段分析提示：一条消息属于群聊某一时间窗口，窗口内打包出多个任务。 */
+.stage-note{font-size:0.82rem;color:var(--muted);margin:4px 0 8px;line-height:1.5}

@@ -116,6 +116,19 @@ def wechat_database(config):
     自动切回 WCDB。
     """
     backend = str(config.get("wechat_backend") or "wcdb").strip().lower()
+    # 微信 4.2+ 的库结构变化后 wcdb_api.dll 初始化返回 -1000；探测到
+    # 4.2 及以上时直接走兼容读取层（wechatauto-replica 1.2.9），避免每次
+    # 同步前白白失败一次。
+    version = ""
+    try:
+        from .wechat_reader import _version_at_least, detect_wechat_version
+        version = detect_wechat_version()
+        config["_wechat_version"] = version
+        if backend == "wcdb" and _version_at_least(version, 4, 2):
+            logger.warning("微信 %s 不支持 WCDB 直读，使用兼容读取", version)
+            backend = "legacy"
+    except Exception:
+        pass
     if backend == "wcdb":
         try:
             from .wcdb_reader import WcdbReader
@@ -151,7 +164,8 @@ def list_wechat(config):
         close = getattr(db, "close", None)
         if close:
             close()
-    emit(account=db.account, conversations=result, backend=backend)
+    emit(account=db.account, conversations=result, backend=backend,
+         wechat_version=config.get("_wechat_version", ""))
 
 
 async def list_qq(config):
