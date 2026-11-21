@@ -8,7 +8,7 @@
 
   const drafts = new Map();
   let renderedSessionID = '';
-  let activityTimer=0, activityBusy=false, localRunID='', localStreamSession='', stopRequested=false;
+  let activityTimer=0, activityBusy=false, activityUpdatedAt='', localRunID='', localStreamSession='', stopRequested=false;
 
   const tokenText = value => {
     const n = Number(value) || 0;
@@ -167,8 +167,9 @@
     if(activityBusy || !activePage || !activeSessionID || !document.querySelector('[data-trigger-history]')?.getClientRects().length)return;
     activityBusy=true;const id=activeSessionID;
     try {
-      const value=await api(`/api/agent/sessions/${encodeURIComponent(id)}/activity`);
+      const value=await api(`/api/agent/sessions/${encodeURIComponent(id)}/activity${activityUpdatedAt?'?since='+encodeURIComponent(activityUpdatedAt):''}`);
       if(id!==activeSessionID || !snapshot)return;
+      if(value.activity_updated_at)activityUpdatedAt=value.activity_updated_at;
       const before=snapshot.runs||[];snapshot.runs=value.runs||[];
       const index=sessions.findIndex(session=>session.id===id);if(index>=0 && value.session)sessions[index]={...sessions[index],...value.session};
       document.querySelectorAll('[data-agent-session]').forEach(button=>{const session=sessions.find(item=>item.id===button.dataset.agentSession);const status=button.querySelector('[data-session-state]');if(status)status.textContent=session?.run_state==='running'?'分析中':session?.run_state==='queued'?'排队中':'';});
@@ -332,6 +333,7 @@
       const value = await api(`/api/agent/sessions/${encodeURIComponent(sessionID)}`);
       if (generation !== sessionGeneration || sessionID !== activeSessionID) return;
       snapshot = value;
+      activityUpdatedAt = (value.runs || []).reduce((latest, run) => run.updated_at > latest ? run.updated_at : latest, '');
       const index = sessions.findIndex(item => item.id === sessionID);
       if (index >= 0 && value.session) sessions[index] = { ...sessions[index], ...value.session };
       render();
@@ -365,7 +367,8 @@
 
   function mount() {
     activePage = true;
-    clearInterval(activityTimer);activityTimer=setInterval(syncActivity,300);
+    clearInterval(activityTimer);
+    syncActivity();
     layoutObserver?.disconnect();
     const panel = document.querySelector('[data-trigger-history]');
     if (panel) { layoutObserver = new ResizeObserver(fitHistory); layoutObserver.observe(panel); requestAnimationFrame(fitHistory); }
@@ -378,6 +381,7 @@
     const input = document.querySelector('[data-agent-input]');
     if (input && renderedSessionID) drafts.set(renderedSessionID, input.value);
     renderedSessionID = '';
+    activityUpdatedAt = '';
     activePage = false;
     clearInterval(activityTimer);
     layoutObserver?.disconnect();
@@ -657,7 +661,7 @@
     synced() {
       if (!activePage || (streaming && localStreamSession===activeSessionID) || !document.querySelector('[data-trigger-history]')) return;
       if(syncTimer)return;
-      syncTimer = setTimeout(() => {syncTimer=0;loadSessions(false, activeSessionID);}, 250);
+      syncTimer = setTimeout(() => {syncTimer=0;loadSessions(false, activeSessionID);syncActivity();}, 500);
     },
   };
 })();

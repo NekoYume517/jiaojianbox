@@ -524,6 +524,7 @@ func (s *Server) syncSocket(w http.ResponseWriter, r *http.Request) {
 	if after < 0 {
 		after = 0
 	}
+	wake := s.eventNotification(user)
 	go func() {
 		defer cancel()
 		for {
@@ -533,17 +534,32 @@ func (s *Server) syncSocket(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}()
-	ticker := time.NewTicker(350 * time.Millisecond)
-	defer ticker.Stop()
+	revalidate := time.NewTicker(60 * time.Second)
+	defer revalidate.Stop()
+	fallback := time.NewTicker(30 * time.Second)
+	defer fallback.Stop()
 	heartbeat := time.Now()
+	pending := true
 	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
+		if !pending {
+			select {
+			case <-ctx.Done():
+				return
+			case <-wake:
+			case <-fallback.C:
+			case <-revalidate.C:
+				if _, err := attempt(func() any { return s.owner(ctx, "Bearer "+str(firstMessage, "token")) }); err != nil {
+					conn.Close(4401, "登录已过期")
+					return
+				}
+				continue
+			}
+		}
+		pending = false
+		for {
+			events := []Object{}
 			_, err := attempt(func() any {
-				s.owner(ctx, "Bearer "+str(firstMessage, "token"))
-				events := query(ctx, s.Store.DB, "SELECT seq,kind,entity_id,at FROM events WHERE user_id=? AND seq>? ORDER BY seq LIMIT 500", user, after)
+				events = query(ctx, s.Store.DB, "SELECT seq,kind,entity_id,at FROM events WHERE user_id=? AND seq>? ORDER BY seq LIMIT 500", user, after)
 				if len(events) > 0 {
 					after = int64(num(events[len(events)-1], "seq"))
 					check(wsjson.Write(ctx, conn, Object{"type": "changes", "events": events, "cursor": after}))
@@ -556,6 +572,13 @@ func (s *Server) syncSocket(w http.ResponseWriter, r *http.Request) {
 			if err != nil {
 				conn.Close(4401, "同步已断开")
 				return
+			}
+			if len(events) < 500 {
+				select {
+				case <-wake:
+				default:
+				}
+				break
 			}
 		}
 	}

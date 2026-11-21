@@ -317,13 +317,16 @@ func (s *Server) agentSessionRoutes() {
 			patch, args = append(patch, "permission=?"), append(args, permission)
 		}
 		if len(patch) == 0 {
+			event(r.Context(), s.Store.DB, r.User, "agent.session.upsert", sessionID)
 			return s.agentSessionSnapshot(r.Context(), r.User, str(row, "id"))
 		}
 		patch, args = append(patch, "updated_at=?"), append(args, store.Now())
 		args = append(args, sessionID, r.User)
-		exec(r.Context(), s.Store.DB, "UPDATE agent_sessions SET "+strings.Join(patch, ",")+" WHERE id=? AND user_id=?", args...)
-		event(r.Context(), s.Store.DB, r.User, "agent.session.upsert", sessionID)
-		return s.agentSessionSnapshot(r.Context(), r.User, sessionID)
+		return s.transaction(r.Context(), func(db store.SQL) any {
+			exec(r.Context(), db, "UPDATE agent_sessions SET "+strings.Join(patch, ",")+" WHERE id=? AND user_id=?", args...)
+			event(r.Context(), db, r.User, "agent.session.upsert", sessionID)
+			return s.agentSessionSnapshot(r.Context(), r.User, sessionID)
+		})
 	})
 	s.route("DELETE /api/agent/sessions/{session_id}", "owner", func(r request) any {
 		sessionID := r.PathValue("session_id")
@@ -338,7 +341,12 @@ func (s *Server) agentSessionRoutes() {
 	})
 	s.route("GET /api/agent/sessions/{session_id}/activity", "owner", func(r request) any {
 		row := s.agentSession(r.Context(), s.Store.DB, r.User, r.PathValue("session_id"))
-		return Object{"session": agentSessionObject(row), "runs": s.liveSessionRuns(r.Context(), r.User, r.PathValue("session_id"), true)}
+		sessionID := r.PathValue("session_id")
+		updated := one(r.Context(), s.Store.DB, "SELECT COALESCE(MAX(updated_at),'') AS updated_at FROM agent_runs WHERE user_id=? AND session_id=?", r.User, sessionID)
+		if str(updated, "updated_at") == r.URL.Query().Get("since") && str(updated, "updated_at") != "" {
+			return Object{"session": agentSessionObject(row), "runs": s.liveSessionRuns(r.Context(), r.User, sessionID, false), "unchanged": true}
+		}
+		return Object{"session": agentSessionObject(row), "runs": s.liveSessionRuns(r.Context(), r.User, sessionID, true), "activity_updated_at": str(updated, "updated_at")}
 	})
 	s.route("POST /api/agent/sessions/{session_id}/stop", "owner", func(r request) any {
 		return s.stopAgentRun(r.Context(), r.User, r.PathValue("session_id"), str(r.body(), "run_id"))

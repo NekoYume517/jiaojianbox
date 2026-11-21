@@ -19,6 +19,7 @@ CREATE INDEX IF NOT EXISTS ix_analysis_batches_ready ON analysis_batches(state,r
         CREATE TABLE IF NOT EXISTS llm_calls(id TEXT PRIMARY KEY,user_id TEXT REFERENCES users(id),kind TEXT,model TEXT,status TEXT,started_at TEXT,duration_ms REAL,first_token_ms REAL,prompt_tokens INTEGER,completion_tokens INTEGER,total_tokens INTEGER,http_status INTEGER,usage_reported INTEGER,streamed INTEGER);
         CREATE INDEX IF NOT EXISTS llm_calls_owner_time ON llm_calls(user_id,started_at);
         CREATE TABLE IF NOT EXISTS analysis_jobs(id INTEGER PRIMARY KEY AUTOINCREMENT, user_id TEXT, message_id TEXT UNIQUE, state TEXT DEFAULT 'queued', attempts INTEGER DEFAULT 0, next_at REAL DEFAULT 0, error TEXT DEFAULT '', session_id TEXT DEFAULT '', window_key TEXT DEFAULT '');
+CREATE INDEX IF NOT EXISTS ix_analysis_jobs_ready ON analysis_jobs(state,next_at);
         CREATE TABLE IF NOT EXISTS device_auth(device_hash TEXT PRIMARY KEY, user_code TEXT UNIQUE, expires REAL, state TEXT DEFAULT 'pending', user_id TEXT, token TEXT);
         CREATE TABLE IF NOT EXISTS shelf_meta(file_id TEXT PRIMARY KEY REFERENCES attachments(id) ON DELETE CASCADE, user_id TEXT REFERENCES users(id), category TEXT, suggestion TEXT, created_at TEXT, version INTEGER DEFAULT 1);
 
@@ -133,6 +134,7 @@ CREATE TABLE IF NOT EXISTS agent_runs(
  created_at TEXT NOT NULL,
  updated_at TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS ix_agent_runs_session ON agent_runs(user_id,session_id,state,created_at);
+CREATE INDEX IF NOT EXISTS ix_agent_runs_activity ON agent_runs(user_id,session_id,updated_at);
 
 CREATE TABLE IF NOT EXISTS digests(id TEXT PRIMARY KEY, user_id TEXT, source TEXT, account_id TEXT, conversation_id TEXT, payload TEXT NOT NULL, created_at TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS ix_digests_owner ON digests(user_id,created_at);

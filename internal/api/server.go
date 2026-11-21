@@ -133,6 +133,9 @@ type Server struct {
 	sessionTurns sync.Map
 	runCancels   sync.Map
 	batchWake    chan struct{}
+	analysisWake chan struct{}
+	triageWake   chan struct{}
+	eventWake    sync.Map
 	batchWriteMu sync.Mutex
 	MaxUpload    int64
 	Version      string
@@ -169,10 +172,25 @@ func (r request) integer(key string, def, min, max int) int {
 }
 func (s *Server) transaction(ctx context.Context, fn func(store.SQL) any) any {
 	var value any
-	check(s.Store.Tx(ctx, func(tx *sql.Tx) error { value = fn(tx); return nil }))
+	notifications := &eventNotifications{}
+	txCtx := context.WithValue(ctx, eventNotificationsKey{}, notifications)
+	check(s.Store.Tx(txCtx, func(tx *sql.Tx) error {
+		value = fn(contextBoundSQL{ctx: txCtx, SQL: tx})
+		return nil
+	}))
+	s.notifyEventUsers(notifications.users)
 	return value
 }
 func event(ctx context.Context, db store.SQL, user, kind, id string) {
+	if bound, ok := db.(interface{ Context() context.Context }); ok {
+		ctx = bound.Context()
+	}
+	if current, ok := ctx.Value(eventNotificationsKey{}).(*eventNotifications); ok && current != nil {
+		if current.users == nil {
+			current.users = map[string]bool{}
+		}
+		current.users[user] = true
+	}
 	check(store.Event(ctx, db, user, kind, id))
 	if kind == "task.upsert" {
 		row := first(query(ctx, db, "SELECT version FROM tasks WHERE id=? AND user_id=?", id, user))
@@ -186,7 +204,7 @@ func New(database *store.Store, assets fs.FS, version string) (*Server, error) {
 	if err := database.BackupVersion(context.Background(), version); err != nil {
 		log.Printf("升级备份失败，继续使用已通过完整性检查的工作区: %v", err)
 	}
-	s := &Server{Store: database, Assets: assets, Version: version, Mux: http.NewServeMux(), MaxUpload: 50 << 20, batchWake: make(chan struct{}, 1)}
+	s := &Server{Store: database, Assets: assets, Version: version, Mux: http.NewServeMux(), MaxUpload: 50 << 20, batchWake: make(chan struct{}, 1), analysisWake: make(chan struct{}, 1), triageWake: make(chan struct{}, 1)}
 	if n, e := strconv.Atoi(os.Getenv("JJB_MAX_UPLOAD_MB")); e == nil && n > 0 {
 		s.MaxUpload = int64(n) << 20
 	}

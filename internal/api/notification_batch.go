@@ -79,11 +79,27 @@ func (s *Server) scheduleNotificationWindow(ctx context.Context, db store.SQL, u
 		exec(ctx, db, "UPDATE agent_runs SET payload=? WHERE id=? AND user_id=?", store.JSON(Object{"state": "queued", "stage": "queued", "kind": "notification", "batch_id": batchID, "batch_window_seconds": 60, "text": "正在收集本会话一分钟内的新消息"}), runID, user)
 	}
 	s.wakeNotificationWorker()
+	s.wakeAnalysisWorker()
+	s.wakeTriageWorker()
 }
 
 func (s *Server) wakeNotificationWorker() {
 	select {
 	case s.batchWake <- struct{}{}:
+	default:
+	}
+}
+
+func (s *Server) wakeAnalysisWorker() {
+	select {
+	case s.analysisWake <- struct{}{}:
+	default:
+	}
+}
+
+func (s *Server) wakeTriageWorker() {
+	select {
+	case s.triageWake <- struct{}{}:
 	default:
 	}
 }
@@ -408,6 +424,7 @@ func (s *Server) analysisBatchWorker(ctx context.Context) {
 			go func(batch Object) {
 				defer running.Done()
 				defer func() { <-slots }()
+				defer s.wakeNotificationWorker()
 				callCtx, cancel := context.WithTimeout(ctx, 10*time.Minute)
 				_, err := attempt(func() any { return s.runNotificationWindow(callCtx, batch) })
 				cancel()
@@ -435,11 +452,30 @@ func (s *Server) analysisBatchWorker(ctx context.Context) {
 			}(batch)
 		}
 		if !launched {
+			wait := time.Minute
+			if next := first(query(ctx, s.Store.DB, "SELECT MIN(ready_at) AS ready_at FROM analysis_batches WHERE state='collecting'")); next != nil && num(next, "ready_at") > 0 {
+				wait = time.Duration((num(next, "ready_at") - timestamp()) * float64(time.Second))
+				if wait < 250*time.Millisecond {
+					wait = 250 * time.Millisecond
+				} else if wait > time.Minute {
+					wait = time.Minute
+				}
+			}
+			timer := time.NewTimer(wait)
 			select {
 			case <-ctx.Done():
+				if !timer.Stop() {
+					<-timer.C
+				}
 				return
 			case <-s.batchWake:
-			case <-time.After(500 * time.Millisecond):
+			case <-timer.C:
+			}
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
 			}
 		}
 	}

@@ -35,6 +35,7 @@ func (s *Server) trackAgentRun(ctx context.Context, user, id, session, messageID
 			fail(409, "本轮已停止")
 		}
 		exec(ctx, db, "UPDATE agent_runs SET state='queued',payload='{}',updated_at=? WHERE id=? AND user_id=?", store.Now(), id, user)
+		s.wakeAnalysisWorker()
 		return nil
 	})
 	child, cancel := context.WithCancel(ctx)
@@ -226,6 +227,7 @@ func (s *Server) stopAgentRun(ctx context.Context, user, session, runID string) 
 		if cancel, ok := s.runCancels.Load(user + ":" + str(selected, "id")); ok {
 			cancel.(context.CancelFunc)()
 		}
+		s.wakeAnalysisWorker()
 	}
 	return Object{"ok": true, "stopped": selected != nil}
 }

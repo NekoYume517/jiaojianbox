@@ -173,38 +173,36 @@ func (s *Server) applyTriage(ctx context.Context, group triageGroup, verdicts ma
 }
 
 func (s *Server) triageWorker(ctx context.Context) {
-	ticker := time.NewTicker(2 * time.Second)
+	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
 	for {
-		select {
-		case <-ctx.Done():
+		if !waitForWake(ctx, s.triageWake, ticker.C) {
 			return
-		case <-ticker.C:
-			_, err := attempt(func() any {
-				groups := s.pendingTriageGroups(ctx, false)
-				for _, group := range groups {
-					if ctx.Err() != nil {
-						return nil
-					}
-					callCtx, stop := context.WithTimeout(ctx, 90*time.Second)
-					verdicts := s.triageBatch(callCtx, group.User, group.Messages, nil)
-					stop()
-					if len(verdicts) == 0 {
-						// Model unavailable or malformed: move this user's
-						// pending work behind other users before retrying.
-						s.deferTriageGroup(ctx, group, time.Now().Add(triageRetryDelay), "批量分诊暂不可用，稍后重试")
-						continue
-					}
-					s.applyTriage(ctx, group, verdicts)
+		}
+		_, err := attempt(func() any {
+			groups := s.pendingTriageGroups(ctx, false)
+			for _, group := range groups {
+				if ctx.Err() != nil {
+					return nil
 				}
-				return nil
-			})
-			if err != nil && ctx.Err() == nil {
-				select {
-				case <-ctx.Done():
-					return
-				case <-time.After(time.Second):
+				callCtx, stop := context.WithTimeout(ctx, 90*time.Second)
+				verdicts := s.triageBatch(callCtx, group.User, group.Messages, nil)
+				stop()
+				if len(verdicts) == 0 {
+					// Model unavailable or malformed: move this user's
+					// pending work behind other users before retrying.
+					s.deferTriageGroup(ctx, group, time.Now().Add(triageRetryDelay), "批量分诊暂不可用，稍后重试")
+					continue
 				}
+				s.applyTriage(ctx, group, verdicts)
+			}
+			return nil
+		})
+		if err != nil && ctx.Err() == nil {
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(time.Second):
 			}
 		}
 	}

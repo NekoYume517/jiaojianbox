@@ -362,107 +362,152 @@ func (s *Server) runAnalysis(ctx context.Context, user string, body Object, p pr
 	return result
 }
 func (s *Server) analyzeWorker(ctx context.Context) {
-	ticker := time.NewTicker(500 * time.Millisecond)
-	defer ticker.Stop()
 	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			_, err := attempt(func() any {
-				var job Object
-				s.transaction(ctx, func(db store.SQL) any {
-					// 分层处理：只取不在分诊等待中的任务，避免深度分析抢在批量分诊之前。
-					job = first(query(ctx, db, `SELECT * FROM analysis_jobs WHERE state='queued' AND next_at<=?
+		var nextAt float64
+		var handled bool
+		_, err := attempt(func() any {
+			var job Object
+			s.transaction(ctx, func(db store.SQL) any {
+				// 分层处理：只取不在分诊等待中的任务，避免深度分析抢在批量分诊之前。
+				job = first(query(ctx, db, `SELECT * FROM analysis_jobs WHERE state='queued' AND next_at<=?
 						AND NOT EXISTS (SELECT 1 FROM messages m WHERE m.id=analysis_jobs.message_id
 							AND json_extract(m.payload,'$.triage_state')='pending')
 						AND NOT EXISTS (SELECT 1 FROM analysis_jobs other WHERE other.user_id=analysis_jobs.user_id
 							AND other.session_id=analysis_jobs.session_id AND other.state='running')
 						AND NOT EXISTS (SELECT 1 FROM analysis_batch_items bi WHERE bi.message_id=analysis_jobs.message_id)
 						ORDER BY id LIMIT 1`, timestamp()))
-					if job != nil {
-						windowKey := fallback(str(job, "window_key"), str(job, "message_id"))
-						rows := query(ctx, db, "SELECT message_id FROM analysis_jobs WHERE user_id=? AND window_key=? AND state='queued' ORDER BY id", job["user_id"], windowKey)
-						ids := []any{}
-						for _, row := range rows {
-							ids = append(ids, row["message_id"])
-						}
-						exec(ctx, db, "UPDATE analysis_jobs SET state='running',attempts=attempts+1 WHERE user_id=? AND window_key=? AND state='queued'", job["user_id"], windowKey)
-						job["message_ids"] = ids
-						job["message_id"] = windowKey
-						event(ctx, db, str(job, "user_id"), "agent.run.upsert", str(job, "session_id"))
+				if job != nil {
+					windowKey := fallback(str(job, "window_key"), str(job, "message_id"))
+					rows := query(ctx, db, "SELECT message_id FROM analysis_jobs WHERE user_id=? AND window_key=? AND state='queued' ORDER BY id", job["user_id"], windowKey)
+					ids := []any{}
+					for _, row := range rows {
+						ids = append(ids, row["message_id"])
 					}
-					return nil
-				})
-				if job == nil {
-					return nil
+					exec(ctx, db, "UPDATE analysis_jobs SET state='running',attempts=attempts+1 WHERE user_id=? AND window_key=? AND state='queued'", job["user_id"], windowKey)
+					job["message_ids"] = ids
+					job["message_id"] = windowKey
+					event(ctx, db, str(job, "user_id"), "agent.run.upsert", str(job, "session_id"))
+				} else {
+					row := first(query(ctx, db, "SELECT MIN(next_at) AS next_at FROM analysis_jobs WHERE state='queued'"))
+					nextAt = num(row, "next_at")
 				}
-				callCtx, stop := context.WithTimeout(ctx, 180*time.Second)
-				_, callErr := attempt(func() any {
-					return s.runAnalysis(callCtx, str(job, "user_id"), Object{"message_id": job["message_id"], "message_ids": job["message_ids"], "_automatic": true}, nil)
-				})
-				stop()
-				if ctx.Err() != nil {
-					return nil
-				}
-				state, errorText, next := "done", "", float64(0)
-				if callErr != nil {
-					state = "queued"
-					errorText = "本次分析未完成，稍后自动重试"
-					next = timestamp() + 20
-					if num(job, "attempts") >= 2 {
-						state = "failed"
-						errorText = "自动分析失败，请检查模型设置后重试"
-					}
-				}
-				s.transaction(ctx, func(db store.SQL) any {
-					row := first(query(ctx, db, "SELECT payload FROM messages WHERE id=? AND user_id=?", job["message_id"], job["user_id"]))
-					cancelled := first(query(ctx, db, "SELECT state FROM analysis_jobs WHERE id=?", job["id"]))
-					if str(cancelled, "state") == "cancelled" {
-						event(ctx, db, str(job, "user_id"), "message.upsert", str(job, "message_id"))
-						return nil
-					}
-					if row == nil {
-						state = "ignored"
-					} else {
-						m := store.Payload(row)
-						if len(object(m["analysis"])) > 0 {
-							state = "done"
-							errorText = ""
-						}
-						if str(m, "triage") == "ignored" {
-							state = "ignored"
-						}
-						if errorText != "" {
-							m["analysis_error"] = errorText
-							exec(ctx, db, "UPDATE messages SET payload=? WHERE id=?", store.JSON(m), job["message_id"])
-						}
-					}
-					if callErr != nil && choice(state, "queued", "failed") {
-						runID := "notification-" + str(job, "message_id")
-						if run := first(query(ctx, db, "SELECT payload FROM agent_runs WHERE id=? AND user_id=?", runID, job["user_id"])); run != nil {
-							payload := store.Payload(run)
-							payload["state"] = state
-							payload["stage"] = "retrying"
-							payload["error"] = errorText
-							exec(ctx, db, "UPDATE agent_runs SET state=?,payload=?,updated_at=? WHERE id=? AND user_id=? AND state<>'cancelled'", state, store.JSON(payload), store.Now(), runID, job["user_id"])
-						}
-					}
-					exec(ctx, db, "UPDATE analysis_jobs SET state=?,error=?,next_at=? WHERE id=?", state, errorText, next, job["id"])
-					event(ctx, db, str(job, "user_id"), "message.upsert", str(job, "message_id"))
-					return nil
-				})
 				return nil
 			})
-			if err != nil && ctx.Err() == nil {
-				select {
-				case <-ctx.Done():
-					return
-				case <-time.After(time.Second):
+			if job == nil {
+				return nil
+			}
+			callCtx, stop := context.WithTimeout(ctx, 180*time.Second)
+			_, callErr := attempt(func() any {
+				return s.runAnalysis(callCtx, str(job, "user_id"), Object{"message_id": job["message_id"], "message_ids": job["message_ids"], "_automatic": true}, nil)
+			})
+			stop()
+			if ctx.Err() != nil {
+				return nil
+			}
+			state, errorText, next := "done", "", float64(0)
+			if callErr != nil {
+				state = "queued"
+				errorText = "本次分析未完成，稍后自动重试"
+				next = timestamp() + 20
+				if num(job, "attempts") >= 2 {
+					state = "failed"
+					errorText = "自动分析失败，请检查模型设置后重试"
 				}
+			}
+			s.transaction(ctx, func(db store.SQL) any {
+				row := first(query(ctx, db, "SELECT payload FROM messages WHERE id=? AND user_id=?", job["message_id"], job["user_id"]))
+				cancelled := first(query(ctx, db, "SELECT state FROM analysis_jobs WHERE id=?", job["id"]))
+				if str(cancelled, "state") == "cancelled" {
+					event(ctx, db, str(job, "user_id"), "message.upsert", str(job, "message_id"))
+					return nil
+				}
+				if row == nil {
+					state = "ignored"
+				} else {
+					m := store.Payload(row)
+					if len(object(m["analysis"])) > 0 {
+						state = "done"
+						errorText = ""
+					}
+					if str(m, "triage") == "ignored" {
+						state = "ignored"
+					}
+					if errorText != "" {
+						m["analysis_error"] = errorText
+						exec(ctx, db, "UPDATE messages SET payload=? WHERE id=?", store.JSON(m), job["message_id"])
+					}
+				}
+				if callErr != nil && choice(state, "queued", "failed") {
+					runID := "notification-" + str(job, "message_id")
+					if run := first(query(ctx, db, "SELECT payload FROM agent_runs WHERE id=? AND user_id=?", runID, job["user_id"])); run != nil {
+						payload := store.Payload(run)
+						payload["state"] = state
+						payload["stage"] = "retrying"
+						payload["error"] = errorText
+						exec(ctx, db, "UPDATE agent_runs SET state=?,payload=?,updated_at=? WHERE id=? AND user_id=? AND state<>'cancelled'", state, store.JSON(payload), store.Now(), runID, job["user_id"])
+					}
+				}
+				exec(ctx, db, "UPDATE analysis_jobs SET state=?,error=?,next_at=? WHERE id=?", state, errorText, next, job["id"])
+				event(ctx, db, str(job, "user_id"), "message.upsert", str(job, "message_id"))
+				return nil
+			})
+			handled = job != nil
+			return nil
+		})
+		if ctx.Err() != nil {
+			return
+		}
+		if err != nil {
+			nextAt = timestamp() + 1
+		}
+		if handled {
+			continue
+		}
+		wait := s.analysisWorkerDelay(ctx, nextAt)
+		timer := time.NewTimer(wait)
+		waitForWake(ctx, s.analysisWake, timer.C)
+		if !timer.Stop() {
+			select {
+			case <-timer.C:
+			default:
 			}
 		}
 	}
+}
+
+// A queued row is not necessarily runnable: it may be waiting for triage,
+// another run in the same conversation, or a notification batch. Keep its
+// next retry time and back off instead of repeatedly selecting the same row.
+func (s *Server) analysisWorkerDelay(ctx context.Context, retryAt float64) time.Duration {
+	now := time.Now()
+	next := now.Add(30 * time.Second)
+	if retryAt > timestamp() {
+		next = time.UnixMilli(int64(retryAt * 1000))
+	}
+	pending := first(query(ctx, s.Store.DB, `SELECT payload FROM messages
+		WHERE deleted_at IS NULL AND json_extract(payload,'$.triage_state')='pending'
+		ORDER BY created_at LIMIT 1`))
+	if pending != nil {
+		payload := store.Payload(pending)
+		ready := now.Add(time.Minute)
+		if text := str(payload, "triage_next_at"); text != "" {
+			if value, err := time.Parse(time.RFC3339Nano, text); err == nil {
+				ready = value
+			}
+		} else if value, err := time.Parse(time.RFC3339Nano, str(pending, "created_at")); err == nil {
+			ready = value.Add(triageIdleMinutes * time.Minute)
+		}
+		if ready.Before(next) {
+			next = ready
+		}
+	}
+	wait := time.Until(next)
+	if wait < 250*time.Millisecond {
+		wait = 250 * time.Millisecond
+	} else if wait > 30*time.Second {
+		wait = 30 * time.Second
+	}
+	return wait
 }
 
 var _ = strings.TrimSpace
